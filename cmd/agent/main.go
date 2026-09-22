@@ -241,7 +241,9 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 	}
 }
 
-// runAgent は WebSocket 接続を確立し、定期的にステータスを送信する
+// ============================================================
+// runAgent: Phase 8-5 で読み取りループを追加
+// ============================================================
 func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, manager module.ModuleManager) error {
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
@@ -262,6 +264,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 	pingCtx, pingCancel := context.WithCancel(ctx)
 	defer pingCancel()
 
+	// Ping送信ループ
 	go func() {
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
@@ -275,6 +278,39 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 					return
 				}
 			}
+		}
+	}()
+
+	// ★ Phase 8-5: Dashboard からのコマンドを受信する読み取りループ
+	readCtx, readCancel := context.WithCancel(ctx)
+	defer readCancel()
+
+	go func() {
+		for {
+			select {
+			case <-readCtx.Done():
+				return
+			default:
+			}
+
+			_, msg, err := conn.ReadMessage()
+			if err != nil {
+				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
+					lg.Debug("読み取りエラー: %v", err)
+				}
+				return
+			}
+			conn.SetReadDeadline(time.Now().Add(120 * time.Second))
+
+			// コマンドかどうか判定（action フィールドの有無）
+			var probe struct {
+				Action string `json:"action"`
+			}
+			if err := json.Unmarshal(msg, &probe); err != nil || probe.Action == "" {
+				continue
+			}
+
+			handleDashboardCommand(ctx, msg, manager, conn, lg)
 		}
 	}()
 
@@ -301,9 +337,6 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 
 // ============================================================
 // sendStatus はステータスを WebSocket で送信する
-//
-// 注意: pkg/status/model.go の SystemStatus.Backup が匿名構造体として
-// 定義されているため、フィールド単位で値をコピーする。
 // ============================================================
 func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.Logger) error {
 	sysMod, ok := manager.Get("system")
@@ -320,7 +353,6 @@ func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.L
 		return nil
 	}
 
-	// バックアップモジュールの状態を集約し、匿名構造体のフィールドにコピー
 	if bs := collectBackupStatus(manager); bs != nil {
 		s.Backup.LastRun = bs.LastRun
 		s.Backup.Status = bs.Status
@@ -347,13 +379,9 @@ func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.L
 }
 
 // ============================================================
-// collectBackupStatus は全プラグインの中からバックアップ情報を持つものを探し、
-// 最新のものを1つ返す。バックアップモジュールが無い場合は nil を返す。
-//
-// manager.List() を追加せず、main.go の loadedPlugins.names を利用する。
+// collectBackupStatus
 // ============================================================
 func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
-	// 読み込み済みプラグイン名を取得
 	loadedPlugins.Lock()
 	names := make([]string, 0, len(loadedPlugins.names))
 	for name := range loadedPlugins.names {
@@ -378,7 +406,6 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 			continue
 		}
 
-		// バックアップ対応モジュールかチェック
 		provider, ok := mod.(module.BackupStatusProvider)
 		if !ok {
 			continue
@@ -389,7 +416,6 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 			continue
 		}
 
-		// まだ一度も実行していない場合は last_run が空
 		if status.LastRun == "" {
 			if latest == nil {
 				latest = status
@@ -397,7 +423,6 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 			continue
 		}
 
-		// last_run を RFC3339 でパースして最新のものを採用
 		t, err := time.Parse(time.RFC3339, status.LastRun)
 		if err != nil {
 			if latest == nil {
@@ -415,8 +440,101 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 	return latest
 }
 
+// ============================================================
+// Phase 8-5: Dashboard からのコマンド処理
+// ============================================================
+
+// handleDashboardCommand は Dashboard から受信したコマンドを処理する。
+func handleDashboardCommand(
+	ctx context.Context,
+	raw []byte,
+	manager module.ModuleManager,
+	conn *websocket.Conn,
+	lg *logger.Logger,
+) {
+	var cmd struct {
+		Action    string `json:"action"`
+		Plugin    string `json:"plugin"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(raw, &cmd); err != nil {
+		lg.Debug("コマンドのパース失敗: %v", err)
+		return
+	}
+
+	if cmd.Action != "run_backup" {
+		lg.Debug("未対応のアクション: %s", cmd.Action)
+		return
+	}
+
+	lg.Info("手動実行リクエスト受信: plugin=%s request_id=%s", cmd.Plugin, cmd.RequestID)
+
+	mod, ok := manager.Get(cmd.Plugin)
+	if !ok {
+		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, 0, "プラグインが見つかりません", lg)
+		return
+	}
+
+	runner, ok := mod.(module.BackupRunner)
+	if !ok {
+		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, 0, "BackupRunner 未実装", lg)
+		return
+	}
+
+	go func() {
+		start := time.Now()
+		err := runner.RunBackup(ctx)
+		duration := time.Since(start).Milliseconds()
+
+		if err != nil {
+			sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, duration, err.Error(), lg)
+			return
+		}
+
+		var size int64
+		if provider, ok := mod.(module.BackupStatusProvider); ok {
+			if st := provider.GetBackupStatus(); st != nil {
+				size = st.Size
+			}
+		}
+		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "success", size, duration, "", lg)
+	}()
+}
+
+// sendBackupResult は実行結果を Dashboard に返す。
+func sendBackupResult(
+	conn *websocket.Conn,
+	plugin, requestID, status string,
+	size, durationMs int64,
+	errMsg string,
+	lg *logger.Logger,
+) {
+	payload := map[string]interface{}{
+		"event":       "backup_result",
+		"plugin":      plugin,
+		"request_id":  requestID,
+		"status":      status,
+		"size":        size,
+		"duration_ms": durationMs,
+		"timestamp":   time.Now().Format(time.RFC3339),
+	}
+	if errMsg != "" {
+		payload["error"] = errMsg
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		lg.Error("backup_result のJSON化失敗: %v", err)
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		lg.Error("backup_result の送信失敗: %v", err)
+		return
+	}
+	lg.Info("手動実行結果送信: plugin=%s status=%s duration=%dms", plugin, status, durationMs)
+}
+
 // parseSize は "1.2 GB" 形式の文字列を int64 に変換する
-// （バックアッププラグイン側でサイズ文字列を扱う場合に利用）
 func parseSize(sizeStr string) int64 {
 	if sizeStr == "" {
 		return 0
