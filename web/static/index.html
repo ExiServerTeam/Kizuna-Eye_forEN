@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kizuna-Eye Dashboard</title>
+    <link rel="stylesheet" href="/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">Kizuna-Eye</h1>
+                <nav class="nav-tabs">
+                    <a href="/" class="nav-tab active">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab">モジュール管理</a>
+                </nav>
+                <span class="status-badge" id="connectionStatus">接続中</span>
+            </div>
+            <div class="header-right">
+                <span class="version-badge" id="versionBadge">v0.6.0</span>
+                <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                    <span class="theme-icon" id="themeIcon">🌙</span>
+                    <span class="theme-track"><span class="theme-thumb"></span></span>
+                    <span class="theme-label" id="themeLabel">ダーク</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="main">
+            <section class="gauge-grid">
+                <!-- CPU（クリック可能） -->
+                <div class="gauge-card" id="cpuCard" data-click="process" data-process-sort="cpu" role="button" tabindex="0">
+                    <div class="gauge-header">
+                        <h2 class="gauge-title">
+                            CPU
+                            <span class="cpu-model" id="cpuModel">-</span>
+                        </h2>
+                        <div class="header-badges">
+                            <span class="temp-badge" id="cpuTempBadge" hidden>--°C</span>
+                        </div>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="cpuGauge" width="320" height="250"></canvas>
+                        <span class="gauge-value" id="cpuValue">0%</span>
+                    </div>
+                    <div class="gauge-footer">
+                        <span class="gauge-detail" id="cpuDetail">使用率 0%</span>
+                        <div class="cpu-cores" id="cpuCores"></div>
+                    </div>
+                </div>
+
+                <!-- メモリ（クリック可能） -->
+                <div class="gauge-card" id="memCard" data-click="process" data-process-sort="mem" role="button" tabindex="0">
+                    <div class="gauge-header">
+                        <h2 class="gauge-title">メモリ</h2>
+                        <div class="header-badges">
+                            <span class="free-badge" id="memFreeBadge" hidden>空き --</span>
+                        </div>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="memGauge" width="320" height="250"></canvas>
+                        <span class="gauge-value" id="memValue">0%</span>
+                    </div>
+                    <div class="gauge-footer">
+                        <span class="gauge-detail" id="memDetail">0 GB / 0 GB</span>
+                    </div>
+                </div>
+
+                <!-- ストレージ -->
+                <div class="gauge-card" id="diskCard">
+                    <div class="gauge-header">
+                        <h2 class="gauge-title">ストレージ</h2>
+                        <div class="header-badges">
+                            <span class="free-badge" id="diskFreeBadge" hidden>空き --</span>
+                            <span class="temp-badge" id="diskTempBadge" hidden>--°C</span>
+                        </div>
+                    </div>
+                    <div class="gauge-container">
+                        <canvas id="diskGauge" width="320" height="250"></canvas>
+                        <span class="gauge-value" id="diskValue">0%</span>
+                    </div>
+                    <div class="gauge-footer">
+                        <span class="gauge-detail" id="diskDetail">0 GB / 0 GB</span>
+                        <div class="disk-list" id="diskList"></div>
+                    </div>
+                </div>
+
+                <!-- 稼働時間 -->
+                <div class="gauge-card uptime-card">
+                    <div class="gauge-header">
+                        <h2 class="gauge-title">稼働時間</h2>
+                    </div>
+                    <div class="uptime-display" id="uptimeDisplay">
+                        <span class="uptime-value" id="uptimeValue">--</span>
+                        <span class="uptime-label" id="uptimeLabel"></span>
+                    </div>
+                    <div class="uptime-meta">
+                        <div class="uptime-meta-item">
+                            <span class="label">起動日時</span>
+                            <span class="value" id="bootTime">--</span>
+                        </div>
+                        <div class="uptime-meta-item">
+                            <span class="label">平均負荷</span>
+                            <span class="value" id="loadAvg">-- / -- / --</span>
+                        </div>
+                        <div class="uptime-meta-item">
+                            <span class="label">ネットワーク</span>
+                            <span class="value" id="networkIO">↓ -- / ↑ --</span>
+                        </div>
+                    </div>
+                    <div class="gauge-footer">
+                        <span class="gauge-detail" id="uptimeDetail">現在時刻: --:--:--</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- バックアップ情報セクション -->
+            <section class="backup-section" id="backupSection" hidden>
+                <div class="backup-header" id="backupToggle" role="button" tabindex="0" aria-expanded="true">
+                    <div class="backup-header-left">
+                        <h2>バックアップ情報</h2>
+                        <span class="backup-status-badge" id="backupStatusBadge">未実行</span>
+                    </div>
+                    <button class="backup-toggle-btn" aria-label="バックアップ情報を折りたたむ">
+                        <span class="backup-toggle-icon">▼</span>
+                    </button>
+                </div>
+                <div class="backup-body" id="backupBody">
+                    <div class="backup-grid">
+                        <div class="backup-item">
+                            <span class="backup-label">最終実行</span>
+                            <span class="backup-value" id="backupLastRun">未取得</span>
+                        </div>
+                        <div class="backup-item">
+                            <span class="backup-label">ステータス</span>
+                            <span class="backup-value" id="backupStatus">-</span>
+                        </div>
+                        <div class="backup-item">
+                            <span class="backup-label">サイズ</span>
+                            <span class="backup-value" id="backupSize">-</span>
+                        </div>
+                        <div class="backup-item">
+                            <span class="backup-label">次回実行</span>
+                            <span class="backup-value" id="backupNextRun">-</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p>Kizuna-Eye <span id="footerVersion">v0.6.0</span> &middot; リアルタイムシステムモニタリング</p>
+        </footer>
+    </div>
+
+    <!-- プロセス一覧モーダル -->
+    <div class="modal-overlay" id="processModal" style="display:none;">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3 id="processModalTitle">プロセス一覧 (Top 10)</h3>
+                <button class="modal-close" id="processModalClose" aria-label="閉じる">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="process-controls">
+                    <input type="text" id="processSearch" placeholder="プロセス名で検索..." class="process-search" autocomplete="off">
+                    <div class="process-sort-buttons" role="tablist">
+                        <button type="button" class="sort-btn active" data-sort="cpu" role="tab">CPU順</button>
+                        <button type="button" class="sort-btn" data-sort="mem" role="tab">メモリ順</button>
+                    </div>
+                </div>
+                <div class="process-table-wrap">
+                    <table class="process-table">
+                        <thead>
+                            <tr>
+                                <th class="col-pid">PID</th>
+                                <th class="col-name">名前</th>
+                                <th class="col-cpu">CPU</th>
+                                <th class="col-mem">メモリ</th>
+                                <th class="col-user">ユーザー</th>
+                            </tr>
+                        </thead>
+                        <tbody id="processTableBody">
+                            <tr><td colspan="5" class="process-empty">データ待機中...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="process-hint" id="processHint">Top 10 / CPU降順 / 3秒ごと更新</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer"></div>
+
+    <script src="/app.js"></script>
+</body>
+</html>

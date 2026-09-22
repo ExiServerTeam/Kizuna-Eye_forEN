@@ -1,0 +1,17 @@
+dashboard_config.json
+agent_config.json
+modules.json
+logs/
+*.log
+*.so
+*.meta.json
+plugins/
+agent_linux
+dashboard_linux
+plugin-inspect
+*.tmp
+*.bak
+
+# バックアップファイル
+*.bak
+*.bak-*

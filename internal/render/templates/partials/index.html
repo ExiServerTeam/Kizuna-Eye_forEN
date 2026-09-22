@@ -1,0 +1,32 @@
+{{ define "index" }}
+{{ template "layout" . }}
+{{ define "content" }}
+<div class="gauge-grid">
+    <div class="gauge-card">
+        <h2>CPU</h2>
+        <canvas id="cpuGauge" width="200" height="200"></canvas>
+        <span class="value" id="cpuValue">0%</span>
+    </div>
+    <div class="gauge-card">
+        <h2>メモリ</h2>
+        <canvas id="memGauge" width="200" height="200"></canvas>
+        <span class="value" id="memValue">0%</span>
+    </div>
+    <div class="gauge-card">
+        <h2>ディスク</h2>
+        <canvas id="diskGauge" width="200" height="200"></canvas>
+        <span class="value" id="diskValue">0%</span>
+    </div>
+    <div class="gauge-card">
+        <h2>稼働時間</h2>
+        <div id="uptimeDisplay">--</div>
+    </div>
+</div>
+<div class="backup-info">
+    <h3>バックアップ情報</h3>
+    <p>最終実行: <span id="backupLastRun">未取得</span></p>
+    <p>ステータス: <span id="backupStatus">-</span></p>
+    <p>サイズ: <span id="backupSize">-</span></p>
+</div>
+{{ end }}
+{{ end }}

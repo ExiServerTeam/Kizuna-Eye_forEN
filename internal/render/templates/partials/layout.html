@@ -1,0 +1,28 @@
+{{ define "layout" }}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kizuna-Eye Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🖥️ Kizuna-Eye</h1>
+            <button id="themeToggle">🌓 ダーク/ライト</button>
+        </header>
+        <main>
+            {{ block "content" . }}
+            <!-- 各ページでコンテンツを挿入 -->
+            {{ end }}
+        </main>
+        <footer>
+            <p>Kizuna-Eye v0.1.0</p>
+        </footer>
+    </div>
+    <script src="/static/app.js"></script>
+</body>
+</html>
+{{ end }}
