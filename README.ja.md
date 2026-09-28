@@ -20,13 +20,18 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 - **プロセス一覧**: CPU / メモリ順ソート
 - **ネットワーク速度**: リアルタイム表示
 - **ディスクS.M.A.R.T**: *予定*
+- **メトリクス履歴**: CPU / メモリ / ディスクの推移グラフ（直近約1時間）
+- **アラート履歴の永続化**: 再起動後も履歴が残る
+- **アラート閾値の動的変更**: UI から再起動なしで変更可能
+- **軽量・自己完結**: 外部依存なし。信頼できるネットワーク / VPN 内での利用を想定
+- **ログローテーション**: サイズベースで自動ローテーション
 
 > *Kizuna-Eye は Go の `plugin` パッケージでビルドされた `.so` モジュールを追加することで機能拡張が可能です。プラグインは独自のステータス報告、スケジュールタスクの登録、モジュール管理 UI への表示を行えます。*
 
 ## スクリーンショット
 
 <p align="center">
-  <img src="docs/images/dashboard_dark.png.png" alt="Kizuna-Eye ダッシュボード ダークモード" width="600">
+  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye ダッシュボード ダークモード" width="600">
   <br>
   <em>リアルタイムシステム監視ダッシュボード（ダークモード）</em>
 </p>
@@ -35,13 +40,13 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 
 | ダッシュボード（ダーク） | ダッシュボード（ライト） |
 | :---: | :---: |
-| <img src="docs/images/dashboard_dark.png.png" width="350" alt="ダッシュボード ダークモード"> | <img src="docs/images/dashboard_light.png.png" width="350" alt="ダッシュボード ライトモード"> |
+| <img src="docs/images/dashboard_dark.png" width="350" alt="ダッシュボード ダークモード"> | <img src="docs/images/dashboard_light.png" width="350" alt="ダッシュボード ライトモード"> |
 
 ### モジュール管理
 
 | モジュール管理（ダーク） | モジュール管理（ライト） |
 | :---: | :---: |
-| <img src="docs/images/module_management_dark.png.png" width="350" alt="モジュール管理 ダークモード"> | <img src="docs/images/module_management.png.png" width="350" alt="モジュール管理 ライトモード"> |
+| <img src="docs/images/module_management_dark.png" width="350" alt="モジュール管理 ダークモード"> | <img src="docs/images/module_management.png" width="350" alt="モジュール管理 ライトモード"> |
 
 ## アーキテクチャ
 
@@ -59,6 +64,34 @@ Agent と Dashboard は WebSocket で通信します。プラグインは Agent 
 - **CGO_ENABLED=1**（`plugin` パッケージ使用時）
 - **smartctl**（任意、S.M.A.R.T監視使用時）*（予定）*
 
+## 認証（任意）
+
+Kizuna-Eye は認証あり・なしの両方で動作します。認証は**既定で無効**です。有効にするには dashboard_config.json の auth ブロックに enabled: true を設定します（secure_cookies / session_ttl_hours / agent_token も指定可能）。
+
+有効にすると、初回アクセス時に /setup.html へリダイレクトされ、最初のユーザーを作成します。**最初に作成したユーザーが管理者になります。**
+
+### ロール
+
+| ロール | アクセス範囲 |
+|---|---|
+| viewer | ダッシュボード・ログ（閲覧のみ） |
+| operator | ＋ モジュール管理・手動バックアップ実行・アラート閾値変更 |
+| admin | 全権（設定エディタ・プラグインアップロード・ユーザー管理） |
+
+管理者はヘッダーの「ユーザー」から追加・削除できます。パスワードは users.json に **bcrypt ハッシュ**で保存され、最後の管理者は削除・降格できません。
+
+### Agent トークン
+
+dashboard_config.json の auth.agent_token と agent_config.json の token に同じ値を設定します。Agent は WebSocket 接続時に認証するため、ブラウザが Agent を偽装できなくなります。トークンが空の場合は従来のヒューリスティック判定になります。
+
+### HTTPS
+
+ログイン情報を平文 HTTP で流してはいけません。TLS 終端するリバースプロキシの背後で動かしてください。
+
+- ダッシュボードを localhost にバインド（listen_addr を 127.0.0.1:8080 に）
+- Caddy や nginx で TLS 終端し、127.0.0.1:8080 へプロキシ
+- secure_cookies を true に設定（Cookie が HTTPS 時のみ送信される）
+
 ## インストール
 
 ### 1. リポジトリをクローン
@@ -66,29 +99,39 @@ Agent と Dashboard は WebSocket で通信します。プラグインは Agent 
 ```bash
 git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
 cd Kizuna-Eye
-2. 依存関係を取得
-bash
+```
+
+### 2. 依存関係を取得
+
+```bash
 go mod download
-3. ビルド
-bash
+```
+
+### 3. ビルド
+
+```bash
 ./build.sh
+```
+
 build.sh は以下のバイナリを /opt/kizuna-eye/bin/ に配置します。
 
-agent_linux
+- agent_linux
+- dashboard_linux
+- plugin-inspect
 
-dashboard_linux
+### 4. 設定ファイルを準備
 
-plugin-inspect
-
-4. 設定ファイルを準備
-bash
+```bash
 cp dashboard_config.example.json dashboard_config.json
 cp agent_config.example.json agent_config.json
 cp modules.json.example modules.json
+```
+
 各ファイルを環境に合わせて編集してください。
 
-5. 起動
-bash
+### 5. 起動
+
+```bash
 ./start.sh
 ブラウザで http://<server-ip>:8080 を開いてください。
 
@@ -100,11 +143,14 @@ json
     "log_file": "dashboard.log",
     "static_dir": "./web/static",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+    "plugins_upload_enabled": false,
+    "alert_history_file": "logs/alert_history.jsonl",
     "notifications": {
         "enabled": true,
         "agent_timeout_sec": 30,
         "hold_sec": 5,
         "cooldown_sec": 300,
+        "recovery_hold_sec": 30,
         "memory_warn_pct": 70,
         "memory_critical_pct": 85,
         "disk_free_warn_pct": 20,
