@@ -11,14 +11,17 @@ logs/
 *.so
 *.meta.json
 plugins/
-agent_linux
-dashboard_linux
-plugin-inspect
-agent
-dashboard
+# Root-level build outputs only. A bare "dashboard" / "agent" /
+# "plugin-inspect" pattern also matches cmd/dashboard/, cmd/agent/ and
+# cmd/plugin-inspect/, which silently ignored real source files.
+/agent_linux
+/dashboard_linux
+/plugin-inspect
+/agent
+/dashboard
 # Compiled test binaries (e.g. from "go test -c").
-dashboard_test
-agent_test
+/dashboard_test
+/agent_test
 *.test
 *.tmp
 *.bak
