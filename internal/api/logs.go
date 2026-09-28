@@ -165,17 +165,28 @@ func (l *LogHandler) readLastLines(filePath string, n int) (string, error) {
 	}
 
 	const blockSize = 64 * 1024
+	// Hard cap on how much of the file is read into memory. Without it, a
+	// large file with few (or zero) newlines would be read in full, letting
+	// a huge log exhaust memory. 4 MiB is far more than the requested line
+	// count ever needs.
+	const maxBytes = 4 << 20
 	var (
 		newlineCount int
 		offset       = size
 		buf          []byte
 	)
 
-	// Read from the end until n newlines are found.
-	for offset > 0 && newlineCount <= n {
+	// Read from the end until n newlines are found (or the byte cap is hit).
+	for offset > 0 && newlineCount <= n && len(buf) < maxBytes {
 		readSize := int64(blockSize)
 		if offset < readSize {
 			readSize = offset
+		}
+		if int64(len(buf))+readSize > maxBytes {
+			readSize = maxBytes - int64(len(buf))
+		}
+		if readSize <= 0 {
+			break
 		}
 		offset -= readSize
 

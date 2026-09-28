@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"Kizuna-Eye/pkg/alert"
 	"Kizuna-Eye/pkg/config"
@@ -29,6 +30,11 @@ type AlertConfigHandler struct {
 	cfg        *config.DashboardConfig
 	configPath string
 	logger     AlertConfigLogger
+
+	// mu serializes writes to cfg. handlePut mutates cfg.Notifications and
+	// then marshals the whole cfg, so two concurrent PUTs would race on that
+	// shared struct (and could persist a half-updated config).
+	mu sync.Mutex
 }
 
 // NewAlertConfigHandler creates an AlertConfigHandler.
@@ -121,6 +127,11 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 	cur.CPUTempWarn = p.CPUTempWarnC
 	cur.CPUTempCritical = p.CPUTempCriticalC
 	cur.NotifyRecovery = p.NotifyRecovery
+
+	// Serialize cfg mutation + persist so concurrent PUTs cannot race on
+	// h.cfg (mutate-while-marshal) or interleave their rollbacks.
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
 	// Persist to dashboard_config.json BEFORE applying the change in memory,
 	// so a failed save cannot leave the running state (engine + cfg) out of
