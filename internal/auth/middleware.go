@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -65,6 +66,34 @@ func NewMiddleware(handler *Handler, enabled bool) *Middleware {
 	return &Middleware{handler: handler, enabled: enabled}
 }
 
+// csrfOriginOK reports whether a state-changing request comes from this
+// host. Safe methods (GET/HEAD/OPTIONS) are always allowed. A request with no
+// Origin header is treated as a non-browser client (curl, a script) and
+// allowed; browsers always send Origin on cross-site and same-origin
+// POST/PUT/DELETE, so a mismatch means the request originated elsewhere.
+// This complements SameSite=Lax cookies (defense in depth against CSRF).
+func csrfOriginOK(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return true
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true // non-browser client
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return u.Host == r.Host
+}
+
+// isPluginUploadPath reports whether p is the plugin upload endpoint, which is
+// a remote-code-execution vector (a .so runs with the server's privileges).
+func isPluginUploadPath(p string) bool {
+	return p == "/api/plugins/upload"
+}
+
 // isPublicPath reports whether a path may be served without a session.
 func isPublicPath(p string) bool {
 	switch p {
@@ -102,7 +131,22 @@ func minRoleFor(method, p string) (Role, bool) {
 // Wrap returns next wrapped with the authentication/authorization checks.
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// CSRF defense in depth, applied even when auth is off (harmless and
+		// keeps the check in one place). SameSite=Lax already blocks the
+		// session cookie on cross-site POSTs; verifying Origin closes the gap.
+		if !csrfOriginOK(r) {
+			writeError(w, http.StatusForbidden, "クロスサイトリクエストを拒否しました")
+			return
+		}
+
 		if !m.enabled {
+			// Auth is disabled (trusted-network mode), so routes are normally
+			// open. Plugin upload is the exception: an unauthenticated .so
+			// upload is remote code execution, so refuse it until auth is on.
+			if isPluginUploadPath(r.URL.Path) {
+				writeError(w, http.StatusForbidden, "プラグインのアップロードには認証が必要です（dashboard_config.json の auth.enabled を true にしてください）")
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
