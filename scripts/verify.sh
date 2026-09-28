@@ -6,7 +6,8 @@
 #   ./scripts/verify.sh --smoke  : 上記 + ビルド + 起動 + API/WS スモーク
 #   ./scripts/verify.sh --full   : --smoke + プラグイン .so 検査（あれば）
 #
-# 前提: go / gcc / curl が利用可能であること（race は cgo 必須）
+# 前提: go / curl が利用可能であること。race 検出器は cgo/gcc 必須のため、
+#       gcc が無い環境では自動的にスキップする（Linux サーバーでの実行を推奨）。
 # ============================================================
 set -u
 
@@ -54,7 +55,10 @@ if command -v gcc >/dev/null 2>&1; then
         ng "go test -race (詳細: /tmp/ke_race.log)"; cat /tmp/ke_race.log
     fi
 else
-    ng "gcc 未検出のため go test -race を実行できません（サーバーで要確認）"
+    # gcc が無い環境（Windows 等）では race を「失敗」ではなく「スキップ」とする。
+    # race は cgo 必須で、Windows の既定ツールチェーンには gcc が無いことが多い。
+    # サーバー(Linux) で ./scripts/verify.sh を実行すれば race まで検証できる。
+    echo "  [skip] gcc 未検出のため go test -race をスキップ（race は cgo/gcc 必須。Linux サーバーで実行してください）"
 fi
 
 # i18n 整合性（スクリプト自身を走査対象に含めない）

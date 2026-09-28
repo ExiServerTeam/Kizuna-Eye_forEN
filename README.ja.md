@@ -102,6 +102,15 @@ Kizuna-Eye は信頼できるネットワーク / VPN 内での利用を想定�
 - **プラグイン `.so` は信頼できるものだけを配置してください。** Go プラグインはサーバー本体と同じ権限で動作します。
 - **通知本文は外部入力由来の値を含みます。** Discord / Slack / Telegram / LINE 向けに、各チャンネルでエスケープとメンション無効化を行っています。
 
+## プラグイン再ビルドの運用注意（重要）
+
+Go の `plugin` パッケージは、プラグインと本体が**共有パッケージのハッシュまで完全一致**していることを要求します。したがって、次のいずれかを変更した場合は、**Agent 本体と全プラグイン（`.so`）を同一ソースから同時に再ビルド**してください。片方だけ再ビルドすると `plugin was built with a different version of package ...` で読み込みに失敗します。
+
+- `pkg/module`（プラグインの共通型・インターフェース。`Module` / `ConfigField` / `SecurityEvent` など）
+- `pkg/status`（`SystemStatus` などの共有型）
+
+手順の例: 1) `./build.sh` で本体を再ビルド。2) 各プラグインを同一ソースで再ビルド（例: `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。3) 生成した `.so` を `plugins/` へ配備し、agent を再起動。
+
 ## インストール
 
 ### 1. リポジトリをクローン
