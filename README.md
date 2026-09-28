@@ -61,6 +61,16 @@ The Agent and Dashboard communicate over WebSocket. Plugins are loaded as `.so` 
 - **rsync** (when using SSH file transfers)
 - **smartctl** (optional, for S.M.A.R.T disk health monitoring)
 
+## Security Notes
+
+Kizuna-Eye is intended for use within a trusted network / VPN. The following settings can lead to **effective remote code execution (RCE)** and deserve special care.
+
+- **Do not enable `plugins_upload_enabled: true` together with `auth.enabled: false`.** In that combination, anyone on the network can upload and run a `.so` plugin and take over the server. Always enable authentication when plugin upload is enabled (the server also logs a warning at startup).
+- **Config files contain secrets.** Never commit `dashboard_config.json` (`agent_token` / `webhook_url`) or `agent_config.json` (`token`), and keep them at mode 0600 (they are already in `.gitignore`).
+- **`/api/config` masks secrets when returning them.** Saving the masked value (`***`) back preserves the existing secret, but treat these files like `users.json`.
+- **Only place trusted plugin `.so` files.** A Go plugin runs with the same privileges as the server itself.
+- **Notification bodies contain externally derived values.** Each channel (Discord / Slack / Telegram / LINE) escapes and disables mentions.
+
 ## Installation
 
 ### 1. Clone the repository
