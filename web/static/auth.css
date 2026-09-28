@@ -1,0 +1,319 @@
+/* ============================================================
+   Kizuna-Eye - 認証画面（ログイン / セットアップ / ユーザー管理）
+   ダッシュボードと同じテーマ変数・デザイン言語を使用
+   ============================================================ */
+
+/* ===== テーマ切替ボタン（画面右上に固定） ===== */
+.auth-theme-toggle {
+    position: fixed;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-header);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--text-primary);
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.3s, transform 0.2s, border-color 0.3s;
+    z-index: 10;
+}
+
+.auth-theme-toggle:hover {
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+}
+
+.auth-theme-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+/* ===== 背景 ===== */
+.auth-body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    transition: background 0.35s ease, color 0.35s ease;
+}
+
+/* ダッシュボードのヘッダー/カードと同じガラス風カード */
+.auth-card {
+    width: 100%;
+    max-width: 400px;
+    padding: 36px 32px 32px;
+    border-radius: 24px;
+    background: var(--bg-header);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow);
+    transition: background 0.35s, border-color 0.35s, box-shadow 0.35s;
+}
+
+/* ===== ロゴ（ダッシュボードと同じグラデーション） ===== */
+.auth-logo {
+    font-size: 1.7rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-align: center;
+    margin: 0 0 6px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.auth-subtitle {
+    margin: 0 0 28px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+
+.auth-note {
+    margin: -16px 0 22px;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+/* ===== フォーム ===== */
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.auth-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    margin-top: 10px;
+}
+
+.auth-hint {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.auth-input {
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 1rem; /* iOS の自動ズーム防止 */
+    font-family: inherit;
+    transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.auth-input:focus {
+    outline: none;
+    border-color: #667eea;
+    background: var(--bg-card-hover);
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.18);
+}
+
+/* ===== ボタン（ダッシュボードの btn-primary と同じ） ===== */
+.auth-btn {
+    margin-top: 22px;
+    padding: 13px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.25s ease, box-shadow 0.3s ease, opacity 0.2s;
+}
+
+.auth-btn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
+}
+
+.auth-btn:active {
+    transform: translateY(0);
+}
+
+.auth-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+    transform: none;
+    box-shadow: none;
+}
+
+.auth-error {
+    margin: 14px 0 0;
+    color: var(--status-error);
+    font-size: 0.85rem;
+    text-align: center;
+}
+
+/* ============================================================
+   ユーザー管理（ダッシュボードのカードに寄せる）
+   ============================================================ */
+.users-main {
+    padding: 24px;
+    max-width: 960px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+.users-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.users-header h2 {
+    font-size: 1.4rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.users-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--bg-header);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.users-table th,
+.users-table td {
+    text-align: left;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.9rem;
+}
+
+.users-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    background: var(--bg-card);
+}
+
+.users-table tr:last-child td {
+    border-bottom: none;
+}
+
+.users-table tbody tr {
+    transition: background 0.2s;
+}
+
+.users-table tbody tr:hover {
+    background: var(--bg-card);
+}
+
+/* ===== ロールバッジ ===== */
+.role-badge {
+    display: inline-block;
+    padding: 3px 12px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.role-admin { background: var(--status-bg-error); color: var(--status-error); }
+.role-operator { background: var(--status-bg-warning); color: var(--status-warning); }
+.role-viewer { background: var(--status-bg-success); color: var(--status-success); }
+
+/* ===== 小ボタン ===== */
+.btn-sm {
+    padding: 7px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    font-size: 0.8rem;
+    font-weight: 500;
+    transition: background 0.2s, transform 0.15s;
+}
+
+.btn-sm:hover {
+    background: var(--bg-card-hover);
+}
+
+.btn-sm.danger {
+    color: var(--status-error);
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+.modal-cancel {
+    margin-top: 8px;
+}
+
+/* ===== モーダル ===== */
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    z-index: 100;
+}
+
+.modal-backdrop[hidden] { display: none; }
+
+/* モーダル内のカードもダッシュボード風に */
+.modal-backdrop .auth-card {
+    max-width: 400px;
+}
+
+/* ===== スマホ対応 ===== */
+@media (max-width: 480px) {
+    .auth-card {
+        padding: 28px 22px 24px;
+        border-radius: 20px;
+    }
+
+    .auth-logo {
+        font-size: 1.5rem;
+    }
+
+    .users-main {
+        padding: 16px;
+    }
+
+    .users-table th,
+    .users-table td {
+        padding: 10px 12px;
+        font-size: 0.85rem;
+    }
+}
+
+/* 動きを減らす設定の尊重 */
+@media (prefers-reduced-motion: reduce) {
+    .auth-btn:hover,
+    .auth-theme-toggle:hover {
+        transform: none;
+    }
+}

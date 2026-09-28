@@ -10,7 +10,7 @@ import (
 )
 
 // ============================================================
-// LINENotifier は LINE Notify で通知を送る
+// LINENotifier sends notifications via LINE Notify.
 // ============================================================
 type LINENotifier struct {
 	token  string
@@ -27,7 +27,9 @@ func NewLINENotifier(token string) *LINENotifier {
 func (l *LINENotifier) Name() string { return "line" }
 
 func (l *LINENotifier) Send(ctx context.Context, a *Alert) error {
-	text := fmt.Sprintf("\n%s %s\n%s", a.Icon, a.Title, a.FullMessage())
+	// LINE Notify rejects messages longer than 1000 characters.
+	// Truncate so one long alert cannot drop the whole notification.
+	text := truncateRunes(fmt.Sprintf("\n%s%s\n%s", a.IconPrefix(), a.Title, a.FullMessage()), 1000)
 
 	data := url.Values{}
 	data.Set("message", text)

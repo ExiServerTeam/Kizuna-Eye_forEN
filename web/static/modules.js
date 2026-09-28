@@ -8,6 +8,11 @@
 
     const $ = (sel) => document.querySelector(sel);
 
+    // i18n 翻訳ヘルパー（i18n.js 未読込時はキーをそのまま返す）。
+    // 他ページの JS と同じフォールバックを持たせ、グローバル t への
+    // 暗黙依存をなくす。
+    const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
+
     const moduleGrid = $('#moduleGrid');
     const totalCount = $('#totalCount');
     const enabledCount = $('#enabledCount');
@@ -56,10 +61,19 @@
     let editingName = null;
     let deleteTarget = null;
 
+    // Latest backup status per plugin, updated from WS backup_result events.
+    const moduleStatus = new Map();
+
     // Phase 8-6: プラグインメタのキャッシュ（name → PluginMeta）
     let pluginMetas = new Map();
     // 現在編集中のプラグイン名（動的フォーム用）
     let editingPluginName = null;
+
+    // 実行中のプラグイン名。完了するまで再実行を受け付けない。
+    const runningPlugins = new Set();
+    // 手動実行中のプラグイン名。backup_result が届くまで解除しない
+    // （定期ステータスの古い値で誤って解除されるのを防ぐ）。
+    const manualRunning = new Set();
 
     const API_BASE = '/api/modules';
 
@@ -86,12 +100,56 @@
         ws.addEventListener('message', (event) => {
             let data;
             try { data = JSON.parse(event.data); } catch { return; }
-            if (data.event !== 'backup_result') return;
-            const handler = backupResultHandlers.get(data.request_id);
-            if (!handler) return;
-            clearTimeout(handler.timer);
-            backupResultHandlers.delete(data.request_id);
-            handler.resolve(data);
+
+            if (data.event === 'backup_result') {
+                console.log('[WS] backup_result', data);
+
+                // Remember the latest status so the module card reflects it.
+                if (data.plugin) {
+                    runningPlugins.delete(data.plugin);
+                    manualRunning.delete(data.plugin);
+                    moduleStatus.set(data.plugin, {
+                        status: data.status,
+                        size: data.size,
+                        last_run: data.timestamp,
+                    });
+                    renderModules();
+                }
+
+                const handler = backupResultHandlers.get(data.request_id);
+                if (!handler) return;
+                clearTimeout(handler.timer);
+                backupResultHandlers.delete(data.request_id);
+                handler.resolve(data);
+                return;
+            }
+
+            // 定期ステータス（毎秒）から自動実行の「実行中」を反映する。
+            // 手動実行と違い自動実行には request_id が無いため、
+            // backup_result だけでは開始を検知できない。
+            if (data && data.backup && data.backup.name) {
+                const name = data.backup.name;
+                const st = String(data.backup.status || '').toLowerCase();
+                const isRunning = (st === 'running' || st === 'processing');
+
+                let changed = false;
+                if (isRunning && !runningPlugins.has(name)) {
+                    runningPlugins.add(name);
+                    changed = true;
+                } else if (!isRunning && runningPlugins.has(name) && !manualRunning.has(name)) {
+                    // 手動実行中は backup_result が届くまで解除しない。
+                    runningPlugins.delete(name);
+                    changed = true;
+                }
+
+                moduleStatus.set(name, {
+                    status: data.backup.status,
+                    size: data.backup.size,
+                    last_run: data.backup.last_run,
+                });
+
+                if (changed) renderModules();
+            }
         });
     }
     connectWS();
@@ -100,7 +158,7 @@
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 backupResultHandlers.delete(requestID);
-                reject(new Error('タイムアウト（結果が返ってきませんでした）'));
+                reject(new Error(t('toast.execution_timeout')));
             }, timeoutMs);
             backupResultHandlers.set(requestID, { resolve, reject, timer });
         });
@@ -118,11 +176,27 @@
         localStorage.setItem('kizuna-theme', theme);
 
         if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
-        if (themeLabel) themeLabel.textContent = theme === 'dark' ? 'ダーク' : 'ライト';
+        if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 
-    const savedTheme = localStorage.getItem('kizuna-theme') || 'dark';
-    setTheme(savedTheme);
+    // Phase 9-2: OS設定に基づく自動テーマ切り替え
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    const savedTheme = localStorage.getItem('kizuna-theme');
+
+    // localStorageに保存がある場合はそれを使用
+    // 保存がない場合はOS設定を使用
+    if (savedTheme) {
+        setTheme(savedTheme);
+    } else {
+        setTheme(prefersDark.matches ? 'dark' : 'light');
+    }
+
+    // OS設定の変更を監視（localStorageに手動設定がない場合のみ）
+    prefersDark.addEventListener('change', (e) => {
+        if (!localStorage.getItem('kizuna-theme')) {
+            setTheme(e.matches ? 'dark' : 'light');
+        }
+    });
 
     if (themeToggle) {
         themeToggle.addEventListener('click', () => {
@@ -215,10 +289,10 @@
 
         const nameVal = modName.value.trim();
         if (!nameVal) {
-            showFieldError('modNameError', 'モジュール名は必須です');
+            showFieldError('modNameError', t('validate.name_required'));
             valid = false;
         } else if (!/^[a-zA-Z0-9_]+$/.test(nameVal)) {
-            showFieldError('modNameError', '英数字とアンダースコアのみ使用できます');
+            showFieldError('modNameError', t('validate.name_format'));
             valid = false;
         } else {
             hideFieldError('modNameError');
@@ -226,7 +300,7 @@
 
         const interval = parseInt(modInterval.value);
         if (isNaN(interval) || interval < 10 || interval > 3600) {
-            showFieldError('modIntervalError', '10〜3600の範囲で指定してください');
+            showFieldError('modIntervalError', t('validate.interval_range'));
             valid = false;
         } else {
             hideFieldError('modIntervalError');
@@ -279,7 +353,7 @@
             return await res.json();
         } catch (err) {
             console.error('Failed to fetch modules:', err);
-            showToast('モジュール一覧の取得に失敗しました', 'error');
+            showToast(t('toast.modules_load_fail'), 'error');
             return [];
         }
     }
@@ -343,9 +417,18 @@
     // ============================================================
     async function handleRunClick(btn) {
         const name = btn.dataset.name;
-        const original = btn.textContent;
-        btn.disabled = true;
-        btn.textContent = '実行中...';
+
+        // すでに実行中なら受け付けない（二重実行の防止）
+        if (runningPlugins.has(name)) {
+            showToast(t('toast.execution_in_progress'), 'info');
+            return;
+        }
+        runningPlugins.add(name);
+        manualRunning.add(name);
+
+        // Mark the card as running immediately.
+        moduleStatus.set(name, { status: 'running', size: 0, last_run: '' });
+        renderModules();
 
         try {
             const res = await fetch(`/api/plugins/${encodeURIComponent(name)}/run`, {
@@ -355,20 +438,23 @@
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-            showToast('実行を受け付けました', 'info');
+            showToast(t('toast.execution_accepted'), 'info');
             const result = await waitForBackupResult(data.request_id, 180000);
 
             if (result.status === 'success') {
-                showToast(`成功 (${formatBytes(result.size)}, ${result.duration_ms}ms)`, 'success');
+                showToast(t('toast.execution_success', formatBytes(result.size), result.duration_ms), 'success');
             } else {
-                showToast(`失敗: ${result.error || 'unknown'}`, 'error');
+                showToast(t('toast.execution_failed', result.error || 'unknown'), 'error');
             }
             await loadModules();
         } catch (err) {
-            showToast(`実行失敗: ${err.message}`, 'error');
+            showToast(t('toast.execution_error', err.message), 'error');
+            // Mark the card as failed so the state does not stay "running".
+            moduleStatus.set(name, { status: 'error', size: 0, last_run: '' });
         } finally {
-            btn.disabled = false;
-            btn.textContent = original;
+            runningPlugins.delete(name);
+            manualRunning.delete(name);
+            renderModules();
         }
     }
 
@@ -379,10 +465,10 @@
         if (!modules || modules.length === 0) {
             moduleGrid.innerHTML = `
                 <div class="empty-state">
-                    <h3>モジュールがありません</h3>
-                    <p>「プラグイン追加」ボタンからモジュールを追加してください</p>
+                    <h3>${t('modules.empty_title')}</h3>
+                    <p>${t('modules.empty_desc')}</p>
                     <button type="button" class="btn-primary empty-cta" id="emptyAddBtn">
-                        <span class="btn-icon">＋</span> プラグイン追加
+                        <span class="btn-icon">＋</span> ${t('modules.add_plugin_empty')}
                     </button>
                 </div>
             `;
@@ -409,13 +495,14 @@
             if (mod.enabled) enabled++;
             else disabled++;
 
-            const status = mod.status || {};
-            const statusDotClass = status.status === 'success' ? 'success' :
-                                  status.status === 'failed' ? 'failed' :
-                                  status.status === 'running' ? 'running' : 'unknown';
-            const statusLabel = status.status === 'success' ? '成功' :
-                               status.status === 'failed' ? '失敗' :
-                               status.status === 'running' ? '実行中' : '不明';
+            const status = moduleStatus.get(mod.name) || mod.status || {};
+            const s = String(status.status || '').toLowerCase();
+            const statusDotClass = (s === 'success' || s === 'completed' || s === 'ok') ? 'success' :
+                                  (s === 'failed' || s === 'error') ? 'failed' :
+                                  (s === 'running' || s === 'processing') ? 'running' : 'unknown';
+            const statusLabel = (s === 'success' || s === 'completed' || s === 'ok') ? t('status.success') :
+                               (s === 'failed' || s === 'error') ? t('status.failed') :
+                               (s === 'running' || s === 'processing') ? t('status.running') : t('status.unknown');
 
             // ★ Phase 8-6: バッジはLITE/PRO/PLUGIN、名前欄はdisplay_name
             let versionBadge, versionLabel, displayLabel;
@@ -440,65 +527,114 @@
                 displayLabel = mod.name;
             }
 
+            const meta = pluginMetas.get(mod.name);
+            // バックアップ系（is_backup=true）以外のプラグインは常時監視タイプとして扱う。
+            const isSecurityPlugin = mod.type === 'plugin' && meta && meta.is_backup !== true;
+
             const lastRun = status.last_run ? new Date(status.last_run).toLocaleString() : '--';
-            const size = status.size || '--';
+            const size = Number(status.size) > 0 ? formatBytes(status.size) : '--';
             const mode = status.mode || mod.config?.mode || '--';
             const targetDir = mod.config?.target_dir || '--';
-            const logPath = mod.config?.log_path || '自動';
-            const interval = mod.config?.interval_sec || mod.config?.interval || 60;
+            const logPath = mod.config?.log_path || t('common.auto');
+            const interval = mod.config?.interval_sec || mod.config?.poll_interval_sec || mod.config?.interval || 60;
 
-            // ★ Phase 8-5: プラグインのみ「▶ 実行」ボタンを表示
-            const runButton = (mod.type === 'plugin')
-                ? `<button class="btn-run" data-name="${escapeAttr(mod.name)}" title="手動実行">▶ 実行</button>`
+            // 「実行」ボタンは手動実行できるバックアップ系プラグインのみ表示する。
+            // 常時監視するタイプ（セキュリティ等）は実行不要なので出さない。
+            const canRun = mod.type === 'plugin' && meta && meta.is_backup === true;
+            const isRunning = runningPlugins.has(mod.name);
+            const runButton = canRun
+                ? `<button class="btn-run" data-name="${escapeAttr(mod.name)}" title="Run"${isRunning ? ' disabled' : ''}>${isRunning ? t('status.running') + '...' : t('modules.btn_run')}</button>`
                 : '';
+
+            // プラグイン専用 Web UI があれば「開く」ボタンを表示
+            const openButton = (mod.type === 'plugin' && meta && meta.has_web_ui)
+                ? `<a class="btn-open" href="/plugins/${encodeURIComponent(mod.name)}/" target="_blank" rel="noopener">${t('modules.btn_open')}</a>`
+                : '';
+
+            // 有効/無効の切り替えボタン
+            const toggleButton = `<button class="btn-toggle" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`;
+
+            // カード本文。セキュリティ等の監視プラグインは専用の項目を表示する。
+            const cfg = mod.config || {};
+            const watchFiles = cfg.watch_files || '--';
+            const notifyLevel = cfg.notify_min_level || '--';
+            const burstText = cfg.failed_burst
+                ? t('security.burst_value', cfg.failed_burst, cfg.burst_window_sec || '-')
+                : '--';
+            const monitorState = mod.enabled ? t('security.state_active') : t('security.state_inactive');
+
+            const bodyHtml = isSecurityPlugin
+                ? `
+                    <div class="module-info-row">
+                        <span class="label">${t('security.label_state')}</span>
+                        <span class="value"><span class="status-dot ${mod.enabled ? 'success' : 'unknown'}"></span>${escapeHtml(monitorState)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('security.label_watch')}</span>
+                        <span class="value" title="${escapeAttr(watchFiles)}">${escapeHtml(watchFiles)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('security.label_notify')}</span>
+                        <span class="value">${escapeHtml(notifyLevel)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('security.label_burst')}</span>
+                        <span class="value">${escapeHtml(burstText)}</span>
+                    </div>
+                `
+                : `
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_last_run')}</span>
+                        <span class="value">${escapeHtml(lastRun)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_status')}</span>
+                        <span class="value">
+                            <span class="status-dot ${statusDotClass}"></span>${escapeHtml(statusLabel)}
+                        </span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_size')}</span>
+                        <span class="value">${escapeHtml(size)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_mode')}</span>
+                        <span class="value">${escapeHtml(mode)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_target')}</span>
+                        <span class="value" title="${escapeAttr(targetDir)}">${escapeHtml(targetDir)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_remote')}</span>
+                        <span class="value" title="${escapeAttr(mod.config?.remote_dest || '')}">${escapeHtml(mod.config?.remote_dest || '--')}</span>
+                    </div>
+                `;
 
             html += `
                 <div class="module-card">
                     <div class="module-card-header">
                         <div class="module-card-row">
-                            <span class="badge ${versionBadge}">${versionLabel}</span>
+                            <span class="badge ${versionBadge}">${escapeHtml(versionLabel)}</span>
                             <span class="module-name" title="${escapeAttr(displayLabel)}">${escapeHtml(displayLabel)}</span>
                             <span class="badge ${mod.enabled ? 'badge-enabled' : 'badge-disabled'}">
-                                ${mod.enabled ? '有効' : '無効'}
+                                ${mod.enabled ? t('modules.badge_enabled') : t('modules.badge_disabled')}
                             </span>
                         </div>
                         <div class="module-card-actions">
+                            ${openButton}
                             ${runButton}
-                            <button class="btn-edit" data-name="${escapeAttr(mod.name)}">編集</button>
-                            <button class="btn-delete" data-name="${escapeAttr(mod.name)}">削除</button>
+                            ${toggleButton}
+                            <button class="btn-edit" data-name="${escapeAttr(mod.name)}">${t('modules.btn_edit')}</button>
+                            <button class="btn-delete" data-name="${escapeAttr(mod.name)}">${t('modules.btn_delete')}</button>
                         </div>
                     </div>
                     <div class="module-card-body">
-                        <div class="module-info-row">
-                            <span class="label">最終実行</span>
-                            <span class="value">${lastRun}</span>
-                        </div>
-                        <div class="module-info-row">
-                            <span class="label">状態</span>
-                            <span class="value">
-                                <span class="status-dot ${statusDotClass}"></span>${statusLabel}
-                            </span>
-                        </div>
-                        <div class="module-info-row">
-                            <span class="label">サイズ</span>
-                            <span class="value">${size}</span>
-                        </div>
-                        <div class="module-info-row">
-                            <span class="label">モード</span>
-                            <span class="value">${escapeHtml(mode)}</span>
-                        </div>
-                        <div class="module-info-row">
-                            <span class="label">対象ディレクトリ</span>
-                            <span class="value" title="${escapeAttr(targetDir)}">${escapeHtml(targetDir)}</span>
-                        </div>
-                        <div class="module-info-row">
-                            <span class="label">リモート接続先</span>
-                            <span class="value" title="${escapeAttr(mod.config?.remote_dest || '')}">${escapeHtml(mod.config?.remote_dest || '--')}</span>
-                        </div>
+                        ${bodyHtml}
                     </div>
                     <div class="module-card-footer">
-                        <span>チェック間隔: ${interval}秒</span>
-                        <span>ログ: ${escapeHtml(logPath)}</span>
+                        <span>${escapeHtml(t('modules.label_interval', interval))}</span>
+                        <span>${t('modules.label_log', escapeHtml(logPath))}</span>
                     </div>
                 </div>
             `;
@@ -524,14 +660,19 @@
                 if (mod.type === 'plugin') {
                     const meta = pluginMetas.get(name);
                     if (!meta) {
-                        showToast('プラグインのメタ情報が見つかりません。再アップロードしてください', 'error');
+                        showToast(t('toast.plugin_meta_missing'), 'error');
                         return;
                     }
                     openPluginConfigModal(meta, mod.config || {});
                 } else {
-                    openModal('モジュール編集', mod);
+                    openModal(t('modules.modal_title_edit'), mod);
                 }
             });
+        });
+
+        // 有効/無効 切り替えボタン
+        document.querySelectorAll('.btn-toggle').forEach(btn => {
+            btn.addEventListener('click', () => handleToggleClick(btn));
         });
 
         // 削除ボタン
@@ -539,15 +680,41 @@
             btn.addEventListener('click', () => {
                 const name = btn.dataset.name;
                 deleteTarget = name;
-                deleteMessage.textContent = `本当にモジュール「${name}」を削除しますか？`;
+                deleteMessage.textContent = t('modules.delete_message', name);
                 deleteModal.style.display = 'flex';
             });
         });
     }
 
+    // ============================================================
+    // 有効/無効 切り替え
+    // ============================================================
+    async function handleToggleClick(btn) {
+        const name = btn.dataset.name;
+        const enable = btn.dataset.enable === '1';
+        const mod = modules.find(m => m.name === name);
+        if (!mod) return;
+
+        btn.disabled = true;
+        try {
+            const payload = {
+                name: mod.name,
+                type: mod.type,
+                enabled: enable,
+                config: mod.config || {},
+            };
+            await updateModule(name, payload);
+            showToast(enable ? t('toast.module_enabled') : t('toast.module_disabled'), 'success');
+            await loadModules();
+        } catch (err) {
+            showToast(t('toast.save_fail', err.message), 'error');
+            btn.disabled = false;
+        }
+    }
+
     async function loadModules() {
         try {
-            moduleGrid.innerHTML = '<div class="loading-spinner">読み込み中...</div>';
+            moduleGrid.innerHTML = `<div class="loading-spinner">${t('modules.loading')}</div>`;
 
             const [mods, metas] = await Promise.all([
                 fetchModules(),
@@ -558,7 +725,7 @@
             pluginMetas = metas;
             renderModules();
         } catch (err) {
-            showToast('モジュール読み込みに失敗しました: ' + err.message, 'error');
+            showToast(t('toast.modules_load_fail_msg', err.message), 'error');
             moduleGrid.innerHTML = `
                 <div class="empty-state">
                     <h3>読み込みエラー</h3>
@@ -573,7 +740,7 @@
     // ============================================================
     async function handleSave() {
         if (!validateForm()) {
-            showToast('入力内容にエラーがあります', 'error');
+            showToast(t('toast.invalid_input'), 'error');
             return;
         }
 
@@ -582,15 +749,15 @@
         try {
             if (editingName) {
                 await updateModule(editingName, data);
-                showToast('モジュールを更新しました', 'success');
+                showToast(t('toast.module_saved'), 'success');
             } else {
                 await createModule(data);
-                showToast('モジュールを追加しました', 'success');
+                showToast(t('toast.module_added'), 'success');
             }
             closeModal();
             await loadModules();
         } catch (err) {
-            showToast('保存に失敗しました: ' + err.message, 'error');
+            showToast(t('toast.save_fail', err.message), 'error');
         }
     }
 
@@ -599,12 +766,12 @@
 
         try {
             await deleteModule(deleteTarget);
-            showToast(`モジュール「${deleteTarget}」を削除しました`, 'success');
+            showToast(t('toast.module_deleted', deleteTarget), 'success');
             deleteModal.style.display = 'none';
             deleteTarget = null;
             await loadModules();
         } catch (err) {
-            showToast('削除に失敗しました: ' + err.message, 'error');
+            showToast(t('toast.delete_fail', err.message), 'error');
         }
     }
 
@@ -617,25 +784,25 @@
             try {
                 const data = JSON.parse(e.target.result);
                 if (!Array.isArray(data)) {
-                    showToast('無効なフォーマットです（配列が必要です）', 'error');
+                    showToast(t('toast.json_invalid'), 'error');
                     return;
                 }
                 modules = data;
                 renderModules();
-                showToast(`設定ファイルを読み込みました（${modules.length} モジュール）`, 'success');
+                showToast(t('toast.json_loaded', modules.length), 'success');
             } catch (err) {
-                showToast('JSONパースエラー: ' + err.message, 'error');
+                showToast(t('toast.json_parse_error', err.message), 'error');
             }
         };
         reader.onerror = function() {
-            showToast('ファイル読み込みエラー', 'error');
+            showToast(t('toast.file_read_error'), 'error');
         };
         reader.readAsText(file);
     }
 
     function exportConfigFile() {
         if (modules.length === 0) {
-            showToast('モジュールがありません', 'warning');
+            showToast(t('toast.no_modules'), 'warning');
             return;
         }
 
@@ -649,7 +816,7 @@
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast('設定ファイルを書き出しました', 'success');
+        showToast(t('toast.export_done'), 'success');
     }
 
     if (fileInput) {
@@ -671,13 +838,13 @@
             const file = e.target.files[0];
 
             const defaultName = file.name.replace(/\.so$/, '');
-            const pluginName = prompt('プラグイン名を入力してください（英数字・_・-）', defaultName);
+            const pluginName = prompt(t('toast.plugin_name_prompt'), defaultName);
             if (!pluginName) {
                 e.target.value = '';
                 return;
             }
             if (!/^[A-Za-z0-9_\-]+$/.test(pluginName)) {
-                showToast('プラグイン名に使用できるのは英数字・_・- のみです', 'error');
+                showToast(t('toast.plugin_name_invalid'), 'error');
                 e.target.value = '';
                 return;
             }
@@ -687,7 +854,7 @@
             formData.append('plugin', file);
 
             try {
-                showToast('プラグインをアップロード中...', 'info');
+                showToast(t('toast.plugin_uploading'), 'info');
 
                 const res = await fetch('/api/plugins/upload', {
                     method: 'POST',
@@ -702,18 +869,18 @@
                 const result = await res.json();
 
                 if (result.inspect_error) {
-                    showToast('検証エラー: ' + result.inspect_error, 'error');
+                    showToast(t('toast.plugin_inspect_error', result.inspect_error), 'error');
                     await loadModules();
                     e.target.value = '';
                     return;
                 }
 
-                showToast(`プラグイン「${result.name}」を登録しました`, 'success');
+                showToast(t('toast.plugin_registered', result.name), 'success');
 
                 openPluginConfigModal(result, {});
                 await loadModules();
             } catch (err) {
-                showToast('プラグイン読み込み失敗: ' + err.message, 'error');
+                showToast(t('toast.plugin_load_fail', err.message), 'error');
             }
 
             e.target.value = '';
@@ -726,7 +893,7 @@
     function openPluginConfigModal(meta, currentConfig) {
         editingPluginName = meta.name;
         if (pluginConfigTitle) {
-            pluginConfigTitle.textContent = `プラグイン設定: ${meta.name}`;
+            pluginConfigTitle.textContent = t('modules.plugin_config_title', meta.name);
         }
         if (pluginConfigBody) {
             pluginConfigBody.innerHTML = renderConfigForm(meta.fields || [], currentConfig || {});
@@ -743,12 +910,12 @@
 
     function renderConfigForm(fields, values) {
         if (!fields || fields.length === 0) {
-            return `<p class="form-empty">このプラグインは設定項目を申告していません。</p>`;
+            return `<p class="form-empty">${escapeHtml(t('modules.plugin_config_empty'))}</p>`;
         }
 
         const groups = new Map();
         for (const f of fields) {
-            const g = f.group || '基本設定';
+            const g = f.group || t('modules.group_basic');
             if (!groups.has(g)) groups.set(g, []);
             groups.get(g).push(f);
         }
@@ -768,7 +935,10 @@
         const value = (current !== undefined && current !== null)
             ? String(current)
             : (f.default || '');
-        const id = `cfg_${f.key}`;
+        // Build a safe element id from the key. Only [A-Za-z0-9_-] is kept, so
+        // a plugin-provided key can neither break out of id="..." nor make the
+        // id ambiguous with getElementById().
+        const id = fieldElementId(f.key);
         const required = f.required ? 'required' : '';
         const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
         let input = '';
@@ -786,13 +956,15 @@
                 const checked = (value === 'true' || value === true) ? 'checked' : '';
                 input = `<label class="checkbox-wrap">
                     <input type="checkbox" id="${id}" name="${escapeAttr(f.key)}" ${checked}>
-                    <span>有効</span>
+                    <span>${escapeHtml(t('modules.enabled'))}</span>
                 </label>`;
                 break;
             }
             case 'number': {
-                const min = (f.min !== undefined) ? `min="${f.min}"` : '';
-                const max = (f.max !== undefined) ? `max="${f.max}"` : '';
+                // min/max come from the plugin's metadata; escape them so a
+                // non-numeric value cannot break out of the attribute.
+                const min = (f.min !== undefined && f.min !== null) ? `min="${escapeAttr(f.min)}"` : '';
+                const max = (f.max !== undefined && f.max !== null) ? `max="${escapeAttr(f.max)}"` : '';
                 input = `<input type="number" id="${id}" name="${escapeAttr(f.key)}"
                     value="${escapeAttr(value)}" ${min} ${max} ${required}
                     placeholder="${escapeAttr(f.placeholder || '')}">`;
@@ -829,14 +1001,16 @@
 
         const meta = pluginMetas.get(name);
         if (!meta) {
-            showToast('プラグインのメタ情報が見つかりません', 'error');
+            showToast(t('toast.plugin_config_meta_missing'), 'error');
             return;
         }
 
         const config = {};
 
         for (const f of (meta.fields || [])) {
-            const el = document.getElementById(`cfg_${f.key}`);
+            // Never let a plugin-provided key pollute Object.prototype.
+            if (isUnsafeKey(f.key)) continue;
+            const el = document.getElementById(fieldElementId(f.key));
             if (!el) continue;
             if (f.type === 'checkbox') {
                 config[f.key] = !!el.checked;
@@ -852,7 +1026,7 @@
             if (!f.required) continue;
             const v = config[f.key];
             if (v === '' || v === undefined || v === null) {
-                showToast(`入力エラー: ${f.label} は必須です`, 'error');
+                showToast(t('toast.required_field', f.label), 'error');
                 return;
             }
         }
@@ -878,11 +1052,11 @@
                 };
                 await createModule(payload);
             }
-            showToast('プラグイン設定を保存しました', 'success');
+            showToast(t('toast.plugin_config_saved'), 'success');
             closePluginConfigModal();
             await loadModules();
         } catch (err) {
-            showToast('保存に失敗しました: ' + err.message, 'error');
+            showToast(t('toast.save_fail', err.message), 'error');
         }
     }
 
@@ -898,6 +1072,20 @@
             .replace(/'/g, '&#39;');
     }
     function escapeAttr(s) { return escapeHtml(s); }
+
+    // fieldElementId builds a DOM id from a plugin-provided config key.
+    // Only [A-Za-z0-9_-] is kept so the value is safe inside id="..." and
+    // stable for getElementById().
+    function fieldElementId(key) {
+        return 'cfg_' + String(key).replace(/[^A-Za-z0-9_-]/g, '_');
+    }
+
+    // isUnsafeKey reports whether a plugin-provided key could pollute
+    // Object.prototype if used as an object property name.
+    function isUnsafeKey(key) {
+        const k = String(key);
+        return k === '__proto__' || k === 'constructor' || k === 'prototype';
+    }
 
     function formatBytes(bytes) {
         bytes = Number(bytes) || 0;
@@ -964,5 +1152,10 @@
     // 初期化
     // ============================================================
     loadModules();
+
+    // 言語変更時に再描画
+    window.addEventListener('kizuna-lang-change', () => {
+        if (modules && modules.length > 0) renderModules();
+    });
 
 })();

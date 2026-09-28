@@ -1,4 +1,4 @@
-﻿package module
+package module
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 )
 
 // ============================================================
-// Module は全モジュールが実装する基本インターフェース
+// Module is the base interface all modules implement.
 // ============================================================
 type Module interface {
 	Name() string
@@ -21,7 +21,7 @@ type Module interface {
 }
 
 // ============================================================
-// Logger はログ出力インターフェース
+// Logger is the logging interface.
 // ============================================================
 type Logger interface {
 	Info(format string, args ...interface{})
@@ -31,42 +31,63 @@ type Logger interface {
 }
 
 // ============================================================
-// ModuleManager はモジュールを管理する
+// ModuleManager manages modules.
 // ============================================================
 type ModuleManager interface {
 	Register(ctx context.Context, module Module) error
 	Get(name string) (Module, bool)
 	Start(ctx context.Context)
 	Stop()
+	// NotifyConfigChanged asks the module's run loop to re-read its
+	// interval, so a config change takes effect without a restart.
+	NotifyConfigChanged(name string)
 }
 
 type moduleManager struct {
 	mu      sync.RWMutex
 	modules map[string]Module
+	resets  map[string]chan struct{} // module name -> interval reset signal
 	logger  Logger
 	running bool
 	cancel  context.CancelFunc
+	runCtx  context.Context
 	wg      sync.WaitGroup
 }
 
 func NewModuleManager(logger Logger) ModuleManager {
 	return &moduleManager{
 		modules: make(map[string]Module),
+		resets:  make(map[string]chan struct{}),
 		logger:  logger,
 	}
 }
 
 func (m *moduleManager) Register(ctx context.Context, module Module) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	name := module.Name()
 	if _, exists := m.modules[name]; exists {
+		m.mu.Unlock()
 		return fmt.Errorf("module %s already registered", name)
 	}
 	if err := module.Init(ctx); err != nil {
+		m.mu.Unlock()
 		return err
 	}
 	m.modules[name] = module
+	if m.resets[name] == nil {
+		m.resets[name] = make(chan struct{}, 1)
+	}
+	// If the manager is already running, start this module's loop immediately.
+	// Modules registered after Start() (e.g. hot-reloaded plugins) would
+	// otherwise never run.
+	running := m.running
+	runCtx := m.runCtx
+	m.mu.Unlock()
+
+	if running && runCtx != nil {
+		m.wg.Add(1)
+		go m.runModuleLoop(runCtx, module)
+	}
 	return nil
 }
 
@@ -86,13 +107,19 @@ func (m *moduleManager) Start(ctx context.Context) {
 	m.running = true
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancel = cancel
+	m.runCtx = ctx
+	// Snapshot modules under lock to avoid a race with concurrent Register.
+	mods := make([]Module, 0, len(m.modules))
+	for _, mod := range m.modules {
+		mods = append(mods, mod)
+	}
 	m.mu.Unlock()
 
 	if m.logger != nil {
 		m.logger.Info("ModuleManager started")
 	}
 
-	for _, mod := range m.modules {
+	for _, mod := range mods {
 		m.wg.Add(1)
 		go m.runModuleLoop(ctx, mod)
 	}
@@ -100,22 +127,47 @@ func (m *moduleManager) Start(ctx context.Context) {
 
 func (m *moduleManager) runModuleLoop(ctx context.Context, mod Module) {
 	defer m.wg.Done()
-	interval := mod.Interval()
-	if interval <= 0 {
+	if mod.Interval() <= 0 {
 		return
 	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+
+	m.mu.RLock()
+	resetCh := m.resets[mod.Name()]
+	m.mu.RUnlock()
 
 	mod.Run(ctx)
 
 	for {
+		// Re-read the interval every cycle so a config change takes effect.
+		interval := mod.Interval()
+		if interval <= 0 {
+			return
+		}
+		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-resetCh:
+			// Interval changed; re-evaluate without running now.
+			timer.Stop()
+		case <-timer.C:
 			mod.Run(ctx)
 		}
+	}
+}
+
+// NotifyConfigChanged wakes a module's run loop so it re-reads its interval.
+func (m *moduleManager) NotifyConfigChanged(name string) {
+	m.mu.RLock()
+	ch := m.resets[name]
+	m.mu.RUnlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
 	}
 }
 
@@ -138,11 +190,10 @@ func (m *moduleManager) Stop() {
 }
 
 // ============================================================
-// バックアップ関連の型定義
-// プラグイン（.so）とエージェント本体で共有する
+// Backup types shared between plugins (.so) and the agent.
 // ============================================================
 
-// BackupStatus はバックアップモジュールの最新実行結果を表す
+// BackupStatus is the latest backup run result.
 type BackupStatus struct {
 	Name    string `json:"name,omitempty"`
 	LastRun string `json:"last_run,omitempty"`
@@ -151,20 +202,44 @@ type BackupStatus struct {
 	NextRun string `json:"next_run,omitempty"`
 }
 
-// BackupStatusProvider はバックアップ対応プラグインが実装する
+// BackupStatusProvider is implemented by backup plugins.
 type BackupStatusProvider interface {
 	GetBackupStatus() *BackupStatus
 }
 
 // ============================================================
-// BackupRunner はバックアップ実行可能なプラグインが実装する
+// BackupRunner is implemented by plugins that can run backups.
 // ============================================================
 type BackupRunner interface {
 	RunBackup(ctx context.Context) error
 }
 
 // ============================================================
-// BackupResult はバックアップ実行結果
+// Security types shared between security plugins (.so) and the agent.
+// ============================================================
+
+// SecurityEvent is one security-relevant event detected by a plugin.
+type SecurityEvent struct {
+	Plugin    string    `json:"plugin"`
+	Category  string    `json:"category"` // ssh_login / ssh_failed / sudo / install / account / config
+	Level     string    `json:"level"`    // critical / warning / info
+	Title     string    `json:"title"`
+	Message   string    `json:"message"`
+	Source    string    `json:"source,omitempty"` // log file the event came from
+	Actor     string    `json:"actor,omitempty"`  // user who performed the action
+	IP        string    `json:"ip,omitempty"`     // source IP address
+	Timestamp time.Time `json:"timestamp"`
+}
+
+// SecurityEventProvider is implemented by security plugins.
+// The agent drains pending events and forwards them to the dashboard.
+type SecurityEventProvider interface {
+	// DrainSecurityEvents returns and clears the pending security events.
+	DrainSecurityEvents() []SecurityEvent
+}
+
+// ============================================================
+// BackupResult is a backup run result.
 // ============================================================
 type BackupResult struct {
 	StartedAt  time.Time `json:"started_at"`
@@ -175,13 +250,11 @@ type BackupResult struct {
 }
 
 // ============================================================
-// Phase 8-6 追加: 設定フィールド自己申告機構
-// プラグインが .so 側で「どんな設定項目が必要か」を自己申告する。
-// フロントエンドはこの情報だけを使って動的フォームを組み立てる。
+// Config field self-declaration.
+// Plugins declare which config fields they need; the frontend builds a form from it.
 // ============================================================
 
-// ConfigFieldType はフォームの入力種別や。
-// マジックストリングを避けるために型を切る。
+// ConfigFieldType is the form input type.
 type ConfigFieldType string
 
 const (
@@ -193,8 +266,8 @@ const (
 	FieldTextarea ConfigFieldType = "textarea"
 )
 
-// ConfigField はプラグインが自己申告する設定項目や。
-// JSON タグはフロントエンドのフォーム生成でそのまま使う。
+// ConfigField is a config field declared by a plugin.
+// JSON tags are used directly by the frontend form.
 type ConfigField struct {
 	Key         string          `json:"key"`
 	Label       string          `json:"label"`
@@ -210,8 +283,8 @@ type ConfigField struct {
 	Pattern     string          `json:"pattern,omitempty"`
 }
 
-// Validate は値がフィールド定義に合致するか検証する。
-// サーバーサイドバリデーションの要や。フロント任せにしたらあかん。
+// Validate checks a value against the field definition.
+// Server-side validation is required; do not rely on the frontend.
 func (f *ConfigField) Validate(raw string) error {
 	if f.Required && raw == "" {
 		return fmt.Errorf("%s は必須です", f.Label)
@@ -263,13 +336,12 @@ func (f *ConfigField) Validate(raw string) error {
 	return nil
 }
 
-// ConfigProvider はプラグインが設定項目を自己申告するためのインターフェースや。
-// 実装は任意。実装しとるプラグインだけが動的フォームを使える。
+// ConfigProvider lets a plugin declare its config fields (optional).
 type ConfigProvider interface {
 	GetConfigFields() []ConfigField
 }
 
-// ValidateAll はフィールド定義に沿って全設定を一括検証する。
+// ValidateAll validates all values against the field definitions.
 func ValidateAll(fields []ConfigField, values map[string]string) error {
 	for i := range fields {
 		f := &fields[i]
@@ -280,7 +352,7 @@ func ValidateAll(fields []ConfigField, values map[string]string) error {
 	return nil
 }
 
-// ApplyDefaults は未入力のフィールドにデフォルト値を埋める。
+// ApplyDefaults fills default values for missing fields.
 func ApplyDefaults(fields []ConfigField, values map[string]string) map[string]string {
 	out := make(map[string]string, len(values))
 	for k, v := range values {
@@ -298,14 +370,11 @@ func ApplyDefaults(fields []ConfigField, values map[string]string) map[string]st
 }
 
 // ============================================================
-// Phase 8-6 追加: 表示名自己申告機構
-// プラグインが「バッジに表示する短い名前」を自己申告するための
-// オプショナルインターフェースや。実装は任意。
+// Display name self-declaration (optional).
 // ============================================================
 
-// DisplayNameProvider はプラグインが表示用の短い名前を申告する。
-// 実装しとるプラグインは、フロントのバッジにこの名前が表示される。
-// 未実装のプラグインは、フロント側のフォールバック（PLUGIN表示）になる。
+// DisplayNameProvider lets a plugin declare a short display name.
+// Plugins that implement it show this name; otherwise the frontend falls back to "PLUGIN".
 type DisplayNameProvider interface {
 	DisplayName() string
 }

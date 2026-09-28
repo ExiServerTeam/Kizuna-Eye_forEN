@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Kizuna-Eye - ログイン</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/auth.css">
+    <script src="/auth-theme.js"></script>
+</head>
+<body class="auth-body">
+    <button type="button" class="auth-theme-toggle" id="authThemeToggle" aria-label="テーマ切り替え">
+        <span class="auth-theme-icon" id="authThemeIcon">🌙</span>
+    </button>
+    <div class="auth-card">
+        <h1 class="auth-logo">Kizuna-Eye</h1>
+        <p class="auth-subtitle">ログイン</p>
+        <form id="loginForm" class="auth-form">
+            <label class="auth-label" for="username">ユーザー名</label>
+            <input class="auth-input" type="text" id="username" name="username" autocomplete="username" required autofocus>
+
+            <label class="auth-label" for="password">パスワード</label>
+            <input class="auth-input" type="password" id="password" name="password" autocomplete="current-password" required>
+
+            <button type="submit" class="auth-btn" id="loginBtn">ログイン</button>
+            <p class="auth-error" id="authError" hidden></p>
+        </form>
+    </div>
+    <script src="/login.js"></script>
+</body>
+</html>

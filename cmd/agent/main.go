@@ -7,10 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"plugin"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -34,6 +34,28 @@ var loadedPlugins = struct {
 	names map[string]bool
 }{
 	names: make(map[string]bool),
+}
+
+// wsWriter serializes writes to a WebSocket connection.
+// gorilla/websocket allows only one concurrent writer per connection,
+// but the agent writes from the status loop, the ping loop, and
+// backup-result goroutines.
+type wsWriter struct {
+	mu   sync.Mutex
+	conn *websocket.Conn
+}
+
+func (w *wsWriter) WriteMessage(messageType int, data []byte) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_ = w.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	return w.conn.WriteMessage(messageType, data)
+}
+
+func (w *wsWriter) WriteControl(messageType int, data []byte, deadline time.Time) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.conn.WriteControl(messageType, data, deadline)
 }
 
 func main() {
@@ -62,8 +84,14 @@ func main() {
 
 	manager := module.NewModuleManager(lg)
 
-	// ---- システムモジュール ----
+	// ---- System module ----
+	// SystemConfig.Interval is in whole seconds. Truncating a sub-second
+	// value (e.g. 0.5) to int would yield 0 and silently fall back to 1s,
+	// so clamp to a minimum of 1 here and log the effective value.
 	sysInterval := int(cfg.Interval)
+	if sysInterval < 1 {
+		sysInterval = 1
+	}
 	sysConfig := &module.SystemConfig{
 		DiskPath:          cfg.DiskPath,
 		Interval:          sysInterval,
@@ -81,7 +109,7 @@ func main() {
 	}
 	lg.Info("システムモジュール登録: 収集間隔=%d秒", sysInterval)
 
-	// ---- プラグイン読み込み ----
+	// ---- Load plugins ----
 	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg); err != nil {
 		lg.Error("プラグイン読み込みエラー: %v", err)
 	}
@@ -145,7 +173,20 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 		if loadedPlugins.names[cfg.Name] {
-			lg.Debug("プラグイン '%s' は既に読み込み済み", cfg.Name)
+			// Already loaded: apply the new config to the running plugin
+			// so changes like interval_sec take effect without a restart.
+			if existing, ok := manager.Get(cfg.Name); ok {
+				if configurable, ok := existing.(interface {
+					Configure(config interface{}) error
+				}); ok {
+					if err := configurable.Configure(cfg.Config); err != nil {
+						lg.Error("プラグイン '%s' の再設定失敗: %v", cfg.Name, err)
+					} else {
+						manager.NotifyConfigChanged(cfg.Name)
+						lg.Info("プラグイン '%s' の設定を更新しました", cfg.Name)
+					}
+				}
+			}
 			continue
 		}
 
@@ -207,7 +248,7 @@ func loadAndRegisterPlugin(
 	return nil
 }
 
-// watchModulesFile は modules.json の変更を監視して再読み込みする
+// watchModulesFile watches modules.json for changes and reloads.
 func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger) {
 	var lastMod time.Time
 
@@ -248,13 +289,37 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 5 * time.Second,
 	}
-	conn, _, err := dialer.Dial(cfg.DashboardURL, nil)
+
+	// Send the shared agent token as both a header and a query parameter.
+	// The dashboard prefers the header; the query parameter exists only for
+	// environments where a proxy strips custom headers. When the token is
+	// empty, the dashboard falls back to heuristic detection (legacy).
+	dialURL := cfg.DashboardURL
+	header := http.Header{}
+	// Always declare role=agent. The dashboard only considers a connection
+	// as a candidate agent when this is present, which stops a browser from
+	// being mistaken for (and hijacking) the agent connection.
+	sep := "?"
+	if strings.Contains(dialURL, "?") {
+		sep = "&"
+	}
+	dialURL = dialURL + sep + "role=agent"
+	if cfg.Token != "" {
+		header.Set("X-Kizuna-Agent-Token", cfg.Token)
+	}
+
+	conn, _, err := dialer.Dial(dialURL, header)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 	lg.Info("WebSocket 接続確立")
 
+	// Serialize all writes to this connection.
+	writer := &wsWriter{conn: conn}
+
+	// The agent only receives small command messages from the dashboard.
+	conn.SetReadLimit(1 << 20) // 1 MiB
 	conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(120 * time.Second))
@@ -273,7 +338,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 			case <-pingCtx.Done():
 				return
 			case <-ticker.C:
-				if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
+				if err := writer.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
 					lg.Debug("Ping 送信失敗: %v", err)
 					return
 				}
@@ -281,7 +346,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 		}
 	}()
 
-	// ★ Phase 8-5: Dashboard からのコマンドを受信する読み取りループ
+	// Read loop for commands from the dashboard.
 	readCtx, readCancel := context.WithCancel(ctx)
 	defer readCancel()
 
@@ -302,7 +367,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 			}
 			conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 
-			// コマンドかどうか判定（action フィールドの有無）
+			// Check whether it is a command (has an action field).
 			var probe struct {
 				Action string `json:"action"`
 			}
@@ -310,7 +375,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 				continue
 			}
 
-			handleDashboardCommand(ctx, msg, manager, conn, lg)
+			handleDashboardCommand(ctx, msg, manager, writer, lg)
 		}
 	}()
 
@@ -318,7 +383,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	if err := sendStatus(conn, manager, lg); err != nil {
+	if err := sendStatus(writer, manager, lg); err != nil {
 		return err
 	}
 
@@ -327,9 +392,63 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := sendStatus(conn, manager, lg); err != nil {
+			if err := sendStatus(writer, manager, lg); err != nil {
 				lg.Error("送信失敗: %v", err)
 				return err
+			}
+			sendSecurityEvents(writer, manager, lg)
+		}
+	}
+}
+
+// ============================================================
+// sendSecurityEvents forwards pending security events to the Dashboard.
+// Each event is sent as a separate {event:"security_alert"} message so the
+// dashboard can notify and record it individually.
+// ============================================================
+func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) {
+	loadedPlugins.Lock()
+	names := make([]string, 0, len(loadedPlugins.names))
+	for name := range loadedPlugins.names {
+		names = append(names, name)
+	}
+	loadedPlugins.Unlock()
+
+	for _, name := range names {
+		mod, ok := manager.Get(name)
+		if !ok {
+			continue
+		}
+		provider, ok := mod.(module.SecurityEventProvider)
+		if !ok {
+			continue
+		}
+		events := provider.DrainSecurityEvents()
+		for _, ev := range events {
+			payload := map[string]interface{}{
+				"event":     "security_alert",
+				"plugin":    ev.Plugin,
+				"category":  ev.Category,
+				"level":     ev.Level,
+				"title":     ev.Title,
+				"message":   ev.Message,
+				"source":    ev.Source,
+				"actor":     ev.Actor,
+				"ip":        ev.IP,
+				"timestamp": ev.Timestamp.Format(time.RFC3339),
+			}
+			data, err := json.Marshal(payload)
+			if err != nil {
+				continue
+			}
+			if err := w.WriteMessage(websocket.TextMessage, data); err != nil {
+				if lg != nil {
+					lg.Error("セキュリティイベント送信失敗: %v", err)
+				}
+				return
+			}
+			if lg != nil {
+				lg.Info("セキュリティイベント送信: [%s] %s (%s)", ev.Level, ev.Title, ev.Category)
 			}
 		}
 	}
@@ -338,7 +457,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 // ============================================================
 // sendStatus はステータスを WebSocket で送信する
 // ============================================================
-func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.Logger) error {
+func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) error {
 	sysMod, ok := manager.Get("system")
 	if !ok {
 		return nil
@@ -354,7 +473,9 @@ func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.L
 	}
 
 	if bs := collectBackupStatus(manager); bs != nil {
+		s.Backup.Name = bs.Name
 		s.Backup.LastRun = bs.LastRun
+		s.Backup.NextRun = bs.NextRun
 		s.Backup.Status = bs.Status
 		s.Backup.Size = bs.Size
 	}
@@ -369,8 +490,7 @@ func sendStatus(conn *websocket.Conn, manager module.ModuleManager, lg *logger.L
 		return err
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if err := conn.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
+	if err := w.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
 		return err
 	}
 
@@ -441,7 +561,7 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 }
 
 // ============================================================
-// Phase 8-5: Dashboard からのコマンド処理
+// Command handling from the dashboard.
 // ============================================================
 
 // handleDashboardCommand は Dashboard から受信したコマンドを処理する。
@@ -449,7 +569,7 @@ func handleDashboardCommand(
 	ctx context.Context,
 	raw []byte,
 	manager module.ModuleManager,
-	conn *websocket.Conn,
+	w *wsWriter,
 	lg *logger.Logger,
 ) {
 	var cmd struct {
@@ -471,13 +591,13 @@ func handleDashboardCommand(
 
 	mod, ok := manager.Get(cmd.Plugin)
 	if !ok {
-		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, 0, "プラグインが見つかりません", lg)
+		sendBackupResult(w, cmd.Plugin, cmd.RequestID, "error", 0, 0, "プラグインが見つかりません", lg)
 		return
 	}
 
 	runner, ok := mod.(module.BackupRunner)
 	if !ok {
-		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, 0, "BackupRunner 未実装", lg)
+		sendBackupResult(w, cmd.Plugin, cmd.RequestID, "error", 0, 0, "BackupRunner 未実装", lg)
 		return
 	}
 
@@ -487,7 +607,7 @@ func handleDashboardCommand(
 		duration := time.Since(start).Milliseconds()
 
 		if err != nil {
-			sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "error", 0, duration, err.Error(), lg)
+			sendBackupResult(w, cmd.Plugin, cmd.RequestID, "error", 0, duration, err.Error(), lg)
 			return
 		}
 
@@ -497,13 +617,13 @@ func handleDashboardCommand(
 				size = st.Size
 			}
 		}
-		sendBackupResult(conn, cmd.Plugin, cmd.RequestID, "success", size, duration, "", lg)
+		sendBackupResult(w, cmd.Plugin, cmd.RequestID, "success", size, duration, "", lg)
 	}()
 }
 
 // sendBackupResult は実行結果を Dashboard に返す。
 func sendBackupResult(
-	conn *websocket.Conn,
+	w *wsWriter,
 	plugin, requestID, status string,
 	size, durationMs int64,
 	errMsg string,
@@ -526,35 +646,9 @@ func sendBackupResult(
 		lg.Error("backup_result のJSON化失敗: %v", err)
 		return
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	if err := w.WriteMessage(websocket.TextMessage, data); err != nil {
 		lg.Error("backup_result の送信失敗: %v", err)
 		return
 	}
 	lg.Info("手動実行結果送信: plugin=%s status=%s duration=%dms", plugin, status, durationMs)
-}
-
-// parseSize は "1.2 GB" 形式の文字列を int64 に変換する
-func parseSize(sizeStr string) int64 {
-	if sizeStr == "" {
-		return 0
-	}
-	parts := strings.Fields(sizeStr)
-	if len(parts) != 2 {
-		return 0
-	}
-	val, err := strconv.ParseFloat(parts[0], 64)
-	if err != nil {
-		return 0
-	}
-	unit := strings.ToUpper(parts[1])
-	multipliers := map[string]int64{
-		"B": 1, "KB": 1024, "MB": 1024 * 1024,
-		"GB": 1024 * 1024 * 1024, "TB": 1024 * 1024 * 1024 * 1024,
-	}
-	mult, ok := multipliers[unit]
-	if !ok {
-		return 0
-	}
-	return int64(val * float64(mult))
 }

@@ -9,6 +9,7 @@ import (
 	"plugin"
 	"reflect"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -94,7 +95,7 @@ func inspect(soPath string) (res InspectResult) {
 		return res
 	}
 
-	// Lookup は「変数のアドレス」を返すので、Elem() でポインタを剥がす。
+	// Lookup returns the variable address, so unwrap the pointer with Elem().
 	v := reflect.ValueOf(sym)
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
@@ -121,7 +122,7 @@ func inspect(soPath string) (res InspectResult) {
 	res.Fields = json.RawMessage(fieldsJSON)
 	res.Success = true
 
-	// --- 追加情報をリフレクションで取得 ---
+	// --- Get extra info via reflection ---
 	if s := callString(v, "Name"); s != "" {
 		res.Name = s
 	}
@@ -181,15 +182,11 @@ func callDurationSec(v reflect.Value, methodName string) float64 {
 
 func deriveNameFromPath(soPath string) string {
 	base := soPath
-	for j := len(base) - 1; j >= 0; j-- {
-		if base[j] == '/' {
-			base = base[j+1:]
-			break
-		}
+	// Treat both "/" (POSIX) and "\\" (Windows) as path separators.
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
 	}
-	if len(base) > 3 && base[len(base)-3:] == ".so" {
-		base = base[:len(base)-3]
-	}
+	base = strings.TrimSuffix(base, ".so")
 	return base
 }
 

@@ -1,11 +1,11 @@
 package module
 
-// PluginModule は Go プラグインとして実装されるモジュールのインターフェース
-// プラグインは NewPluginModule というシンボルをエクスポートする必要がある
+// PluginModule is a module implemented as a Go plugin.
+// The plugin must export a symbol named NewPluginModule.
 type PluginModule interface {
 	Module
 }
 
-// PluginConstructor はプラグインのコンストラクタ関数の型
-// プラグインはこのシグネチャの関数を NewPluginModule としてエクスポートする
+// PluginConstructor is the plugin constructor type.
+// The plugin exports a function of this signature as NewPluginModule.
 type PluginConstructor func(logger Logger) PluginModule

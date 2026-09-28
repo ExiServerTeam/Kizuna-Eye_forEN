@@ -1,17 +1,31 @@
 dashboard_config.json
 agent_config.json
 modules.json
+# users.json holds bcrypt password hashes; never commit it.
+users.json
 logs/
 *.log
+# Rotated logs (e.g. agent.log.1, kizuna-security.log.legacy-...).
+# Plain "*.log" does NOT match these, so they were tracked by "git add -A".
+*.log.*
 *.so
 *.meta.json
 plugins/
 agent_linux
 dashboard_linux
 plugin-inspect
+agent
+dashboard
+# Compiled test binaries (e.g. from "go test -c").
+dashboard_test
+agent_test
+*.test
 *.tmp
 *.bak
 
 # バックアップファイル
 *.bak
 *.bak-*
+
+# SSH credentials for local scripts (never commit)
+scripts/.ssh_env

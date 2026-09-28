@@ -5,12 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"time"
 )
 
 // ============================================================
-// TelegramNotifier は Telegram Bot API で通知を送る
+// TelegramNotifier sends notifications via the Telegram Bot API.
 // ============================================================
 type TelegramNotifier struct {
 	botToken string
@@ -29,12 +30,17 @@ func NewTelegramNotifier(botToken, chatID string) *TelegramNotifier {
 func (t *TelegramNotifier) Name() string { return "telegram" }
 
 func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
-	text := fmt.Sprintf("%s *%s*\n%s", a.Icon, a.Title, a.FullMessage())
+	// Use HTML mode and escape dynamic values to avoid 400s from special characters.
+	title := html.EscapeString(a.Title)
+	msg := html.EscapeString(a.FullMessage())
+	// Telegram rejects messages longer than 4096 characters (HTTP 400).
+	// Truncate so one long alert cannot drop the whole notification.
+	text := truncateRunes(fmt.Sprintf("%s<b>%s</b>\n%s", a.IconPrefix(), title, msg), 4096)
 
 	payload := map[string]string{
 		"chat_id":    t.chatID,
 		"text":       text,
-		"parse_mode": "Markdown",
+		"parse_mode": "HTML",
 	}
 
 	body, err := json.Marshal(payload)

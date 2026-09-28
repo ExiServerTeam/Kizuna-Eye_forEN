@@ -7,6 +7,9 @@
 :root {
     --bg-primary: #0b0e1a;
     --bg-secondary: #151829;
+    --bg-tertiary: #1e2138;
+    --primary-color: #667eea;
+    --primary-hover: #764ba2;
     --bg-card: rgba(255, 255, 255, 0.05);
     --bg-card-hover: rgba(255, 255, 255, 0.08);
     --bg-header: rgba(255, 255, 255, 0.05);
@@ -60,6 +63,9 @@
 [data-theme="light"] {
     --bg-primary: #f5efe5;
     --bg-secondary: #ffffff;
+    --bg-tertiary: #ece3d5;
+    --primary-color: #667eea;
+    --primary-hover: #764ba2;
     --bg-card: rgba(255, 255, 255, 0.92);
     --bg-card-hover: rgba(255, 255, 255, 1);
     --bg-header: rgba(255, 255, 255, 0.95);
@@ -194,11 +200,25 @@ body {
 }
 
 .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font-size: 0.75rem;
     font-weight: 600;
     padding: 4px 14px;
     border-radius: 20px;
     transition: background 0.3s, color 0.3s;
+}
+
+/* 接続状態を示す色付きドット（緑 / 黄 / 赤） */
+.status-badge::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: currentColor;
+    box-shadow: 0 0 6px currentColor;
+    flex-shrink: 0;
 }
 
 .status-badge.connected {
@@ -859,6 +879,114 @@ body {
     display: none !important;
 }
 
+/* ===== メトリクス履歴セクション ===== */
+.history-section {
+    margin-top: 24px;
+    background: var(--bg-card);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 24px;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: background 0.35s, border-color 0.35s;
+}
+
+.history-section[hidden] {
+    display: none !important;
+}
+
+.history-section .backup-body {
+    padding: 0 16px 16px 16px;
+}
+
+#historyChart {
+    width: 100%;
+    display: block;
+}
+
+/* ===== アラート履歴セクション ===== */
+.alerts-section {
+    margin-top: 24px;
+    background: var(--bg-card);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border-radius: 24px;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    transition: background 0.35s, border-color 0.35s;
+}
+
+.alerts-section[hidden] {
+    display: none !important;
+}
+
+.alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 0 24px 20px 24px;
+    max-height: 420px;
+    overflow-y: auto;
+}
+
+.alert-empty {
+    padding: 20px 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 16px;
+    border-radius: 14px;
+    background: var(--bg-secondary);
+    border-left: 4px solid var(--border-color);
+}
+
+.alert-item.critical { border-left-color: #ef4444; }
+.alert-item.warning  { border-left-color: #f59e0b; }
+.alert-item.success  { border-left-color: #22c55e; }
+.alert-item.info     { border-left-color: #3b82f6; }
+
+.alert-item-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.alert-item-title {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.alert-item-message {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+    word-break: break-word;
+}
+
+.alert-item-time {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+    margin-left: 8px;
+}
+
+.backup-toggle-btn.collapsed .backup-toggle-icon {
+    transform: rotate(-90deg);
+}
+
+.backup-toggle-icon {
+    display: inline-block;
+    transition: transform 0.2s;
+}
+
 .backup-header {
     display: flex;
     justify-content: space-between;
@@ -877,6 +1005,29 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.backup-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.alerts-clear-btn {
+    padding: 6px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-color);
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.alerts-clear-btn:hover {
+    background: #ef4444;
+    color: #fff;
 }
 
 .backup-header h2 {
@@ -936,13 +1087,15 @@ body {
 }
 
 .backup-body {
-    max-height: 500px;
-    overflow: hidden;
+    max-height: 70vh;
+    overflow-y: auto;
+    overflow-x: hidden;
     transition: max-height 0.3s ease, opacity 0.3s ease;
     padding: 0 24px 24px 24px;
 }
 
 .backup-body.collapsed {
+    display: none;
     max-height: 0;
     opacity: 0;
     padding: 0 24px;
@@ -969,6 +1122,178 @@ body {
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
+}
+
+.plugin-list-wrap {
+    margin-top: 4px;
+}
+
+.plugin-list-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.plugin-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px 14px;
+    background: var(--bg-backup-item);
+    border-radius: 12px;
+    border-left: 3px solid var(--border-color);
+}
+
+.plugin-row.enabled { border-left-color: #22c55e; }
+.plugin-row.disabled { border-left-color: #8888aa; opacity: 0.7; }
+.plugin-row.active { border-left-color: #f59e0b; }
+
+.plugin-row-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.plugin-row-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 16px;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    padding-left: 2px;
+}
+
+.plugin-row-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-row-type {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.plugin-row-state {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 12px;
+}
+
+.plugin-row-state.enabled { background: var(--status-bg-success); color: var(--status-success); }
+.plugin-row-state.disabled { background: var(--status-bg-unknown); color: var(--status-unknown); }
+.plugin-row-state.success { background: var(--status-bg-success); color: var(--status-success); }
+.plugin-row-state.failed { background: var(--status-bg-error); color: var(--status-error); }
+.plugin-row-state.running { background: var(--status-bg-warning); color: var(--status-warning); }
+.plugin-row-state.standby { background: var(--status-bg-unknown); color: var(--status-unknown); }
+.plugin-row-state.unknown { background: var(--status-bg-unknown); color: var(--status-unknown); }
+
+/* ===== プラグインカード（モジュールごと） ===== */
+.plugin-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+    gap: 14px;
+}
+
+.plugin-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px;
+    background: var(--bg-backup-item);
+    border-radius: 14px;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid var(--border-color);
+    transition: background 0.2s, border-color 0.2s, transform 0.15s;
+    text-decoration: none;
+    color: inherit;
+    cursor: pointer;
+}
+
+.plugin-card:hover {
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+}
+
+.plugin-card.enabled { border-left-color: #22c55e; }
+.plugin-card.disabled { border-left-color: #8888aa; opacity: 0.7; }
+.plugin-card.active { border-left-color: #f59e0b; }
+
+.plugin-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.plugin-card-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.plugin-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.plugin-card-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.8rem;
+}
+
+.plugin-card-row .label {
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.plugin-card-row .value {
+    color: var(--text-secondary);
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* 監視対象など長い値は折り返して表示する */
+.plugin-card-row .value.wrap {
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.4;
+}
+
+.plugin-list-empty {
+    padding: 12px 0;
+    color: var(--text-muted);
+    font-size: 0.85rem;
 }
 
 .backup-value {
@@ -1961,7 +2286,12 @@ body {
         padding: 2px 10px;
     }
 
-    .header-right { gap: 8px; }
+    .header-right {
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        max-width: 100%;
+    }
 
     .gauge-grid {
         grid-template-columns: 1fr;
@@ -2131,6 +2461,23 @@ body {
 
     .logo { font-size: 1.15rem; }
 
+    /* Header controls must wrap instead of overflowing the screen. */
+    .header {
+        gap: 8px;
+    }
+
+    .header-left {
+        min-width: 0;
+        gap: 8px;
+    }
+
+    .header-right {
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        width: 100%;
+        gap: 6px;
+    }
+
     .version-badge { font-size: 0.6rem; padding: 3px 8px; }
 
     .theme-toggle {
@@ -2227,4 +2574,157 @@ body {
     .process-table .col-mem {
         width: 75px;
     }
+}
+
+/* ============================================================
+   スマホ最適化（全ページ共通）
+   ============================================================ */
+
+/* iOS のタップハイライトを消し、操作感を軽くする */
+html {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+}
+
+/* ノッチ付き端末のセーフエリア対応（viewport-fit=cover と併用） */
+.app {
+    padding-left: max(24px, env(safe-area-inset-left));
+    padding-right: max(24px, env(safe-area-inset-right));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+}
+
+/* 横スクロールの慣性と縦方向のみのスクロールチェーン */
+.nav-tabs {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    overscroll-behavior-x: contain;
+}
+
+.nav-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+/* タッチ操作しやすい最小サイズ（44px）を確保 */
+.nav-tab,
+.theme-toggle,
+.btn-primary,
+.btn-secondary,
+.btn-danger,
+.btn-run,
+.btn-open,
+.btn-edit,
+.btn-delete {
+    min-height: 36px;
+}
+
+@media (max-width: 768px) {
+    /* ヘッダーを上部固定してスクロール中も操作しやすく */
+    .header {
+        position: sticky;
+        top: 8px;
+        z-index: 100;
+    }
+
+    /* タブは折り返さず横スクロール（親指でスワイプ） */
+    .nav-tabs {
+        flex-wrap: nowrap;
+        scroll-snap-type: x proximity;
+    }
+
+    .nav-tab {
+        scroll-snap-align: start;
+        min-height: 40px;
+        display: inline-flex;
+        align-items: center;
+    }
+
+    /* モーダルを画面下寄せのシート風に */
+    .modal-overlay {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    .modal {
+        max-height: 90vh;
+        border-radius: 20px 20px 0 0;
+        padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* テーブルは横スクロール許可 */
+    .process-table-wrap {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    /* タッチ端末ではホバー専用ツールチップを無効化 */
+    .core-tooltip {
+        display: none;
+    }
+
+    /* ゲージは中央寄せを維持しつつ最大幅を抑制 */
+    .gauge-container canvas {
+        max-width: 240px;
+    }
+
+    /* 入力欄は 16px 未満だと iOS で自動ズームされるため強制統一 */
+    input,
+    select,
+    textarea,
+    .process-search,
+    .log-lines-select,
+    .config-textarea {
+        font-size: 16px !important;
+    }
+}
+
+@media (max-width: 480px) {
+    .app {
+        padding-left: max(12px, env(safe-area-inset-left));
+        padding-right: max(12px, env(safe-area-inset-right));
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+    }
+
+    .header {
+        top: 4px;
+        padding: 10px 12px;
+    }
+
+    .nav-tab {
+        padding: 8px 14px;
+        font-size: 0.85rem;
+    }
+
+    .gauge-container canvas {
+        max-width: 200px;
+    }
+}
+
+/* 動きを減らす設定の尊重 */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* ===== ユーザーメニュー（auth-guard.js が挿入） ===== */
+.user-menu {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.user-name {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.user-menu .theme-toggle {
+    text-decoration: none;
+    font-size: 0.8rem;
 }

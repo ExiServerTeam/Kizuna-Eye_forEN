@@ -1,0 +1,600 @@
+/* Phase 9-3: 設定エディタ用スタイル */
+
+.config-main {
+    padding: 24px;
+}
+
+.config-container {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    gap: 24px;
+    height: calc(100vh - 80px);
+}
+
+/* サイドバー */
+.config-sidebar {
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 20px;
+    border: 1px solid var(--border-color);
+}
+
+.sidebar-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--text-primary);
+}
+
+.config-file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.config-file-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.config-file-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--primary-color);
+    transform: translateX(4px);
+}
+
+.config-file-btn.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+.file-name {
+    font-weight: 500;
+}
+
+/* エディタエリア */
+.config-editor-area {
+    background: var(--bg-card);
+    border-radius: 16px;
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.editor-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.editor-actions {
+    display: flex;
+    gap: 12px;
+}
+
+.btn-secondary, .btn-primary {
+    padding: 8px 20px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+    background: var(--border-color);
+}
+
+.btn-primary {
+    background: var(--primary-color);
+    color: white;
+}
+
+.btn-primary:hover {
+    background: var(--primary-hover);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+/* エディタ本体 */
+.editor-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.config-textarea {
+    flex: 1;
+    width: 100%;
+    padding: 20px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    border: none;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    resize: none;
+    outline: none;
+}
+
+.config-textarea::placeholder {
+    color: var(--text-muted);
+}
+
+/* エディタフッター */
+.editor-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+}
+
+.validation-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+}
+
+.status-text {
+    color: var(--text-secondary);
+}
+
+.validation-status.invalid .status-text {
+    color: #ef4444;
+}
+
+.editor-info {
+    display: flex;
+    gap: 16px;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+/* トースト */
+.toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.toast {
+    padding: 12px 20px;
+    border-radius: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    font-size: 0.9rem;
+    animation: slideIn 0.3s ease-out;
+    max-width: 300px;
+}
+
+.toast.success {
+    border-left: 4px solid #22c55e;
+}
+
+.toast.error {
+    border-left: 4px solid #ef4444;
+}
+
+.toast.info {
+    border-left: 4px solid #3b82f6;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* レスポンシブ */
+@media (max-width: 768px) {
+    .config-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+
+    .config-sidebar {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .editor-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: stretch;
+    }
+
+    .editor-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .editor-actions button {
+        width: 100%;
+        padding: 12px;
+        min-height: 44px;
+    }
+
+    /* スマホでは編集領域を広く確保 */
+    .config-container {
+        height: auto;
+        min-height: calc(100vh - 140px);
+    }
+
+    .config-editor-area {
+        min-height: 60vh;
+    }
+
+    .config-textarea {
+        padding: 14px;
+    }
+}
+
+/* アラート閾値パネル */
+.alert-config-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.alert-config-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.alert-config-body input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 16px;
+}
+
+.alert-config-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    text-align: right;
+}
+
+/* GUI / JSON モード切替 */
+.editor-mode {
+    display: inline-flex;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 10px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    margin-left: auto;
+    margin-right: 12px;
+}
+
+.mode-btn {
+    padding: 5px 14px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+}
+
+.mode-btn.active {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+/* GUI 設定フォーム */
+.gui-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.gui-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.gui-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    text-align: right;
+}
+
+.gui-group {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    background: var(--bg-primary);
+}
+
+.gui-group legend {
+    padding: 0 8px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.gui-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.gui-field:last-child { margin-bottom: 0; }
+
+.gui-field label { font-size: 0.82rem; color: var(--text-secondary); }
+
+.gui-field input[type="text"],
+.gui-field input[type="number"],
+.gui-field input[type="password"],
+.gui-field select,
+.gui-field textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 16px;
+}
+
+.gui-field .hint { font-size: 0.72rem; color: var(--text-muted); }
+
+.gui-check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.gui-check input { width: 18px; height: 18px; }
+.gui-check label { font-size: 0.85rem; color: var(--text-primary); }
+
+.channel-card {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: var(--bg-secondary);
+}
+
+.channel-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.channel-head select { flex: 1; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-primary); font-size: 16px; }
+
+.channel-type-label {
+    flex: 1;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.channel-note {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.channel-remove {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: rgba(239, 68, 68, 0.12);
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.gui-add-channel {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px dashed var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: 0.85rem;
+}
+
+.gui-note { font-size: 0.85rem; color: var(--text-muted); }
+
+/* iOS 自動ズーム防止のため 16px 以上を維持 */
+.config-textarea {
+    font-size: 16px;
+}
+
+/* タッチ端末では補助的なヒントを控えめに */
+@media (hover: none) {
+    .config-file-btn:hover {
+        transform: none;
+    }
+}
+
+/* ============================================================
+   プラグイン編集と同じフォーム部品
+   （モジュール管理画面の config-group / config-field と共通の見た目）
+   ============================================================ */
+.config-group {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    background: var(--bg-primary);
+}
+
+.config-group legend {
+    padding: 0 8px;
+    font-weight: 700;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+}
+
+.config-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.config-field:last-child { margin-bottom: 0; }
+
+.config-field label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.config-field .req { color: #ef4444; }
+
+.config-field input[type="text"],
+.config-field input[type="number"],
+.config-field input[type="password"],
+.config-field select,
+.config-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: 16px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.config-field input:focus,
+.config-field select:focus,
+.config-field textarea:focus {
+    outline: none;
+    border-color: #667eea;
+    box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.15);
+}
+
+.config-field .field-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+.config-field .checkbox-wrap {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+}
+
+.config-field .checkbox-wrap input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.form-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 30px 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+}
+
+/* やさしいUI: 画面上部の説明文 */
+.gui-help {
+    margin: 0 0 16px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    background: rgba(102, 126, 234, 0.12);
+    border: 1px solid rgba(102, 126, 234, 0.25);
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+
+/* モジュール（プラグイン）設定ブロック */
+.module-config-block {
+    margin-bottom: 22px;
+}
+
+.module-config-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.module-config-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}

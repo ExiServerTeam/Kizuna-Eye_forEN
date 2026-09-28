@@ -2,10 +2,10 @@
 <html lang="ja" data-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye - モジュール管理</title>
-    <link rel="stylesheet" href="/style.css">
-    <link rel="stylesheet" href="/modules.css">
+    <link rel="stylesheet" href="/style.css?v=0.7.1">
+    <link rel="stylesheet" href="/modules.css?v=0.7.1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -14,12 +14,19 @@
             <div class="header-left">
                 <h1 class="logo">Kizuna-Eye</h1>
                 <nav class="nav-tabs">
-                    <a href="/" class="nav-tab">ダッシュボード</a>
-                    <a href="/modules.html" class="nav-tab active">モジュール管理</a>
+                    <a href="/" class="nav-tab" data-i18n="nav.dashboard">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab active" data-role-min="operator" data-i18n="nav.modules">モジュール管理</a>
+                    <a href="/config-editor.html" class="nav-tab" data-role-min="admin" data-i18n="nav.config">設定エディタ</a>
+                    <a href="/logs.html" class="nav-tab" data-i18n="nav.logs">ログ</a>
                 </nav>
+                <span class="status-badge" id="connectionStatus">接続中</span>
             </div>
             <div class="header-right">
-                <span class="version-badge">v0.6.0</span>
+                <span class="version-badge">v0.6.1</span>
+                <button id="langToggle" class="theme-toggle" aria-label="言語切り替え" data-i18n-aria-label="lang.toggle">
+                    <span class="theme-icon" id="langIcon">🌐</span>
+                    <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
+                </button>
                 <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
                     <span class="theme-icon" id="themeIcon">🌙</span>
                     <span class="theme-track"><span class="theme-thumb"></span></span>
@@ -31,23 +38,23 @@
         <main class="main">
             <div class="page-header">
                 <div class="page-header-left">
-                    <h2>モジュール管理</h2>
-                    <p class="page-desc">モジュールを追加・編集・削除できます。</p>
+                    <h2 data-i18n="modules.heading">モジュール管理</h2>
+                    <p class="page-desc" data-i18n="modules.page_desc">モジュールを追加・編集・削除できます。</p>
                 </div>
                 <div class="page-header-right">
                     <div class="file-actions">
                         <!-- ファイル入力は label で紐付け -->
-                        <label for="fileInput" class="btn-secondary" role="button" tabindex="0">
+                        <label for="fileInput" class="btn-secondary" role="button" tabindex="0" data-i18n="modules.load_json">
                             JSON読み込み
                         </label>
                         <input type="file" id="fileInput" accept=".json" hidden>
 
-                        <label for="pluginInput" class="btn-secondary" role="button" tabindex="0">
+                        <label for="pluginInput" class="btn-secondary" role="button" tabindex="0" data-i18n="modules.add_plugin">
                             プラグイン追加
                         </label>
                         <input type="file" id="pluginInput" accept=".so" hidden>
 
-                        <button type="button" id="exportFileBtn" class="btn-secondary">
+                        <button type="button" id="exportFileBtn" class="btn-secondary" data-i18n="modules.export">
                             書き出し
                         </button>
                     </div>
@@ -56,19 +63,19 @@
 
             <div class="module-list-container">
                 <div class="module-stats">
-                    <span class="stat-item">全モジュール: <strong id="totalCount">0</strong></span>
-                    <span class="stat-item">有効: <strong id="enabledCount" class="stat-enabled">0</strong></span>
-                    <span class="stat-item">無効: <strong id="disabledCount" class="stat-disabled">0</strong></span>
+                    <span class="stat-item"><span data-i18n="modules.total">全モジュール</span>: <strong id="totalCount">0</strong></span>
+                    <span class="stat-item"><span data-i18n="modules.enabled">有効</span>: <strong id="enabledCount" class="stat-enabled">0</strong></span>
+                    <span class="stat-item"><span data-i18n="modules.disabled">無効</span>: <strong id="disabledCount" class="stat-disabled">0</strong></span>
                 </div>
 
                 <div class="module-grid" id="moduleGrid">
-                    <div class="loading-spinner">読み込み中...</div>
+                    <div class="loading-spinner" data-i18n="modules.loading">読み込み中...</div>
                 </div>
             </div>
         </main>
 
         <footer class="footer">
-            <p>Kizuna-Eye v0.6.0 &middot; リアルタイムシステムモニタリング</p>
+            <p>Kizuna-Eye v0.6.1 &middot; リアルタイムシステムモニタリング</p>
         </footer>
     </div>
 
@@ -82,71 +89,71 @@
             <div class="modal-body">
                 <form id="moduleForm" novalidate>
                     <div class="form-group">
-                        <label for="modName">モジュール名 <span class="required">*</span></label>
-                        <input type="text" id="modName" placeholder="例: backup_production" required>
-                        <small class="form-hint">英数字とアンダースコア（_）が使えます</small>
+                        <label for="modName"><span data-i18n="modules.form_name">モジュール名</span> <span class="required">*</span></label>
+                        <input type="text" id="modName" data-i18n-placeholder="modules.form_name_placeholder" placeholder="例: backup_production" required>
+                        <small class="form-hint" data-i18n="modules.form_name_hint">英数字とアンダースコア（_）が使えます</small>
                         <div class="form-error" id="modNameError"></div>
                     </div>
 
                     <div class="form-group">
-                        <label>バックアップ種類 <span class="required">*</span></label>
+                        <label><span data-i18n="modules.form_type">バックアップ種類</span> <span class="required">*</span></label>
                         <div class="radio-group">
                             <label class="radio-label">
                                 <input type="radio" name="modType" value="pro" checked>
                                 <span class="radio-badge pro">PRO</span>
-                                <span class="radio-desc">設定ファイル（INI）あり・cron対応</span>
+                                <span class="radio-desc" data-i18n="modules.form_type_pro_desc">設定ファイル（INI）あり・cron対応</span>
                             </label>
                             <label class="radio-label">
                                 <input type="radio" name="modType" value="lite">
                                 <span class="radio-badge lite">LITE</span>
-                                <span class="radio-desc">シンプル・CLI引数方式</span>
+                                <span class="radio-desc" data-i18n="modules.form_type_lite_desc">シンプル・CLI引数方式</span>
                             </label>
                         </div>
                     </div>
 
                     <div class="form-group" id="configPathGroup">
-                        <label for="modConfigPath">設定ファイルパス</label>
+                        <label for="modConfigPath" data-i18n="modules.form_config_path">設定ファイルパス</label>
                         <input type="text" id="modConfigPath" placeholder="/etc/backup/config.ini">
-                        <small class="form-hint">PRO版のみ必要です。空の場合は自動検出を試みます</small>
+                        <small class="form-hint" data-i18n="modules.form_config_hint">PRO版のみ必要です。空の場合は自動検出を試みます</small>
                     </div>
 
                     <div class="form-group">
-                        <label for="modLogPath">ログファイルパス</label>
+                        <label for="modLogPath" data-i18n="modules.form_log_path">ログファイルパス</label>
                         <input type="text" id="modLogPath" placeholder="/var/log/backup.log">
-                        <small class="form-hint">空の場合は自動で検出します</small>
+                        <small class="form-hint" data-i18n="modules.form_log_hint">空の場合は自動で検出します</small>
                     </div>
 
                     <div class="form-group">
-                        <label for="modInterval">チェック間隔（秒） <span class="required">*</span></label>
+                        <label for="modInterval"><span data-i18n="modules.form_interval">チェック間隔（秒）</span> <span class="required">*</span></label>
                         <input type="number" id="modInterval" value="60" min="10" max="3600" required>
-                        <small class="form-hint">10〜3600秒（1時間）の範囲で指定してください</small>
+                        <small class="form-hint" data-i18n="modules.form_interval_hint">10〜3600秒（1時間）の範囲で指定してください</small>
                         <div class="form-error" id="modIntervalError"></div>
                     </div>
 
                     <div class="form-group">
-                        <label for="modTargetDir">対象ディレクトリ（表示用）</label>
+                        <label for="modTargetDir" data-i18n="modules.form_target">対象ディレクトリ（表示用）</label>
                         <input type="text" id="modTargetDir" placeholder="/var/www">
-                        <small class="form-hint">バックアップ対象ディレクトリ（監視画面に表示されます）</small>
+                        <small class="form-hint" data-i18n="modules.form_target_hint">バックアップ対象ディレクトリ（監視画面に表示されます）</small>
                     </div>
 
                     <div class="form-group">
-                        <label for="modRemoteDest">リモート接続先（表示用）</label>
+                        <label for="modRemoteDest" data-i18n="modules.form_remote">リモート接続先（表示用）</label>
                         <input type="text" id="modRemoteDest" placeholder="backup@192.168.1.100:/backup">
-                        <small class="form-hint">バックアップ送信先（監視画面に表示されます）</small>
+                        <small class="form-hint" data-i18n="modules.form_remote_hint">バックアップ送信先（監視画面に表示されます）</small>
                     </div>
 
                     <div class="form-group checkbox-group">
                         <label class="checkbox-label">
                             <input type="checkbox" id="modEnabled" checked>
                             <span class="checkmark"></span>
-                            このモジュールを有効にする
+                            <span data-i18n="modules.form_enable">このモジュールを有効にする</span>
                         </label>
                     </div>
                 </form>
             </div>
             <div class="modal-footer">
-                <button class="btn-secondary" id="modalCancelBtn">キャンセル</button>
-                <button class="btn-primary" id="modalSaveBtn">保存</button>
+                <button class="btn-secondary" id="modalCancelBtn" data-i18n="common.cancel">キャンセル</button>
+                <button class="btn-primary" id="modalSaveBtn" data-i18n="common.save">保存</button>
             </div>
         </div>
     </div>
@@ -155,7 +162,7 @@
     <div class="modal-overlay" id="pluginConfigModal" style="display:none;">
         <div class="modal">
             <div class="modal-header">
-                <h3 id="pluginConfigTitle">プラグイン設定</h3>
+                <h3 id="pluginConfigTitle" data-i18n="modules.plugin_config_heading">プラグイン設定</h3>
                 <button class="modal-close" id="pluginConfigCloseBtn">×</button>
             </div>
             <div class="modal-body">
@@ -164,8 +171,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn-secondary" id="pluginConfigCancelBtn">キャンセル</button>
-                <button class="btn-primary" id="pluginConfigSaveBtn">保存</button>
+                <button class="btn-secondary" id="pluginConfigCancelBtn" data-i18n="common.cancel">キャンセル</button>
+                <button class="btn-primary" id="pluginConfigSaveBtn" data-i18n="common.save">保存</button>
             </div>
         </div>
     </div>
@@ -174,22 +181,25 @@
     <div class="modal-overlay" id="deleteModal" style="display:none;">
         <div class="modal modal-sm">
             <div class="modal-header">
-                <h3>モジュール削除</h3>
+                <h3 data-i18n="modules.delete_title">モジュール削除</h3>
                 <button class="modal-close" id="deleteCloseBtn">×</button>
             </div>
             <div class="modal-body">
                 <p id="deleteMessage">本当にこのモジュールを削除しますか？</p>
-                <p class="delete-warning">この操作は元に戻せません。</p>
+                <p class="delete-warning" data-i18n="modules.delete_warning">この操作は元に戻せません。</p>
             </div>
             <div class="modal-footer">
-                <button class="btn-secondary" id="deleteCancelBtn">キャンセル</button>
-                <button class="btn-danger" id="deleteConfirmBtn">削除する</button>
+                <button class="btn-secondary" id="deleteCancelBtn" data-i18n="common.cancel">キャンセル</button>
+                <button class="btn-danger" id="deleteConfirmBtn" data-i18n="common.delete">削除する</button>
             </div>
         </div>
     </div>
 
     <div id="toastContainer"></div>
 
-    <script src="/modules.js"></script>
+    <script src="/i18n.js?v=0.7.1"></script>
+    <script src="/auth-guard.js?v=0.7.1"></script>
+    <script src="/connection.js?v=0.7.1"></script>
+    <script src="/modules.js?v=0.7.1"></script>
 </body>
 </html>

@@ -2,9 +2,9 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye Dashboard</title>
-    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/style.css?v=0.7.1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -13,13 +13,19 @@
             <div class="header-left">
                 <h1 class="logo">Kizuna-Eye</h1>
                 <nav class="nav-tabs">
-                    <a href="/" class="nav-tab active">ダッシュボード</a>
-                    <a href="/modules.html" class="nav-tab">モジュール管理</a>
+                    <a href="/" class="nav-tab active" data-i18n="nav.dashboard">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab" data-role-min="operator" data-i18n="nav.modules">モジュール管理</a>
+                    <a href="/config-editor.html" class="nav-tab" data-role-min="admin" data-i18n="nav.config">設定エディタ</a>
+                    <a href="/logs.html" class="nav-tab" data-i18n="nav.logs">ログ</a>
                 </nav>
                 <span class="status-badge" id="connectionStatus">接続中</span>
             </div>
             <div class="header-right">
-                <span class="version-badge" id="versionBadge">v0.6.0</span>
+                <span class="version-badge" id="versionBadge">v0.6.1</span>
+                <button id="langToggle" class="theme-toggle" aria-label="言語切り替え" data-i18n-aria-label="lang.toggle">
+                    <span class="theme-icon" id="langIcon">🌐</span>
+                    <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
+                </button>
                 <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
                     <span class="theme-icon" id="themeIcon">🌙</span>
                     <span class="theme-track"><span class="theme-thumb"></span></span>
@@ -54,9 +60,9 @@
                 <!-- メモリ（クリック可能） -->
                 <div class="gauge-card" id="memCard" data-click="process" data-process-sort="mem" role="button" tabindex="0">
                     <div class="gauge-header">
-                        <h2 class="gauge-title">メモリ</h2>
+                        <h2 class="gauge-title" data-i18n="card.memory">メモリ</h2>
                         <div class="header-badges">
-                            <span class="free-badge" id="memFreeBadge" hidden>空き --</span>
+                            <span class="free-badge" id="memFreeBadge" hidden data-i18n="card.free.unknown">空き --</span>
                         </div>
                     </div>
                     <div class="gauge-container">
@@ -71,9 +77,9 @@
                 <!-- ストレージ -->
                 <div class="gauge-card" id="diskCard">
                     <div class="gauge-header">
-                        <h2 class="gauge-title">ストレージ</h2>
+                        <h2 class="gauge-title" data-i18n="card.storage">ストレージ</h2>
                         <div class="header-badges">
-                            <span class="free-badge" id="diskFreeBadge" hidden>空き --</span>
+                            <span class="free-badge" id="diskFreeBadge" hidden data-i18n="card.free.unknown">空き --</span>
                             <span class="temp-badge" id="diskTempBadge" hidden>--°C</span>
                         </div>
                     </div>
@@ -90,7 +96,7 @@
                 <!-- 稼働時間 -->
                 <div class="gauge-card uptime-card">
                     <div class="gauge-header">
-                        <h2 class="gauge-title">稼働時間</h2>
+                        <h2 class="gauge-title" data-i18n="card.uptime">稼働時間</h2>
                     </div>
                     <div class="uptime-display" id="uptimeDisplay">
                         <span class="uptime-value" id="uptimeValue">--</span>
@@ -98,15 +104,15 @@
                     </div>
                     <div class="uptime-meta">
                         <div class="uptime-meta-item">
-                            <span class="label">起動日時</span>
+                            <span class="label" data-i18n="uptime.boot_time">起動日時</span>
                             <span class="value" id="bootTime">--</span>
                         </div>
                         <div class="uptime-meta-item">
-                            <span class="label">平均負荷</span>
+                            <span class="label" data-i18n="uptime.load_avg">平均負荷</span>
                             <span class="value" id="loadAvg">-- / -- / --</span>
                         </div>
                         <div class="uptime-meta-item">
-                            <span class="label">ネットワーク</span>
+                            <span class="label" data-i18n="uptime.network">ネットワーク</span>
                             <span class="value" id="networkIO">↓ -- / ↑ --</span>
                         </div>
                     </div>
@@ -116,42 +122,68 @@
                 </div>
             </section>
 
-            <!-- バックアップ情報セクション -->
-            <section class="backup-section" id="backupSection" hidden>
+            <!-- メトリクス履歴セクション -->
+            <section class="history-section" id="historySection">
+                <div class="backup-header" id="historyToggle" role="button" tabindex="0" aria-expanded="true">
+                    <div class="backup-header-left">
+                        <h2 data-i18n="history.title">メトリクス履歴</h2>
+                        <span class="backup-status-badge" id="historyRangeBadge">--</span>
+                    </div>
+                    <button class="backup-toggle-btn" aria-label="履歴を折りたたむ">
+                        <span class="backup-toggle-icon">▼</span>
+                    </button>
+                </div>
+                <div class="backup-body" id="historyBody">
+                    <canvas id="historyChart" height="220"></canvas>
+                </div>
+            </section>
+
+            <!-- プラグインステータスセクション -->
+            <section class="backup-section" id="backupSection">
                 <div class="backup-header" id="backupToggle" role="button" tabindex="0" aria-expanded="true">
                     <div class="backup-header-left">
-                        <h2>バックアップ情報</h2>
-                        <span class="backup-status-badge" id="backupStatusBadge">未実行</span>
+                        <h2 data-i18n="plugin.section_title">プラグインステータス</h2>
+                        <span class="backup-status-badge" id="backupStatusBadge" data-i18n="plugin.standby">待機中</span>
                     </div>
                     <button class="backup-toggle-btn" aria-label="バックアップ情報を折りたたむ">
                         <span class="backup-toggle-icon">▼</span>
                     </button>
                 </div>
                 <div class="backup-body" id="backupBody">
-                    <div class="backup-grid">
-                        <div class="backup-item">
-                            <span class="backup-label">最終実行</span>
-                            <span class="backup-value" id="backupLastRun">未取得</span>
+                    <div class="plugin-list-wrap">
+                        <div class="plugin-list-title">
+                            <span data-i18n="plugin.list_title">登録プラグイン</span>
+                            <span class="backup-status-badge" id="moduleCount">0</span>
                         </div>
-                        <div class="backup-item">
-                            <span class="backup-label">ステータス</span>
-                            <span class="backup-value" id="backupStatus">-</span>
-                        </div>
-                        <div class="backup-item">
-                            <span class="backup-label">サイズ</span>
-                            <span class="backup-value" id="backupSize">-</span>
-                        </div>
-                        <div class="backup-item">
-                            <span class="backup-label">次回実行</span>
-                            <span class="backup-value" id="backupNextRun">-</span>
-                        </div>
+                        <div class="plugin-list" id="pluginList"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- アラート履歴セクション -->
+            <section class="alerts-section" id="alertsSection">
+                <div class="backup-header" id="alertsToggle" role="button" tabindex="0" aria-expanded="true">
+                    <div class="backup-header-left">
+                        <h2 data-i18n="alerts.title">アラート履歴</h2>
+                        <span class="backup-status-badge" id="alertsCountBadge">0</span>
+                    </div>
+                    <div class="backup-header-actions">
+                        <button class="alerts-clear-btn" id="alertsClearBtn" data-role-min="operator" data-i18n="alerts.clear">クリア</button>
+                        <button class="backup-toggle-btn" aria-label="アラート履歴を折りたたむ">
+                            <span class="backup-toggle-icon">▼</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="backup-body" id="alertsBody">
+                    <div class="alert-list" id="alertList">
+                        <div class="alert-empty" data-i18n="alerts.empty">アラートはありません</div>
                     </div>
                 </div>
             </section>
         </main>
 
         <footer class="footer">
-            <p>Kizuna-Eye <span id="footerVersion">v0.6.0</span> &middot; リアルタイムシステムモニタリング</p>
+            <p>Kizuna-Eye <span id="footerVersion">v0.6.1</span> &middot; リアルタイムシステムモニタリング</p>
         </footer>
     </div>
 
@@ -159,15 +191,15 @@
     <div class="modal-overlay" id="processModal" style="display:none;">
         <div class="modal modal-lg">
             <div class="modal-header">
-                <h3 id="processModalTitle">プロセス一覧 (Top 10)</h3>
+                <h3 id="processModalTitle" data-i18n="process.title_cpu">プロセス一覧 (Top 10)</h3>
                 <button class="modal-close" id="processModalClose" aria-label="閉じる">×</button>
             </div>
             <div class="modal-body">
                 <div class="process-controls">
-                    <input type="text" id="processSearch" placeholder="プロセス名で検索..." class="process-search" autocomplete="off">
+                    <input type="text" id="processSearch" data-i18n-placeholder="process.search_placeholder" placeholder="プロセス名で検索..." class="process-search" autocomplete="off">
                     <div class="process-sort-buttons" role="tablist">
-                        <button type="button" class="sort-btn active" data-sort="cpu" role="tab">CPU順</button>
-                        <button type="button" class="sort-btn" data-sort="mem" role="tab">メモリ順</button>
+                        <button type="button" class="sort-btn active" data-sort="cpu" role="tab" data-i18n="process.sort_cpu">CPU順</button>
+                        <button type="button" class="sort-btn" data-sort="mem" role="tab" data-i18n="process.sort_mem">メモリ順</button>
                     </div>
                 </div>
                 <div class="process-table-wrap">
@@ -175,14 +207,14 @@
                         <thead>
                             <tr>
                                 <th class="col-pid">PID</th>
-                                <th class="col-name">名前</th>
+                                <th class="col-name" data-i18n="process.col_name">名前</th>
                                 <th class="col-cpu">CPU</th>
-                                <th class="col-mem">メモリ</th>
-                                <th class="col-user">ユーザー</th>
+                                <th class="col-mem" data-i18n="process.col_mem">メモリ</th>
+                                <th class="col-user" data-i18n="process.col_user">ユーザー</th>
                             </tr>
                         </thead>
                         <tbody id="processTableBody">
-                            <tr><td colspan="5" class="process-empty">データ待機中...</td></tr>
+                            <tr><td colspan="5" class="process-empty" data-i18n="process.empty_waiting">データ待機中...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -193,6 +225,8 @@
 
     <div id="toastContainer"></div>
 
-    <script src="/app.js"></script>
+    <script src="/i18n.js?v=0.7.1"></script>
+    <script src="/auth-guard.js?v=0.7.1"></script>
+    <script src="/app.js?v=0.7.1"></script>
 </body>
 </html>
