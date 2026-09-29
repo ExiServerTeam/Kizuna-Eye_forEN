@@ -29,6 +29,8 @@ type Handler struct {
 	agentToken  string
 	setupMu     sync.Mutex
 	limiter     *loginLimiter
+	// avatarsDir holds uploaded avatar images (default: "avatars").
+	avatarsDir string
 }
 
 // NewHandler creates an auth Handler.
@@ -48,6 +50,9 @@ func NewHandler(store *Store, manager *SessionManager, logger Logger, secure, au
 	}
 }
 
+// SetAvatarsDir sets the directory used for avatar images.
+func (h *Handler) SetAvatarsDir(dir string) { h.avatarsDir = dir }
+
 // RegisterRoutes registers the auth routes.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/status", h.handleStatus)
@@ -55,6 +60,14 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/auth/login", h.handleLogin)
 	mux.HandleFunc("POST /api/auth/logout", h.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", h.handleMe)
+
+	// Self-service account management.
+	mux.HandleFunc("PUT /api/auth/password", h.handleChangeOwnPassword)
+
+	// Avatar: any logged-in user manages their own avatar.
+	mux.HandleFunc("POST /api/auth/avatar", h.handleAvatarUpload)
+	mux.HandleFunc("DELETE /api/auth/avatar", h.handleAvatarDelete)
+	mux.HandleFunc("GET /api/auth/avatar/{name}", h.handleAvatarServe)
 
 	mux.HandleFunc("GET /api/users", h.requireAdmin(h.handleListUsers))
 	mux.HandleFunc("POST /api/users", h.requireAdmin(h.handleCreateUser))
@@ -121,6 +134,9 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		resp["authenticated"] = true
 		resp["username"] = s.Username
 		resp["role"] = string(s.Role)
+		if av := h.store.AvatarOf(s.Username); av != "" {
+			resp["avatar"] = av
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -244,10 +260,47 @@ func (h *Handler) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "未ログインです")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"username": s.Username,
 		"role":     string(s.Role),
-	})
+	}
+	if av := h.store.AvatarOf(s.Username); av != "" {
+		resp["avatar"] = av
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleChangeOwnPassword lets a logged-in user change their own password.
+func (h *Handler) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request) {
+	s, ok := h.sessionFromRequest(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "ログインが必要です")
+		return
+	}
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "リクエストの形式が不正です")
+		return
+	}
+	// Verify the current password before changing.
+	if _, ok := h.store.Authenticate(s.Username, body.CurrentPassword); !ok {
+		writeError(w, http.StatusForbidden, "現在のパスワードが違います")
+		return
+	}
+	if err := h.store.ChangePassword(s.Username, body.NewPassword); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Force re-login everywhere.
+	h.manager.DeleteUserSessions(s.Username)
+	h.clearCookie(w)
+	if h.logger != nil {
+		h.logger.Info("パスワード変更: user=%s", s.Username)
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
 // requireAdmin wraps a handler so only admins may call it.

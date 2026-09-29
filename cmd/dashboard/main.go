@@ -825,6 +825,7 @@ func main() {
 	sessionMgr := auth.NewSessionManager(sessionTTL, 0)
 	defer sessionMgr.Stop()
 	authHandler := auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
+	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))
 	authHandler.RegisterRoutes(mux)
 	authMiddleware := auth.NewMiddleware(authHandler, cfg.Auth.Enabled)
 

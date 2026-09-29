@@ -96,6 +96,11 @@ func isPluginUploadPath(p string) bool {
 
 // isPublicPath reports whether a path may be served without a session.
 func isPublicPath(p string) bool {
+	// Avatar images are loaded by <img> tags; the file names carry an
+	// unguessable random suffix. Only GET is served here anyway.
+	if strings.HasPrefix(p, "/api/auth/avatar/") {
+		return true
+	}
 	switch p {
 	case "/health",
 		"/api/auth/status",
