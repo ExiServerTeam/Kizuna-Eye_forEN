@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- エージェントから受信したステータスを範囲検証（`CPUUsage` / `MemPercent` / `DiskPercent` が 0〜100 の範囲外なら破棄）。不正値がメトリクス履歴・`/api/metrics` に流れ込むのを防止
+- プラグインアップロードをトランザクション化。検査失敗・`meta.json` 書き込み失敗・`modules.json` 登録失敗のいずれでも孤児 `.so` / `meta.json` を残さない
+- プラグイン削除で `.so` の削除に失敗した場合は 500 を返す（実行可能な孤児 `.so` を残したまま「削除成功」を返さない）
+- `plugin-inspect` の反射呼び出しにシグネチャ検証と recover を追加（悪意ある `.so` による panic を防止）
+- 設定エディタの秘密復元を位置ではなく `type` で対応付け（通知チャンネルの並べ替え・削除で別チャンネルの秘密を誤割り当てしない）
+
+### Fixed
+- 手動バックアップ実行の二重起動ガードを `request_id` 照合に変更（定期実行の結果で誤って解除されない）
+- 無効化したプラグインを停止する `ModuleManager.Unregister` を追加（Agent 再起動まで動き続ける問題を修正）
+- エージェント切断時のセキュリティイベント消失を修正（送信失敗時は未送信分を再キュー）
+- 通知プール飽和時に critical 通知まで失われる問題を修正（critical は最大5秒スロット解放を待つ）
+- ログのローテーション失敗時に以降のログが失われる問題を修正（ハンドルを再オープン）
+- ログ読み取り（`readLastLines`）のメモリ使用量に上限（4MiB）を設け、改行の少ない巨大ファイルによる枯渇を防止
+- `Hub` のエージェントコールバック（status / disconnect / event）を hub ロックで保護（データ競合を解消）
+- アラート設定の同時 PUT によるデータ競合を解消（mutex で直列化）
+- `handleDashboardCommand` / `sendBackupResult` の nil ロガー参照を修正
+- 通知チャンネル `type` の大文字小文字・空白を正規化（`"Discord"` 等を受理）
+- 設定ファイル（agent / dashboard / modules / users）を読み込み時に 0600 へ締め付け
+
+### Changed
+- `.gitattributes` を追加して改行コードを LF に正規化（gofmt の安定化）
+- README（英/日）を実装に合わせて全面的に整理（壊れていたコードフェンスと古い設定例を修正）
+- `scripts/verify.sh` は gcc 未検出時に `-race` を「失敗」ではなく「スキップ」に変更
+
 ### Added
 - ログイン / 初期セットアップ / ユーザー管理画面にダーク・ライトテーマ切替を追加（ダッシュボードと同じ `kizuna-theme` を共有、OS 設定にも追従）
 - 認証・ユーザー管理（任意、`auth.enabled` で有効化）

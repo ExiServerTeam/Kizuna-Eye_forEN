@@ -4,276 +4,273 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 
 **English** | [日本語](README.ja.md)
 
-**Kizuna-Eye** is a lightweight server monitoring tool written in Go, specifically designed for low-spec servers. With a total memory footprint of only **~30–50 MB** for both the dashboard and agent combined, it runs smoothly on single-board computers like Raspberry Pi or older PC hardware.
+**Kizuna-Eye** is a lightweight server monitoring tool written in Go, specifically designed for low-spec servers. With a total memory footprint of only **~30–50 MB** for the dashboard and agent combined, it runs smoothly on single-board computers like a Raspberry Pi or older PC hardware.
 
 ## Features
 
 - **Lightweight**: Combined footprint of ~30–50 MB (Dashboard + Agent)
-- **Real-time Updates**: Reflects metric changes within 1 second via WebSockets
-- **Browser-based Configuration**: Full setup and management directly from the UI without SSH
-- **Plugin System**: Extend functionality using Go `.so` dynamic plugins
-- **SNS Notifications**: Integrated alerts for Discord, Telegram, and LINE
-- **Dark/Light Mode**: Seamless theme switching according to your preference
-- **Process List**: Live process monitoring sorted by CPU or memory usage
-- **Disk S.M.A.R.T**: Monitor disk health status and temperature
-- **Network Bandwidth**: Real-time throughput metrics
-- **Cron-style Scheduler**: Flexible execution scheduling for plugins
-- **Metrics History**: In-memory trend chart for CPU / memory / disk (last ~1 hour)
-- **Persistent Alert History**: Alert records are saved to disk and survive restarts
-- **Runtime Alert Thresholds**: Change alert thresholds from the UI without restarting
-- **Lightweight & self-contained**: No external dependencies; intended for use within a trusted network / VPN
-- **Log Rotation**: Size-based rotation keeps log files bounded
+- **Real-time updates**: Metric changes are reflected within ~1 second over WebSockets
+- **Browser-based configuration**: Full setup and management from the UI, no SSH required
+- **Authentication (optional)**: Roles (admin / operator / viewer), bcrypt passwords, session cookies, per-IP login rate limiting
+- **Plugin system**: Extend functionality with Go `.so` dynamic plugins
+- **Notifications**: Discord, Slack, Telegram, LINE, and Email (SMTP)
+- **Dark / light mode** with OS preference detection
+- **Process list**: Live processes sorted by CPU or memory
+- **Disk S.M.A.R.T**: Disk health and temperature (via `smartctl`, optional)
+- **Network bandwidth**: Real-time throughput
+- **Metrics history**: In-memory CPU / memory / disk trend for the last ~1 hour
+- **Persistent alert history**: Survives restarts, viewable and clearable from the UI
+- **Runtime alert thresholds**: Change alert thresholds from the UI without a restart
+- **Prometheus metrics**: `GET /api/metrics`
+- **Log rotation**: Size-based rotation keeps log files bounded
+- **i18n**: Japanese / English UI
+- **Self-contained**: No external dependencies; intended for use inside a trusted network / VPN
 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye Dashboard Dark Mode" width="600">
+  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye dashboard (dark mode)" width="600">
   <br>
-  <em>Real-time System Monitoring Dashboard (Dark Mode)</em>
+  <em>Real-time system monitoring dashboard (dark mode)</em>
 </p>
 
-### Theme Switch
+### Theme switch
 
 | Dashboard (Dark) | Dashboard (Light) |
 | :---: | :---: |
-| <img src="docs/images/dashboard_dark.png" width="350" alt="Dashboard Dark Mode"> | <img src="docs/images/dashboard_light.png" width="350" alt="Dashboard Light Mode"> |
+| <img src="docs/images/dashboard_dark.png" width="350" alt="Dashboard dark mode"> | <img src="docs/images/dashboard_light.png" width="350" alt="Dashboard light mode"> |
 
-### Module Management
+### Module management
 
-| Module Management (Dark) | Module Management (Light) |
+| Module management (Dark) | Module management (Light) |
 | :---: | :---: |
-| <img src="docs/images/module_management_dark.png" width="350" alt="Module Management Dark Mode"> | <img src="docs/images/module_management.png" width="350" alt="Module Management Light Mode"> |
+| <img src="docs/images/module_management_dark.png" width="350" alt="Module management dark mode"> | <img src="docs/images/module_management.png" width="350" alt="Module management light mode"> |
 
 ## Architecture
 
-Kizuna-Eye consists of two main components:
+Kizuna-Eye has two components:
 
-- **Agent**: Collects system metrics and executes plugins on the monitored server.
-- **Dashboard**: Receives metrics from the Agent via WebSocket, provides a web UI, and sends notifications.
+- **Agent**: Collects system metrics on the monitored server and runs plugins.
+- **Dashboard**: Receives metrics from the Agent over WebSocket, serves the web UI, and sends notifications.
 
-The Agent and Dashboard communicate over WebSocket. Plugins are loaded as `.so` shared objects by the Agent. When a plugin reports a backup status, the Agent aggregates it and forwards it to the Dashboard.
+The Agent and Dashboard communicate over WebSocket. Plugins are loaded as `.so` shared objects by the Agent. When a plugin reports a status or a security event, the Agent aggregates and forwards it to the Dashboard.
 
 ## Requirements
 
 - **Go 1.27.1** or higher
-- **Ubuntu Server** 20.04+ (compatible with other Linux distributions)
-- **CGO_ENABLED=1** (when using the `plugin` package)
+- **Ubuntu Server** 20.04+ (other Linux distributions work too)
+- **CGO_ENABLED=1** (required by the `plugin` package)
 - **rsync** (when using SSH file transfers)
-- **smartctl** (optional, for S.M.A.R.T disk health monitoring)
+- **smartctl** (optional, for S.M.A.R.T disk health)
 
-## Security Notes
+## Security notes
 
-Kizuna-Eye is intended for use within a trusted network / VPN. The following settings can lead to **effective remote code execution (RCE)** and deserve special care.
+Kizuna-Eye is intended for use inside a trusted network / VPN. The following settings can lead to **effective remote code execution (RCE)** and deserve special care.
 
-- **Do not enable `plugins_upload_enabled: true` together with `auth.enabled: false`.** In that combination, anyone on the network can upload and run a `.so` plugin and take over the server. Always enable authentication when plugin upload is enabled (the server also logs a warning at startup).
-- **Config files contain secrets.** Never commit `dashboard_config.json` (`agent_token` / `webhook_url`) or `agent_config.json` (`token`), and keep them at mode 0600 (they are already in `.gitignore`).
-- **`/api/config` masks secrets when returning them.** Saving the masked value (`***`) back preserves the existing secret, but treat these files like `users.json`.
+- **Do not combine `plugins_upload_enabled: true` with `auth.enabled: false`.** In that combination anyone on the network can upload and run a `.so` plugin and take over the server. Always enable authentication when plugin upload is on (the server also logs a warning at startup).
+- **Config files contain secrets.** Never commit `dashboard_config.json` (`agent_token` / `webhook_url`) or `agent_config.json` (`token`); keep them at mode 0600 (they are in `.gitignore`).
+- **`/api/config` masks secrets** when returning them. Saving the masked value (`***`) back preserves the existing secret, but treat these files like `users.json`.
 - **Only place trusted plugin `.so` files.** A Go plugin runs with the same privileges as the server itself.
-- **Notification bodies contain externally derived values.** Each channel (Discord / Slack / Telegram / LINE) escapes and disables mentions.
+- **Notification bodies contain externally derived values.** Every channel escapes and disables mentions.
 
 ## Plugin rebuild note (important)
 
 Go's `plugin` package requires the plugin and the host to agree on a **hash of every shared package**. If you change either of the following, you must **rebuild the Agent and all plugins (`.so`) from the same source at the same time**. Rebuilding only one side fails at load time with `plugin was built with a different version of package ...`.
 
-- `pkg/module` (shared plugin types/interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
+- `pkg/module` (shared plugin types / interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
 - `pkg/status` (shared types such as `SystemStatus`)
 
-Example: 1) rebuild the host with `./build.sh`. 2) rebuild each plugin from the same source (e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`). 3) deploy the `.so` into `plugins/` and restart the agent.
+Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the same source, e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into `plugins/` and restart the agent.
 
 ## Installation
 
 ### 1. Clone the repository
 
-```bash
-git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
-cd Kizuna-Eye
-```
+    git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
+    cd Kizuna-Eye
 
 ### 2. Download dependencies
 
-```bash
-go mod download
-```
+    go mod download
 
 ### 3. Build
 
-```bash
-./build.sh
-```
+    ./build.sh
 
-Executing build.sh builds and outputs the following binaries to /opt/kizuna-eye/bin/:
+`build.sh` outputs the following binaries to `/opt/kizuna-eye/bin/`:
 
-- agent_linux
-- dashboard_linux
-- plugin-inspect
+- `agent_linux`
+- `dashboard_linux`
+- `plugin-inspect`
 
-### 4. Prepare Configuration Files
+### 4. Prepare configuration files
 
-```bash
-cp dashboard_config.example.json dashboard_config.json
-cp agent_config.example.json agent_config.json
-cp modules.json.example modules.json
-```
+    cp dashboard_config.example.json dashboard_config.json
+    cp agent_config.example.json agent_config.json
+    cp modules.json.example modules.json
 
-Edit each file as needed to fit your environment settings.
+Edit each file for your environment. The full example files (`*.example.json`) list every option; a minimal setup is shown below.
+
+`dashboard_config.json`:
+
+    {
+        "listen_addr": ":8080",
+        "log_file": "dashboard.log",
+        "static_dir": "./web/static",
+        "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+        "plugins_upload_enabled": false,
+        "alert_history_file": "logs/alert_history.jsonl",
+        "auth": {
+            "enabled": false,
+            "secure_cookies": false,
+            "session_ttl_hours": 12,
+            "users_file": "users.json",
+            "agent_token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+        },
+        "notifications": {
+            "enabled": true,
+            "agent_timeout_sec": 30,
+            "hold_sec": 5,
+            "cooldown_sec": 300,
+            "recovery_hold_sec": 30,
+            "memory_warn_pct": 70,
+            "memory_critical_pct": 85,
+            "disk_free_warn_pct": 20,
+            "disk_free_critical_pct": 10,
+            "cpu_temp_warn_c": 70,
+            "cpu_temp_critical_c": 85,
+            "notify_recovery": true,
+            "channels": [
+                {
+                    "type": "discord",
+                    "enabled": true,
+                    "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+                }
+            ]
+        }
+    }
+
+`agent_config.json`:
+
+    {
+        "dashboard_url": "ws://localhost:8080/ws",
+        "interval": 1.0,
+        "log_file": "logs/agent.log",
+        "disk_path": "/",
+        "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+    }
+
+`modules.json`:
+
+    [
+      {
+        "name": "example_plugin",
+        "type": "plugin",
+        "enabled": true,
+        "config": {
+          "plugin_path": "/opt/kizuna-eye/bin/plugins/example_plugin.so"
+        }
+      }
+    ]
 
 ### 5. Launch
 
-```bash
-./start.sh
-Open your browser and navigate to http://<server-ip>:8080.
+    ./start.sh
 
-Configuration
-dashboard_config.json
-json
-{
-    "listen_addr": ":8080",
-    "log_file": "dashboard.log",
-    "static_dir": "./web/static",
-    "plugins_dir": "/opt/kizuna-eye/bin/plugins",
-    "plugins_upload_enabled": false,
-    "alert_history_file": "logs/alert_history.jsonl",
-    "notifications": {
-        "enabled": true,
-        "agent_timeout_sec": 30,
-        "hold_sec": 5,
-        "cooldown_sec": 300,
-        "recovery_hold_sec": 30,
-        "memory_warn_pct": 70,
-        "memory_critical_pct": 85,
-        "disk_free_warn_pct": 20,
-        "disk_free_critical_pct": 10,
-        "cpu_temp_warn_c": 70,
-        "cpu_temp_critical_c": 85,
-        "notify_recovery": true,
-        "channels": [
-            {
-                "type": "discord",
-                "enabled": true,
-                "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
-            }
-        ]
+Open `http://<server-ip>:8080` in your browser.
+
+## Authentication (optional)
+
+Kizuna-Eye works with or without authentication. Authentication is **disabled by default**. To enable it, set `enabled: true` in the `auth` block of `dashboard_config.json` (`secure_cookies` / `session_ttl_hours` / `agent_token` are also available).
+
+When enabled, the first visit redirects to `/setup.html` to create the first user. **The first user created becomes the administrator.**
+
+### Roles
+
+| Role | Access |
+|---|---|
+| viewer | Dashboard and logs (read only) |
+| operator | + module management, manual backup runs, alert threshold changes |
+| admin | Everything (config editor, plugin upload, user management) |
+
+Admins can add or remove users from the "Users" page in the header. Passwords are stored as **bcrypt hashes** in `users.json`, and the last admin cannot be deleted or demoted.
+
+### Agent token
+
+Set `auth.agent_token` in `dashboard_config.json` and `token` in `agent_config.json` to the same value. The Agent authenticates when it opens the WebSocket, so a browser can no longer impersonate it. An empty token falls back to the legacy heuristic detection.
+
+### HTTPS
+
+Never send credentials over plain HTTP. Terminate TLS in a reverse proxy in front of the dashboard:
+
+- Bind the dashboard to localhost (`listen_addr` = `127.0.0.1:8080`)
+- Terminate TLS with Caddy or nginx and proxy to `127.0.0.1:8080`
+- Set `secure_cookies: true` (the cookie is then only sent over HTTPS)
+
+## Notifications
+
+`notifications.channels` supports `discord`, `slack`, `telegram`, `line`, and `email`. See `dashboard_config.example.json` for the fields each type requires. Alert thresholds can also be changed at runtime from the Config Editor (Admin) without a restart.
+
+## Plugin development
+
+Plugins are built as `.so` shared objects using Go's standard `plugin` package.
+
+Required interfaces:
+
+    type Module interface {
+        Name() string
+        Description() string
+        Interval() time.Duration
+        Run(ctx context.Context) error
+        Init(ctx context.Context) error
     }
-}
-agent_config.json
-json
-{
-    "dashboard_url": "ws://localhost:8080/ws",
-    "interval": 1.0,
-    "log_file": "logs/agent.log",
-    "disk_path": "/"
-}
-modules.json
-json
-[
-  {
-    "name": "kizuna_backup_lite",
-    "type": "plugin",
-    "enabled": true,
-    "config": {
-      "plugin_path": "/opt/kizuna-eye/bin/plugins/kizuna_backup_lite.so",
-      "mode": "archive",
-      "target_dir": "/path/to/backup/target",
-      "interval_sec": 3600,
-      "schedule_expr": "",
-      "run_on_start": false,
-      "local_temp_dir": "/tmp/kizuna-backups",
-      "log_path": "./logs/kizuna-backup-lite.log",
-      "keep_local": false,
-      "rotation_keep": 5,
-      "dry_run": false
+
+    type ConfigProvider interface {
+        GetConfigFields() []ConfigField
     }
-  }
-]
-SSH Transfer (mode: sync)
-When mode is set to sync, Kizuna-Backup LITE uses rsync to transfer backups to a remote host over SSH.
 
-json
-{
-  "mode": "sync",
-  "remote_dest": "user@192.168.0.100",
-  "remote_dir": "/backup/kizuna",
-  "ssh_port": 22,
-  "ssh_key": "/home/user/.ssh/id_ed25519"
-}
-Requirements:
+    type DisplayNameProvider interface {
+        DisplayName() string
+    }
 
-SSH key-based authentication (password auth is not supported in automated mode)
+Build:
 
-rsync installed on both local and remote hosts
+    CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
 
-Remote directory must exist and be writable
+Upload the `.so` from the **Module Management** tab. The bundled `plugin-inspect` tool analyses the plugin, inspects its configurable fields, and builds a dynamic configuration form.
 
-Schedule Configuration
-Kizuna-Backup LITE supports two scheduling modes:
+Optionally implement `DisplayName()` to show a friendly name in the UI badge; otherwise the UI falls back to the plugin name.
 
-1. Fixed Interval (interval_sec):
+### Example plugin
 
-json
-{
-  "interval_sec": 3600
-}
-2. Cron Expression (schedule_expr, takes precedence over interval_sec):
+Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project).
 
-json
-{
-  "schedule_expr": "0 3 * * *"
-}
-Cron examples:
+## Testing
 
-Expression	Meaning
-0 3 * * *	Every day at 3:00 AM
-*/15 * * * *	Every 15 minutes
-0 0 * * 0	Every Sunday at midnight
-0 9,18 * * 1-5	Weekdays at 9:00 AM and 6:00 PM
-Plugin Development
-Plugins for Kizuna-Eye are built as .so shared objects using Go's standard plugin package.
+    go test ./...
 
-Required Interfaces
-go
-type Module interface {
-    Name() string
-    Description() string
-    Interval() time.Duration
-    Run(ctx context.Context) error
-    Init(ctx context.Context) error
-}
+On a Linux host with `gcc`:
 
-type ConfigProvider interface {
-    GetConfigFields() []ConfigField
-}
+    CGO_ENABLED=1 go test -race ./...
 
-type DisplayNameProvider interface {
-    DisplayName() string
-}
-Building a Plugin
-bash
-CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
-Uploading a Plugin
-Upload your .so binary through the Module Management tab on the web dashboard. The embedded plugin-inspect tool will automatically analyze the plugin, inspect configurable fields, and construct a dynamic configuration form.
+Static analysis (recommended before a release):
 
-Optional: Display Name
-Implement DisplayName() to show a friendly name in the UI badge:
+    go vet ./...
+    staticcheck ./...
+    govulncheck ./...
 
-go
-func (p *MyPlugin) DisplayName() string {
-    return "My Custom Plugin"
-}
-If not implemented, the UI falls back to the plugin name.
+## License
 
-License
-MIT License. See LICENSE for details.
+MIT License. See [LICENSE](LICENSE) for details.
 
-Author
+## Author
+
 sy815twty-spec (Exi Server Team)
 
-GitHub: https://github.com/sy815twty-spec
+- GitHub: https://github.com/sy815twty-spec
+- Website: https://exi-server.site/
 
-Website: https://exi-server.site/
+## Acknowledgments
 
-Acknowledgments
-gopsutil - System metrics collection
-
-gorilla/websocket - WebSocket implementation
-
-robfig/cron - Cron expression parser & runner
+- [gopsutil](https://github.com/shirou/gopsutil) - system metrics collection
+- [gorilla/websocket](https://github.com/gorilla/websocket) - WebSocket implementation
