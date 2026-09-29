@@ -50,8 +50,28 @@ type SessionManager struct {
 	path string
 	// ipBind binds a session to the IP that created it (optional).
 	ipBind bool
+	// logf, when set, receives persistence-failure messages. Without it a
+	// full disk or permission error would silently stop persisting sessions.
+	logf func(format string, args ...interface{})
 
 	stopCh chan struct{}
+}
+
+// SetLogger installs a logging function used to report persistence errors.
+func (m *SessionManager) SetLogger(logf func(format string, args ...interface{})) {
+	m.mu.Lock()
+	m.logf = logf
+	m.mu.Unlock()
+}
+
+// log persists a message through the optional logger.
+func (m *SessionManager) log(format string, args ...interface{}) {
+	m.mu.RLock()
+	fn := m.logf
+	m.mu.RUnlock()
+	if fn != nil {
+		fn(format, args...)
+	}
 }
 
 // NewSessionManager creates a SessionManager.
@@ -323,16 +343,19 @@ func (m *SessionManager) save() {
 
 	data, err := json.MarshalIndent(map[string]interface{}{"sessions": list}, "", "  ")
 	if err != nil {
+		m.log("セッション永続化: JSON化に失敗: %v", err)
 		return
 	}
 	data = append(data, '\n')
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
+		m.log("セッション永続化: ディレクトリ作成に失敗 (%s): %v", dir, err)
 		return
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
+		m.log("セッション永続化: 一時ファイル作成に失敗: %v", err)
 		return
 	}
 	tmpName := tmp.Name()
@@ -340,20 +363,26 @@ func (m *SessionManager) save() {
 
 	if err := tmp.Chmod(0600); err != nil {
 		tmp.Close()
+		m.log("セッション永続化: chmod に失敗: %v", err)
 		return
 	}
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
+		m.log("セッション永続化: 書き込みに失敗: %v", err)
 		return
 	}
 	if err := tmp.Sync(); err != nil {
 		tmp.Close()
+		m.log("セッション永続化: sync に失敗: %v", err)
 		return
 	}
 	if err := tmp.Close(); err != nil {
+		m.log("セッション永続化: close に失敗: %v", err)
 		return
 	}
-	_ = os.Rename(tmpName, path)
+	if err := os.Rename(tmpName, path); err != nil {
+		m.log("セッション永続化: rename に失敗: %v", err)
+	}
 }
 
 // reaper periodically removes expired sessions and flushes LastSeen updates to

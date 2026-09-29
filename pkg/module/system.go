@@ -120,18 +120,22 @@ func smartctlCommand(args ...string) *exec.Cmd {
 	return exec.Command("smartctl", args...)
 }
 
-// smartctlAvailable reports whether S.M.A.R.T can be queried, either directly
-// or through the passwordless sudo path.
+// smartctlAvailable reports whether S.M.A.R.T can actually be queried.
+// Merely finding the binary is not enough: a non-root agent without a sudoers
+// rule would find smartctl but every read would fail. So probe a real query
+// (smartctl --scan) through the chosen invocation path and require success.
 func smartctlAvailable() bool {
-	if _, err := exec.LookPath("smartctl"); err == nil {
-		return true
-	}
-	if _, err := exec.LookPath("sudo"); err == nil {
-		if err := exec.Command("sudo", "-n", "smartctl", "--version").Run(); err == nil {
-			return true
+	if _, err := exec.LookPath("smartctl"); err != nil {
+		// Not in PATH; only the sudo path can still work.
+		if _, err := exec.LookPath("sudo"); err != nil {
+			return false
 		}
 	}
-	return false
+	// `smartctl --scan` lists devices and exits 0 without needing raw disk
+	// access to a specific device; it confirms the binary runs via the chosen
+	// path (plain or sudo -n).
+	cmd := smartctlCommand("--scan")
+	return cmd.Run() == nil
 }
 
 func (s *smartCache) checkAvailable() bool {

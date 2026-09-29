@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', function () {
         {
             legendKey: 'config.g.agent.behavior',
             fields: [
-                { key: 'interval', labelKey: 'config.f.interval', type: 'number', min: 0.2, step: 0.1, hintKey: 'config.h.interval' },
+                { key: 'interval', labelKey: 'config.f.interval', type: 'number', min: 1, step: 1, hintKey: 'config.h.interval' },
             ],
         },
         {

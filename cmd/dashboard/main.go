@@ -823,6 +823,7 @@ func main() {
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
 	sessionMgr := auth.NewSessionManager(sessionTTL, 0)
+	sessionMgr.SetLogger(lg.Warn)
 	if err := sessionMgr.EnablePersistence(cfg.Auth.SessionFilePath(configDir), cfg.Auth.IsSessionIPBind()); err != nil {
 		lg.Warn("セッション永続化の読み込みに失敗（メモリのみで続行）: %v", err)
 	}
@@ -833,6 +834,7 @@ func main() {
 	}
 	defer sessionMgr.Stop()
 	authHandler := auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
+	defer authHandler.Stop()
 	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))
 	if cfg.Auth.IsPublicViewer() {
 		authHandler.SetAllowGuest(true)
