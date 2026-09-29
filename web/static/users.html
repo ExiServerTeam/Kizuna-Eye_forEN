@@ -11,8 +11,9 @@
 <body>
     <div class="app">
         <header class="header">
-            <div class="header-left">
+            <div class="header-main">
                 <h1 class="logo">Kizuna-Eye</h1>
+                <span class="status-badge" id="connectionStatus">接続中</span>
                 <nav class="nav-tabs">
                     <a href="/" class="nav-tab">ダッシュボード</a>
                     <a href="/modules.html" class="nav-tab" data-role-min="operator">モジュール管理</a>
@@ -20,13 +21,13 @@
                     <a href="/logs.html" class="nav-tab">ログ</a>
                     <a href="/users.html" class="nav-tab active" data-role-min="admin">ユーザー</a>
                 </nav>
-                <span class="status-badge" id="connectionStatus">接続中</span>
+                <div class="header-controls">
+                    <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                        <span class="theme-icon" id="themeIcon">🌙</span>
+                    </button>
+                </div>
             </div>
-            <div class="header-right">
-                <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
-                    <span class="theme-icon" id="themeIcon">🌙</span>
-                </button>
-            </div>
+            <div class="header-user" id="headerUser"></div>
         </header>
 
         <main class="users-main">
