@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye - ユーザー管理</title>
-    <link rel="stylesheet" href="/style.css">
-    <link rel="stylesheet" href="/auth.css">
-    <script src="/auth-theme.js"></script>
+    <link rel="stylesheet" href="/style.css?v=0.7.6">
 </head>
 <body>
     <div class="app">
@@ -30,7 +28,8 @@
             <div class="header-user" id="headerUser"></div>
         </header>
 
-        <main class="users-main">
+        <main class="main">
+            <section class="panel">
             <div class="users-header">
                 <h2>ユーザー管理</h2>
                 <button class="btn-primary" id="addUserBtn">+ ユーザーを追加</button>
@@ -49,6 +48,7 @@
                 </tbody>
             </table>
             <p class="auth-error" id="usersError" hidden></p>
+            </section>
         </main>
     </div>
 
@@ -79,7 +79,9 @@
         </div>
     </div>
 
-    <script src="/auth-guard.js"></script>
-    <script src="/users.js"></script>
+    <script src="/i18n.js?v=0.7.6"></script>
+    <script src="/auth-guard.js?v=0.7.6"></script>
+    <script src="/connection.js?v=0.7.6"></script>
+    <script src="/users.js?v=0.7.6"></script>
 </body>
 </html>

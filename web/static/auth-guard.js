@@ -145,15 +145,18 @@
     }
 
     // renderAvatar fills an element with the user's avatar image or initials.
+    // Cache-bust with the file name so a freshly uploaded avatar replaces the
+    // previous image immediately.
     function renderAvatar(el, me) {
+        while (el.firstChild) el.removeChild(el.firstChild);
         if (me.avatar) {
             const img = document.createElement('img');
             img.src = '/api/auth/avatar/' + encodeURIComponent(me.avatar);
             img.alt = '';
             img.addEventListener('error', function () {
+                while (el.firstChild) el.removeChild(el.firstChild);
                 el.textContent = initials(me.username);
             });
-            el.textContent = '';
             el.appendChild(img);
         } else {
             el.textContent = initials(me.username);
