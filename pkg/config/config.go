@@ -89,8 +89,21 @@ type AuthConfig struct {
 	// When true, a viewer can open the dashboard without logging in, but
 	// only the dashboard page, /ws and /api/status are public: history,
 	// alerts, logs, modules and user management still require a session.
-	// Default false keeps the previous behaviour (everything needs login).
-	PublicViewer bool `json:"public_viewer"`
+	//
+	// It is a *bool so an absent key means "use the default (enabled)".
+	// A plain bool would deserialize a missing key as false, which would
+	// silently disable the guest login on every existing config that
+	// predates this option.
+	PublicViewer *bool `json:"public_viewer"`
+}
+
+// IsPublicViewer reports whether login-free viewer access is enabled.
+// Defaults to true when unset.
+func (a AuthConfig) IsPublicViewer() bool {
+	if a.PublicViewer == nil {
+		return true
+	}
+	return *a.PublicViewer
 }
 
 // DashboardConfig is the dashboard configuration.
@@ -206,7 +219,7 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 		},
 		// 公開ビューア（ゲストログイン）は標準で有効。
 		// 設定エディタの「認証」からオフにできる。
-		Auth: AuthConfig{PublicViewer: true},
+		Auth: AuthConfig{PublicViewer: boolPtr(true)},
 	}
 
 	data, err := os.ReadFile(path)
@@ -346,3 +359,6 @@ func EnsureDir(path string) error {
 	}
 	return os.MkdirAll(dir, 0700)
 }
+
+// boolPtr returns a pointer to v, for optional boolean config fields.
+func boolPtr(v bool) *bool { return &v }

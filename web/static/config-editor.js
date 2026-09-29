@@ -92,7 +92,8 @@ document.addEventListener('DOMContentLoaded', function () {
             legend: '認証・公開ビューア',
             prefix: 'auth.',
             checks: [
-                { key: 'public_viewer', label: 'ゲストログインを許可する（ログインなしで CPU/メモリ/ディスク使用率を閲覧）' },
+                // 未設定のときは有効（既定ON）。キーが無ければチェックを入れる。
+                { key: 'public_viewer', label: 'ゲストログインを許可する（ログインなしで CPU/メモリ/ディスク使用率を閲覧）', defaultChecked: true },
             ],
         },
         {
@@ -336,7 +337,10 @@ document.addEventListener('DOMContentLoaded', function () {
             (g.checks || []).forEach(c => {
                 const path = (g.prefix || '') + c.key;
                 const cc = Object.assign({}, c, { key: path });
-                fs.appendChild(buildCheck(cc, getByPath(loadedConfig, path)));
+                // キーが未設定なら defaultChecked（未設定＝有効な項目）を使う。
+                let val = getByPath(loadedConfig, path);
+                if (val === undefined || val === null) val = cc.defaultChecked;
+                fs.appendChild(buildCheck(cc, val));
             });
             guiBody.appendChild(fs);
         });

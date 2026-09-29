@@ -100,6 +100,13 @@
     gap: 12px;
     /* ボタン群は自分の幅を保ち、足りなければ次の行へ。 */
     flex: 0 0 auto;
+    min-width: 0;
+}
+
+/* ボタンは縮めず、ラベルは折り返さない（日本語が1文字ずつ縦折れするのを防ぐ）。 */
+.editor-actions button {
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .btn-secondary, .btn-primary {
@@ -238,9 +245,25 @@
 }
 
 /* レスポンシブ */
-/* 設定エディタはサイドバー(280px)＋ヘッダー(タイトル+モード+4ボタン)が
-   横に並ぶため、狭いタブレット幅（〜900px）で先に縦積みへ切り替える。
-   768px のままだと 800〜900px 帯でヘッダーが潰れて崩れる。 */
+/* 中間幅（タブレット横向き〜小型ノート）では、サイドバーを残したまま
+   ヘッダーのタイトル・モード・4ボタンが1行に収まらず潰れる。
+   タイトルを単独行にし、モード＋ボタン群を次の行に回して右寄せにする。 */
+@media (max-width: 1100px) {
+    .editor-title {
+        flex: 1 1 100%;
+    }
+
+    .editor-mode {
+        margin-left: 0;
+    }
+
+    .editor-actions {
+        flex: 1 1 auto;
+        justify-content: flex-end;
+    }
+}
+
+/* 狭いタブレット〜スマホではサイドバーごと縦積みへ切り替える。 */
 @media (max-width: 900px) {
     .config-container {
         grid-template-columns: 1fr;
@@ -265,10 +288,13 @@
         align-self: flex-start;
     }
 
+    /* 縦積み時はアクションを等幅の2列グリッドに。
+       文字は nowrap で折り返さない（狭いと日本語が縦折れするため）。 */
     .editor-actions {
         display: grid;
         grid-template-columns: 1fr 1fr;
         gap: 8px;
+        width: 100%;
     }
 
     .editor-actions button {
@@ -276,6 +302,7 @@
         padding: 12px;
         min-height: 44px;
         text-align: center;
+        white-space: nowrap;
     }
 
     /* スマホでは編集領域を広く確保 */

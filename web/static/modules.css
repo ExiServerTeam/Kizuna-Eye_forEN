@@ -1063,17 +1063,19 @@ label.btn-secondary:hover {
         padding: 12px 14px;
     }
 
+    /* ラベルと数値は横並びのまま（縦積みにすると「:」が行頭に来て崩れる）。 */
     .stat-item {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 2px;
-        flex: 1 1 30%;
-        min-width: 70px;
-        font-size: 0.7rem;
+        flex-direction: row;
+        align-items: baseline;
+        gap: 4px;
+        flex: 1 1 auto;
+        min-width: 0;
+        font-size: 0.72rem;
+        white-space: nowrap;
     }
 
     .stat-item strong {
-        font-size: 1.1rem;
+        font-size: 1.05rem;
     }
 
     .module-card {

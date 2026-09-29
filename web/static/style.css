@@ -2902,7 +2902,12 @@ html {
 }
 
 /* ノッチ付き端末のセーフエリア対応（viewport-fit=cover と併用） */
+/* max(env()) 非対応ブラウザでは padding が無効になり、余白が消えて
+   ヘッダーが画面端に張り付く。先に固定値を書き、対応ブラウザで上書きする。 */
 .app {
+    padding-left: 24px;
+    padding-right: 24px;
+    padding-bottom: 20px;
     padding-left: max(24px, env(safe-area-inset-left));
     padding-right: max(24px, env(safe-area-inset-right));
     padding-bottom: max(20px, env(safe-area-inset-bottom));
@@ -2997,6 +3002,9 @@ html {
 
 @media (max-width: 480px) {
     .app {
+        padding-left: 12px;
+        padding-right: 12px;
+        padding-bottom: 12px;
         padding-left: max(12px, env(safe-area-inset-left));
         padding-right: max(12px, env(safe-area-inset-right));
         padding-bottom: max(12px, env(safe-area-inset-bottom));
@@ -3332,7 +3340,10 @@ svg {
 }
 
 .modal-overlay {
-    padding: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right));
+    padding-left: 20px;
+    padding-right: 20px;
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
 }
 
 /* 横スクロールが必要な要素だけ、明示的に許可する。 */
@@ -3345,6 +3356,8 @@ svg {
 /* 極端に狭い画面（〜360px）でも崩れないように。 */
 @media (max-width: 360px) {
     .app {
+        padding-left: 8px;
+        padding-right: 8px;
         padding-left: max(8px, env(safe-area-inset-left));
         padding-right: max(8px, env(safe-area-inset-right));
     }
