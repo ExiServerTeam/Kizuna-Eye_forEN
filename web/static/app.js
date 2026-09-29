@@ -36,6 +36,7 @@
         cpuCores: $('#cpuCores'),
         cpuModel: $('#cpuModel'),
         cpuTempBadge: $('#cpuTempBadge'),
+        cpuFreeBadge: $('#cpuFreeBadge'),
         cpuCard: $('#cpuCard'),
         memGauge: $('#memGauge'),
         memValue: $('#memValue'),
@@ -1071,6 +1072,8 @@
         }
         const cpuTemp = data.cpu_temp ?? 0;
         updateTempBadge(elements.cpuTempBadge, cpuTemp);
+        // CPU カードにも空き容量を表示し、温度と横一列に並べる。
+        // memory の値はこの時点では未取得なので後段で更新する。
 
         // ---------- メモリ ----------
         const memoryPercent = clamp(data.mem_percent ?? 0, 0, 100);
@@ -1084,6 +1087,9 @@
         // Memory thresholds are configured as *usage* percentages; convert
         // them to free-space percentages for the badge.
         updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal,
+            100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
+        // CPU カードのヘッダーにも空き容量を表示し、温度と横一列に並べる。
+        updateFreeBadge(elements.cpuFreeBadge, memoryTotal - memoryUsed, memoryTotal,
             100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
         drawGauge(elements.memGauge, memoryPercent, 'mem');
 
