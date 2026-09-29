@@ -424,7 +424,7 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 			continue
 		}
 		events := provider.DrainSecurityEvents()
-		for _, ev := range events {
+		for i, ev := range events {
 			payload := map[string]interface{}{
 				"event":     "security_alert",
 				"plugin":    ev.Plugin,
@@ -442,6 +442,12 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 				continue
 			}
 			if err := w.WriteMessage(websocket.TextMessage, data); err != nil {
+				// The events were already drained from the plugin. Put the
+				// unsent remainder back so a transient write error does not
+				// silently drop security events (SSH brute force, FIM, ...).
+				if requeuer, ok := provider.(module.SecurityEventRequeuer); ok {
+					requeuer.RequeueSecurityEvents(events[i:])
+				}
 				if lg != nil {
 					lg.Error("セキュリティイベント送信失敗: %v", err)
 				}

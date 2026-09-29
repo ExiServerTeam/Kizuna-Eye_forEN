@@ -506,7 +506,16 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = os.Remove(filepath.Join(p.pluginsDir, name+".so"))
+	// Remove the .so first: it is the runnable artifact. If it cannot be
+	// removed, report an error so the caller knows a runnable orphan may
+	// remain on disk, instead of falsely claiming success.
+	if err := os.Remove(filepath.Join(p.pluginsDir, name+".so")); err != nil && !os.IsNotExist(err) {
+		if p.logger != nil {
+			p.logger.Error("プラグイン .so の削除に失敗: %s: %v", name, err)
+		}
+		writeJSONError(w, http.StatusInternalServerError, ".so の削除に失敗しました: "+err.Error())
+		return
+	}
 	_ = os.Remove(filepath.Join(p.pluginsDir, name+".meta.json"))
 	// Remove the plugin's bundled web UI directory, if any, so no stale
 	// assets remain after deletion.

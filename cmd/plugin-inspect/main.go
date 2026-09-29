@@ -107,6 +107,12 @@ func inspect(soPath string) (res InspectResult) {
 		res.ErrorMessage = "Plugin は GetConfigFields メソッドを実装していません"
 		return res
 	}
+	// Guard against a hostile .so declaring GetConfigFields with parameters
+	// (Call(nil) would panic).
+	if method.Type().NumIn() != 0 || method.Type().NumOut() != 1 {
+		res.ErrorMessage = "GetConfigFields のシグネチャが不正です（引数なし・戻り値1つが必要）"
+		return res
+	}
 
 	results := method.Call(nil)
 	if len(results) == 0 {
@@ -147,13 +153,21 @@ func inspect(soPath string) (res InspectResult) {
 }
 
 // callString は引数なし・戻り値 string のメソッドを呼ぶ。
-func callString(v reflect.Value, methodName string) string {
+// A hostile .so could declare a same-named method with parameters, which would
+// make Call(nil) panic. Verify the signature first and recover as a last
+// resort so one bad method does not abort the whole inspection.
+func callString(v reflect.Value, methodName string) (out string) {
+	defer func() {
+		if recover() != nil {
+			out = ""
+		}
+	}()
 	m := v.MethodByName(methodName)
-	if !m.IsValid() {
+	if !m.IsValid() || m.Type().NumIn() != 0 || m.Type().NumOut() != 1 {
 		return ""
 	}
 	results := m.Call(nil)
-	if len(results) == 0 {
+	if len(results) != 1 {
 		return ""
 	}
 	s, _ := results[0].Interface().(string)
@@ -161,13 +175,18 @@ func callString(v reflect.Value, methodName string) string {
 }
 
 // callDurationSec は引数なし・戻り値 time.Duration のメソッドを秒に変換して返す。
-func callDurationSec(v reflect.Value, methodName string) float64 {
+func callDurationSec(v reflect.Value, methodName string) (out float64) {
+	defer func() {
+		if recover() != nil {
+			out = 0
+		}
+	}()
 	m := v.MethodByName(methodName)
-	if !m.IsValid() {
+	if !m.IsValid() || m.Type().NumIn() != 0 || m.Type().NumOut() != 1 {
 		return 0
 	}
 	results := m.Call(nil)
-	if len(results) == 0 {
+	if len(results) != 1 {
 		return 0
 	}
 	raw := results[0].Interface()

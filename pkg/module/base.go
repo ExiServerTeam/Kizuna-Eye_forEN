@@ -238,6 +238,13 @@ type SecurityEventProvider interface {
 	DrainSecurityEvents() []SecurityEvent
 }
 
+// SecurityEventRequeuer is optionally implemented by security plugins so the
+// agent can put back events that could not be delivered (e.g. a transient
+// WebSocket write error), instead of losing them.
+type SecurityEventRequeuer interface {
+	RequeueSecurityEvents(events []SecurityEvent)
+}
+
 // ============================================================
 // BackupResult is a backup run result.
 // ============================================================
