@@ -327,6 +327,16 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 		h.Unlock()
 		return
 	}
+	// Reject out-of-range values so a buggy or hostile agent cannot pollute
+	// the stored status, the metrics history, or the Prometheus endpoint
+	// (e.g. cpu_usage=1e9 or negative percentages).
+	if err := s.Validate(); err != nil {
+		if h.log != nil {
+			h.log.Warn("不正なステータスを破棄しました: %v", err)
+		}
+		h.Unlock()
+		return
+	}
 	// Store a deep copy so the stored status does not share slices/pointers
 	// with the caller's object.
 	h.lastStatus = s.Clone()

@@ -58,6 +58,34 @@ func TestEligibleForHeuristicPromotion(t *testing.T) {
 	}
 }
 
+// An out-of-range status (e.g. cpu_usage=1e9) must not be stored, so it
+// cannot pollute metrics, history, or Prometheus output.
+func TestHubSetLastStatusRejectsOutOfRange(t *testing.T) {
+	hub := NewHub(10, logger.NewLogger(&logger.Options{Level: logger.INFO}))
+
+	// First a valid status is accepted.
+	hub.SetLastStatus(&status.SystemStatus{Timestamp: 1, CPUUsage: 10, MemPercent: 20, DiskPercent: 30})
+	if hub.GetLastStatus() == nil {
+		t.Fatal("valid status should be stored")
+	}
+
+	// An out-of-range status is dropped, leaving the previous one intact.
+	hub.SetLastStatus(&status.SystemStatus{Timestamp: 2, CPUUsage: 1e9, MemPercent: 20, DiskPercent: 30})
+	got := hub.GetLastStatus()
+	if got == nil || got.CPUUsage == 1e9 {
+		t.Fatalf("out-of-range status must be rejected, got %#v", got)
+	}
+	if got.Timestamp != 1 {
+		t.Fatalf("previous status should remain, got timestamp %d", got.Timestamp)
+	}
+
+	// Negative percentages are also rejected.
+	hub.SetLastStatus(&status.SystemStatus{Timestamp: 3, CPUUsage: 10, MemPercent: -5, DiskPercent: 30})
+	if got := hub.GetLastStatus(); got == nil || got.MemPercent < 0 {
+		t.Fatalf("negative mem_percent must be rejected, got %#v", got)
+	}
+}
+
 func TestHubSetLastStatusIgnoresNil(t *testing.T) {
 	hub := NewHub(10, logger.NewLogger(&logger.Options{Level: logger.INFO}))
 
