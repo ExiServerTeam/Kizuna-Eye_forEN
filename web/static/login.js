@@ -25,9 +25,37 @@
                 location.replace('/');
             } else if (s.needs_setup) {
                 location.replace('/setup.html');
+            } else if (s.guest_enabled) {
+                // ゲストログインが有効なときだけボタンを表示する。
+                var gb = document.getElementById('guestBtn');
+                if (gb) gb.hidden = false;
             }
         })
         .catch(function () {});
+
+    var guestBtn = document.getElementById('guestBtn');
+    if (guestBtn) {
+        guestBtn.addEventListener('click', function () {
+            if (errEl) errEl.hidden = true;
+            guestBtn.disabled = true;
+            fetch('/api/auth/guest', { method: 'POST', credentials: 'same-origin' })
+                .then(function (r) {
+                    return r.json().then(function (body) { return { ok: r.ok, body: body }; });
+                })
+                .then(function (res) {
+                    if (res.ok) {
+                        location.replace('/');
+                        return;
+                    }
+                    guestBtn.disabled = false;
+                    showError((res.body && res.body.error) || 'ゲストログインに失敗しました');
+                })
+                .catch(function () {
+                    guestBtn.disabled = false;
+                    showError('通信エラーが発生しました');
+                });
+        });
+    }
 
     if (form) {
         form.addEventListener('submit', function (e) {

@@ -1,12 +1,12 @@
 // ============================================================
 // Kizuna-Eye Dashboard
-// Gauge Engine v0.6.1
+// Gauge Engine v0.7.1
 // ============================================================
 
 (function () {
     'use strict';
 
-    const VERSION = 'v0.6.1';
+    const VERSION = 'v0.7.1';
 
     const GAUGE = {
         radiusRatio: 0.40,
@@ -36,6 +36,7 @@
         cpuCores: $('#cpuCores'),
         cpuModel: $('#cpuModel'),
         cpuTempBadge: $('#cpuTempBadge'),
+        cpuFreeBadge: $('#cpuFreeBadge'),
         cpuCard: $('#cpuCard'),
         memGauge: $('#memGauge'),
         memValue: $('#memValue'),
@@ -84,7 +85,12 @@
         processModalClose: $('#processModalClose'),
         processSearch: $('#processSearch'),
         processTableBody: $('#processTableBody'),
-        processHint: $('#processHint')
+        processHint: $('#processHint'),
+        // ★ ストレージ詳細モーダル
+        storageModal: $('#storageModal'),
+        storageModalClose: $('#storageModalClose'),
+        storageList: $('#storageList'),
+        storageHint: $('#storageHint')
     };
 
     if (elements.versionBadge) elements.versionBadge.textContent = VERSION;
@@ -693,6 +699,121 @@
     }
 
     // ============================================================
+    // ★ ストレージ詳細モーダル（CrystalDiskInfo 風）
+    // ============================================================
+    let storageList_ = [];
+
+    function healthInfo(health) {
+        const h = String(health || '').toUpperCase();
+        if (h === 'PASSED') return { cls: 'ok', label: t('disk.health.ok') };
+        if (h === 'FAILED') return { cls: 'fail', label: t('disk.health.fail') };
+        return { cls: 'unknown', label: t('disk.health.unknown') };
+    }
+
+    function buildStorageCard(disk) {
+        const total = Number(disk.total) || 0;
+        const used = Number(disk.used) || 0;
+        const free = Math.max(0, total - used);
+        const percent = total > 0 ? (used / total) * 100 : 0;
+        const hi = healthInfo(disk.health);
+
+        let barColor = '#30d158';
+        if (percent >= 85) barColor = '#ff453a';
+        else if (percent >= 60) barColor = '#ff9f0a';
+
+        const na = escapeHtml(t('storage.not_available'));
+        const model = disk.model ? escapeHtml(disk.model) : na;
+        const serial = disk.serial ? escapeHtml(disk.serial) : na;
+        const temp = Number(disk.temp) > 0 ? Math.round(disk.temp) + '℃' : na;
+        const write = Number(disk.write_bytes) > 0 ? formatBytes(disk.write_bytes) : na;
+        const powerOn = Number(disk.power_on_hours) > 0
+            ? t('storage.power_on_hours', Number(disk.power_on_hours))
+            : na;
+
+        let kind = '';
+        const rot = Number(disk.rotation_rate) || 0;
+        if (rot > 0) kind = t('storage.hdd', rot);
+        else if (disk.model || disk.health) kind = t('storage.ssd');
+
+        return `
+            <div class="storage-card">
+                <div class="storage-card-head">
+                    <span class="storage-path" title="${escapeHtml(disk.path || '-')}">${escapeHtml(disk.path || '-')}</span>
+                    <span class="disk-health ${hi.cls}">${escapeHtml(hi.label)}</span>
+                </div>
+                <div class="storage-grid">
+                    <div class="storage-item"><span class="label">${t('storage.col_model')}</span><span class="value" title="${model}">${model}</span></div>
+                    <div class="storage-item"><span class="label">${t('storage.col_serial')}</span><span class="value">${serial}</span></div>
+                    <div class="storage-item"><span class="label">${t('storage.col_temp')}</span><span class="value">${temp}</span></div>
+                    <div class="storage-item"><span class="label">${t('storage.col_write')}</span><span class="value">${write}</span></div>
+                    <div class="storage-item"><span class="label">${t('storage.col_power_on')}</span><span class="value">${powerOn}</span></div>
+                    <div class="storage-item"><span class="label">${t('storage.col_capacity')}</span><span class="value">${formatStorage(used)} / ${formatStorage(total)}</span></div>
+                </div>
+                <div class="disk-bar"><div class="disk-bar-fill" style="width:${Math.min(percent, 100)}%;background:${barColor};"></div></div>
+                <div class="storage-card-foot">
+                    <span>${t('storage.col_usage')}: ${percent.toFixed(1)}%</span>
+                    <span>${t('disk.free', formatStorage(free))}</span>
+                    ${kind ? `<span class="storage-kind">${escapeHtml(kind)}</span>` : ''}
+                </div>
+            </div>
+        `;
+    }
+
+    function renderStorageModal() {
+        if (!elements.storageList) return;
+        const list = Array.isArray(storageList_) ? storageList_ : [];
+        if (list.length === 0) {
+            elements.storageList.innerHTML = `<div class="storage-empty">${escapeHtml(t('storage.none'))}</div>`;
+            return;
+        }
+        elements.storageList.innerHTML = list.map(buildStorageCard).join('');
+
+        // smartctl 未検出（健康状態も型番も無い）ときはヒントを出す。
+        const hasSmart = list.some(d => d.health || d.model || Number(d.temp) > 0);
+        if (elements.storageHint) {
+            elements.storageHint.hidden = hasSmart;
+            elements.storageHint.textContent = t('storage.smart_unavailable');
+        }
+    }
+
+    function openStorageModal() {
+        if (!elements.storageModal) return;
+        renderStorageModal();
+        elements.storageModal.style.display = 'flex';
+    }
+
+    function closeStorageModal() {
+        if (!elements.storageModal) return;
+        elements.storageModal.style.display = 'none';
+    }
+
+    if (elements.storageModalClose) {
+        elements.storageModalClose.addEventListener('click', closeStorageModal);
+    }
+    if (elements.storageModal) {
+        elements.storageModal.addEventListener('click', (e) => {
+            if (e.target === elements.storageModal) closeStorageModal();
+        });
+    }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeStorageModal();
+    });
+
+    // ストレージカードのクリック／キー操作で詳細を開く。
+    function setupStorageCardClick() {
+        const card = elements.diskCard;
+        if (!card) return;
+        const handler = () => openStorageModal();
+        card.addEventListener('click', handler);
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handler();
+            }
+        });
+    }
+
+    // ============================================================
     // ★ Phase 6: プロセスモーダル
     // ============================================================
     function openProcessModal(sortKey) {
@@ -1087,6 +1208,9 @@
         // them to free-space percentages for the badge.
         updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal,
             100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
+        // CPU カードにも同じメモリ空き容量を表示し、温度と横一列に並べる。
+        updateFreeBadge(elements.cpuFreeBadge, memoryTotal - memoryUsed, memoryTotal,
+            100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
         drawGauge(elements.memGauge, memoryPercent, 'mem');
 
         // ---------- ストレージ ----------
@@ -1111,6 +1235,10 @@
             ALERT.diskFree.critical, ALERT.diskFree.warn);
         drawGauge(elements.diskGauge, diskPercent, 'disk');
         updateDiskList(disks);
+        storageList_ = Array.isArray(disks) ? disks : [];
+        if (elements.storageModal && elements.storageModal.style.display === 'flex') {
+            renderStorageModal();
+        }
 
         let maxDiskTemp = 0;
         if (Array.isArray(disks)) {
@@ -1182,6 +1310,8 @@
     let socket = null;
     let reconnectTimer = null;
     let reconnectAttempts = 0;
+    // 切断トーストを一度だけ出すためのフラグ（多重表示防止）。
+    let disconnectNotified = false;
     const RECONNECT_DELAY = 3000;
 
     function connectWebSocket() {
@@ -1206,6 +1336,11 @@
         socket.addEventListener('open', () => {
             console.log('[Kizuna-Eye] WebSocket connected');
             reconnectAttempts = 0;
+            // 一度切断を通知した後に復帰したら「再接続しました」を出す。
+            if (disconnectNotified) {
+                disconnectNotified = false;
+                showToast(t('toast.reconnected'), 'success');
+            }
             setConnectionState('connected');
         });
 
@@ -1234,6 +1369,12 @@
 
         socket.addEventListener('close', () => {
             setConnectionState('disconnected');
+            // 切断を一度だけポップアップで知らせる。再接続を繰り返す間に
+            // 何度も出ると煩わしいので、復帰するまで再表示しない。
+            if (!disconnectNotified) {
+                disconnectNotified = true;
+                showToast(t('toast.disconnected'), 'error');
+            }
             scheduleReconnect();
         });
 
@@ -1463,43 +1604,62 @@
     // マウスとタッチの両方に対応するため Pointer Events を使用する。
     // ============================================================
     const CARD_ORDER_KEY = 'kizuna-card-order';
+    const SECTION_ORDER_KEY = 'kizuna-section-order';
+
+    // 並べ替え対象。ゲージカード4枚は .gauge-grid 内、履歴・プラグイン・
+    // アラートの3セクションは .main 直下で、それぞれ独立に並べ替えられる。
+    const REORDER_CARD_SELECTOR = '.gauge-card';
+    const REORDER_SECTION_SELECTOR = '.history-section, .backup-section, .alerts-section';
 
     function cardKey(card) {
         return card.id || card.className;
     }
 
-    function saveCardOrder(grid) {
+    // orderKey はコンテナごとに別の保存キーを使う（カードとセクションの
+    // 並び順が互いを上書きしないように）。main コンテナならセクション用。
+    function orderKeyFor(container) {
+        return container.classList.contains('main') ? SECTION_ORDER_KEY : CARD_ORDER_KEY;
+    }
+
+    function saveCardOrder(container) {
         try {
-            const order = Array.from(grid.children).map(cardKey);
-            localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(order));
+            const order = Array.from(container.children).map(cardKey);
+            localStorage.setItem(orderKeyFor(container), JSON.stringify(order));
         } catch (e) { /* localStorage 不可の環境では無視 */ }
     }
 
-    function applyCardOrder(grid) {
+    function applyCardOrder(container) {
         let order;
         try {
-            order = JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '[]');
+            order = JSON.parse(localStorage.getItem(orderKeyFor(container)) || '[]');
         } catch (e) { order = []; }
         if (!Array.isArray(order) || order.length === 0) return;
 
         const byKey = new Map();
-        Array.from(grid.children).forEach(card => byKey.set(cardKey(card), card));
+        Array.from(container.children).forEach(card => byKey.set(cardKey(card), card));
         // Append in the saved order; anything not in the saved order keeps
         // its relative position at the end.
         order.forEach(key => {
             const card = byKey.get(key);
-            if (card) grid.appendChild(card);
+            if (card) container.appendChild(card);
         });
     }
 
-    function setupCardReorder() {
-        const grid = document.querySelector('.gauge-grid');
-        if (!grid) return;
+    // reorderContainer は、その直下の子を並べ替え対象にするコンテナ。
+    // selector に一致する子だけが並べ替え対象になる。
+    // カードは .gauge-grid（selector=.gauge-card）、
+    // セクションは .main（selector=セクション3種）をそれぞれ独立に扱う。
+    function setupReorderIn(container, selector) {
+        if (!container) return;
 
-        applyCardOrder(grid);
+        const isTarget = (el) => el && el.matches && el.matches(selector);
 
-        const cards = Array.from(grid.children);
-        cards.forEach(card => {
+        applyCardOrder(container);
+
+        const items = Array.from(container.children).filter(isTarget);
+        items.forEach(item => {
+            // 既にハンドルがある場合は二重追加しない。
+            if (item.querySelector(':scope > .drag-handle')) return;
             // Add a drag handle so the whole card can stay clickable.
             const handle = document.createElement('button');
             handle.type = 'button';
@@ -1507,53 +1667,99 @@
             handle.textContent = '⣿';
             handle.setAttribute('aria-label', t('card.reorder'));
             handle.addEventListener('click', (e) => e.stopPropagation());
-            card.appendChild(handle);
+            item.appendChild(handle);
         });
 
         let dragging = null;
         let pointerId = null;
 
-        function onDown(e, card) {
+        function onDown(e, item) {
             // Only start a drag from the handle.
             if (!e.target.classList.contains('drag-handle')) return;
             e.preventDefault();
-            dragging = card;
+            dragging = item;
             pointerId = e.pointerId;
-            card.classList.add('dragging');
+            item.classList.add('dragging');
             document.body.classList.add('card-dragging');
-            try { card.setPointerCapture(e.pointerId); } catch (_) {}
+            try { item.setPointerCapture(e.pointerId); } catch (_) {}
         }
 
         function onMove(e) {
             if (!dragging) return;
             e.preventDefault();
             const target = document.elementFromPoint(e.clientX, e.clientY);
-            const over = target && target.closest('.gauge-card');
-            cards.forEach(c => c.classList.remove('drop-target'));
-            if (!over || over === dragging || !grid.contains(over)) return;
+            const over = target && target.closest(selector);
+            items.forEach(c => c.classList.remove('drop-target'));
+            if (!over || over === dragging || !container.contains(over) || !isTarget(over)) return;
             over.classList.add('drop-target');
             const rect = over.getBoundingClientRect();
             const after = (e.clientY - rect.top) > rect.height / 2;
-            grid.insertBefore(dragging, after ? over.nextSibling : over);
+            container.insertBefore(dragging, after ? over.nextSibling : over);
         }
 
         function onUp() {
             if (!dragging) return;
             dragging.classList.remove('dragging');
-            cards.forEach(c => c.classList.remove('drop-target'));
+            items.forEach(c => c.classList.remove('drop-target'));
             document.body.classList.remove('card-dragging');
             try { dragging.releasePointerCapture(pointerId); } catch (_) {}
             dragging = null;
             pointerId = null;
-            saveCardOrder(grid);
+            saveCardOrder(container);
         }
 
-        cards.forEach(card => {
-            card.addEventListener('pointerdown', (e) => onDown(e, card));
+        items.forEach(item => {
+            item.addEventListener('pointerdown', (e) => onDown(e, item));
         });
         document.addEventListener('pointermove', onMove);
         document.addEventListener('pointerup', onUp);
         document.addEventListener('pointercancel', onUp);
+    }
+
+    // カードは .gauge-grid 内、セクションは .main 直下で、それぞれ独立に
+    // 並べ替えられるようにする（カードとセクションは跨がない）。
+    function setupCardReorder() {
+        setupReorderIn(document.querySelector('.gauge-grid'), REORDER_CARD_SELECTOR);
+        setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
+    }
+
+    // ============================================================
+    // ★ 公開ビューアモード
+    // 未ログイン（/api/auth/me が 401）の場合、サーバーが公開している
+    // CPU/メモリ/ディスク使用率のカードだけを表示し、履歴・プラグイン・
+    // アラートの各セクションや、権限が必要なナビは隠す。
+    // データ自体はサーバー側ミドルウェアでも保護されている。
+    // ============================================================
+    function applyPublicViewerMode() {
+        // 権限が必要なセクションを非表示にする。
+        [elements.historySection, elements.backupSection, elements.alertsSection]
+            .forEach(el => { if (el) el.style.display = 'none'; });
+
+        // プロセス詳細（クリック）は viewer には公開されないため無効化する。
+        [elements.cpuCard, elements.memCard].forEach(card => {
+            if (!card) return;
+            card.removeAttribute('data-click');
+            card.removeAttribute('role');
+            card.removeAttribute('tabindex');
+            card.style.cursor = 'default';
+        });
+
+        // 権限が必要なナビタブを隠す（data-role-min 付きは auth-guard が
+        // 処理するが、未ログイン時は auth-guard が何もしないためここで処理）。
+        document.querySelectorAll('.nav-tab[data-role-min]').forEach(el => {
+            el.style.display = 'none';
+        });
+        const usersTab = document.querySelector('.nav-tab[href="/users.html"]');
+        if (usersTab) usersTab.style.display = 'none';
+    }
+
+    function checkPublicViewer() {
+        fetch('/api/auth/me', { credentials: 'same-origin' })
+            .then(res => {
+                // 200 ならログイン済み（通常モード）。401/403 は未ログイン。
+                if (!res.ok) applyPublicViewerMode();
+            })
+            .catch(() => { /* 判定失敗時は通常モードのまま */ });
     }
 
     function init() {
@@ -1561,7 +1767,9 @@
         drawInitialGauges();
         startClock();
         setupProcessCardClicks();
+        setupStorageCardClick();
         setupCardReorder();
+        checkPublicViewer();
         connectWebSocket();
         loadAlerts();
         setInterval(loadAlerts, 30000);

@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-09-29
+
+### Added
+- ログイン画面に「ゲストとしてログイン」ボタンを追加。`auth.public_viewer` 有効時のみ表示され、viewer 権限（読み取り専用）でダッシュボードに入れる
+- ダッシュボードのカード（CPU/メモリ/ストレージ/稼働時間）をドラッグで並べ替え可能に（順序は localStorage に保存）
+- ストレージカードをクリックすると CrystalDiskInfo 風の詳細モーダルを表示（健康状態・温度・型番・シリアル・総書込量・通電時間・使用率）
+- ディスク S.M.A.R.T 情報を拡張（`smartctl` から型番・書込量・通電時間・回転数を取得。ATA/NVMe 両対応）
+- WebSocket 切断時に「切断されました」ポップアップ、再接続時に「再接続しました」を表示
+- 自動更新チェック（`internal/updater`）。GitHub Releases を監視し、新バージョン検知時に `safe_update.sh` を実行
+- `install.sh` / `update.sh` / `safe_update.sh` を追加。必要なパッケージ（rsync / smartmontools / git / curl）を差分で確認・導入し、更新失敗時はロールバック
+
+### Changed
+- バージョン表記を v0.7.1 に統一（web 全体・Makefile・build.sh）
+- アカウントメニューの絵文字を削除（アイコン変更 / パスワード変更 / ユーザー管理）
+- CPUカードはCPU温度のみ、メモリカードは空き容量のみ、ストレージカードは温度＋空き容量のみを表示
+
+### Security
+- `auth.public_viewer` を追加。有効時は未ログインでもダッシュボード・`/ws`・`/api/status` のみ閲覧可能（履歴・アラート・ログ・管理系はログイン必須）
+- エージェント起動時に rsync / smartctl の有無を確認し、ログと標準エラーに警告
+
 ## [Unreleased]
 
 ### Security

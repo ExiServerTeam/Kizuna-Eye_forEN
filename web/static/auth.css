@@ -157,6 +157,22 @@
     box-shadow: none;
 }
 
+/* ゲストログインなど、主アクションではないボタン。 */
+.auth-btn-secondary {
+    margin-top: 10px;
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+    font-weight: 500;
+}
+
+.auth-btn-secondary:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+    box-shadow: none;
+    transform: translateY(-1px);
+}
+
 .auth-error {
     margin: 14px 0 0;
     color: var(--status-error);

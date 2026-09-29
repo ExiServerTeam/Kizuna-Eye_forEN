@@ -4,7 +4,9 @@ go 1.27.1
 
 require (
 	github.com/gorilla/websocket v1.5.3
+	github.com/mouuff/go-rocket-update v1.5.6
 	github.com/shirou/gopsutil/v3 v3.24.5
+	golang.org/x/crypto v0.57.0
 )
 
 require (
@@ -15,6 +17,5 @@ require (
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/yusufpapurcu/wmi v1.2.4 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 )

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye Dashboard</title>
-    <link rel="stylesheet" href="/style.css?v=0.7.6">
+    <link rel="stylesheet" href="/style.css?v=0.7.1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
 <body>
@@ -29,7 +29,7 @@
                         <span class="theme-track"><span class="theme-thumb"></span></span>
                         <span class="theme-label" id="themeLabel">ダーク</span>
                     </button>
-                    <span class="version-badge" id="versionBadge">v0.6.1</span>
+                    <span class="version-badge" id="versionBadge">v0.7.1</span>
                 </div>
             </div>
             <div class="header-user" id="headerUser"></div>
@@ -75,8 +75,8 @@
                     </div>
                 </div>
 
-                <!-- ストレージ -->
-                <div class="gauge-card" id="diskCard">
+                <!-- ストレージ（クリックで詳細） -->
+                <div class="gauge-card" id="diskCard" data-click="storage" role="button" tabindex="0">
                     <div class="gauge-header">
                         <h2 class="gauge-title" data-i18n="card.storage">ストレージ</h2>
                         <div class="header-badges">
@@ -184,7 +184,7 @@
         </main>
 
         <footer class="footer">
-            <p>Kizuna-Eye <span id="footerVersion">v0.6.1</span> &middot; リアルタイムシステムモニタリング</p>
+            <p>Kizuna-Eye <span id="footerVersion">v0.7.1</span> &middot; リアルタイムシステムモニタリング</p>
         </footer>
     </div>
 
@@ -224,10 +224,24 @@
         </div>
     </div>
 
+    <!-- ストレージ詳細モーダル（CrystalDiskInfo 風） -->
+    <div class="modal-overlay" id="storageModal" style="display:none;">
+        <div class="modal modal-lg">
+            <div class="modal-header">
+                <h3 id="storageModalTitle" data-i18n="storage.modal_title">ストレージ詳細</h3>
+                <button class="modal-close" id="storageModalClose" aria-label="閉じる">×</button>
+            </div>
+            <div class="modal-body">
+                <p class="storage-hint" id="storageHint" hidden></p>
+                <div class="storage-list" id="storageList"></div>
+            </div>
+        </div>
+    </div>
+
     <div id="toastContainer"></div>
 
-    <script src="/i18n.js?v=0.7.6"></script>
-    <script src="/auth-guard.js?v=0.7.6"></script>
-    <script src="/app.js?v=0.7.6"></script>
+    <script src="/i18n.js?v=0.7.1"></script>
+    <script src="/auth-guard.js?v=0.7.1"></script>
+    <script src="/app.js?v=0.7.1"></script>
 </body>
 </html>

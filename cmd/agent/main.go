@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"plugin"
 	"strings"
@@ -18,6 +19,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"Kizuna-Eye/internal/api"
+	"Kizuna-Eye/internal/updater"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/logger"
 	"Kizuna-Eye/pkg/module"
@@ -27,6 +30,42 @@ var bufferPool = sync.Pool{
 	New: func() interface{} {
 		return &bytes.Buffer{}
 	},
+}
+
+// checkDependencies verifies that external tools the agent relies on are
+// installed. Missing tools are warned (not fatal): rsync is needed by backup
+// plugins, smartctl by the S.M.A.R.T disk health collection. The warning goes
+// to both the log file and stderr so it is visible when started interactively
+// or via a service manager.
+func checkDependencies(lg *logger.Logger) {
+	// cmd -> what it is used for.
+	deps := []struct {
+		cmd  string
+		use  string
+	}{
+		{"rsync", "バックアッププラグイン"},
+		{"smartctl", "ディスクS.M.A.R.T（温度・健康状態・書込量）"},
+	}
+
+	var missing []string
+	for _, d := range deps {
+		if _, err := exec.LookPath(d.cmd); err != nil {
+			missing = append(missing, d.cmd)
+			msg := fmt.Sprintf("必要なコマンドが見つかりません: %s（%s で使用）", d.cmd, d.use)
+			if lg != nil {
+				lg.Warn("%s", msg)
+			}
+			fmt.Fprintln(os.Stderr, "[AGENT] 警告: "+msg)
+		}
+	}
+
+	if len(missing) > 0 {
+		hint := "install.sh を実行するか、お使いのパッケージマネージャで導入してください"
+		if lg != nil {
+			lg.Warn("不足ツール: %v — %s", missing, hint)
+		}
+		fmt.Fprintf(os.Stderr, "[AGENT] 警告: 不足ツール: %v — %s\n", missing, hint)
+	}
 }
 
 var loadedPlugins = struct {
@@ -78,7 +117,32 @@ func main() {
 
 	lg.Info("エージェント起動 (送信間隔: %.1f秒, 接続先: %s)", cfg.Interval, cfg.DashboardURL)
 
+	// 起動時に外部ツールの有無を確認する（致命的ではない）。
+	checkDependencies(lg)
+
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// ---- 自動更新（GitHub Releases を監視し、新しければ safe_update.sh）----
+	if au := cfg.AutoUpdate; au.Enabled {
+		script := au.UpdateScript
+		if script == "" {
+			script = "safe_update.sh"
+		}
+		interval := time.Duration(au.IntervalHours) * time.Hour
+		if au.IntervalHours <= 0 {
+			interval = 6 * time.Hour
+		}
+		if up := updater.New(updater.Config{
+			Enabled:        true,
+			RepositoryURL:  au.RepositoryURL,
+			ArchiveName:    au.ArchiveName,
+			UpdateScript:   script,
+			Interval:       interval,
+			CurrentVersion: api.Version,
+		}, lg); up != nil {
+			go up.Run(ctx.Done())
+		}
+	}
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 

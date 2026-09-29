@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 BIN_DIR="${BIN_DIR:-/opt/kizuna-eye/bin}"
 mkdir -p "$BIN_DIR"
 
-VERSION="${VERSION:-v0.6.1}"
+VERSION="${VERSION:-v0.7.1}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 
