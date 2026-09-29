@@ -595,16 +595,22 @@ func handleDashboardCommand(
 		RequestID string `json:"request_id"`
 	}
 	if err := json.Unmarshal(raw, &cmd); err != nil {
-		lg.Debug("コマンドのパース失敗: %v", err)
+		if lg != nil {
+			lg.Debug("コマンドのパース失敗: %v", err)
+		}
 		return
 	}
 
 	if cmd.Action != "run_backup" {
-		lg.Debug("未対応のアクション: %s", cmd.Action)
+		if lg != nil {
+			lg.Debug("未対応のアクション: %s", cmd.Action)
+		}
 		return
 	}
 
-	lg.Info("手動実行リクエスト受信: plugin=%s request_id=%s", cmd.Plugin, cmd.RequestID)
+	if lg != nil {
+		lg.Info("手動実行リクエスト受信: plugin=%s request_id=%s", cmd.Plugin, cmd.RequestID)
+	}
 
 	mod, ok := manager.Get(cmd.Plugin)
 	if !ok {
@@ -660,12 +666,18 @@ func sendBackupResult(
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		lg.Error("backup_result のJSON化失敗: %v", err)
+		if lg != nil {
+			lg.Error("backup_result のJSON化失敗: %v", err)
+		}
 		return
 	}
 	if err := w.WriteMessage(websocket.TextMessage, data); err != nil {
-		lg.Error("backup_result の送信失敗: %v", err)
+		if lg != nil {
+			lg.Error("backup_result の送信失敗: %v", err)
+		}
 		return
 	}
-	lg.Info("手動実行結果送信: plugin=%s status=%s duration=%dms", plugin, status, durationMs)
+	if lg != nil {
+		lg.Info("手動実行結果送信: plugin=%s status=%s duration=%dms", plugin, status, durationMs)
+	}
 }
