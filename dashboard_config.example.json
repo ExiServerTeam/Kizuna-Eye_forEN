@@ -11,7 +11,7 @@
         "session_ttl_hours": 12,
         "users_file": "users.json",
         "agent_token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
-        "public_viewer": false
+        "public_viewer": true
     },
     "notifications": {
         "enabled": true,

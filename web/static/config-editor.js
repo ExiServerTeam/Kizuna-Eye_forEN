@@ -89,6 +89,13 @@ document.addEventListener('DOMContentLoaded', function () {
             ],
         },
         {
+            legend: '認証・公開ビューア',
+            prefix: 'auth.',
+            checks: [
+                { key: 'public_viewer', label: 'ゲストログインを許可する（ログインなしで CPU/メモリ/ディスク使用率を閲覧）' },
+            ],
+        },
+        {
             legend: 'ログ',
             fields: [
                 { key: 'log_file', label: 'ログの保存先', type: 'text', placeholder: 'dashboard.log', hint: '空の場合は標準出力に表示されます。' },

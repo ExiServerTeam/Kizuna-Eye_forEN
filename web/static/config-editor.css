@@ -598,3 +598,33 @@
     color: var(--text-primary);
     margin: 0;
 }
+
+/* ============================================================
+   表示崩れ防止（設定エディタ）
+   ============================================================ */
+.config-container,
+.config-editor-area,
+.config-sidebar {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.config-textarea {
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+/* 狭い画面では編集アクションを 1 列にして確実に収める。 */
+@media (max-width: 480px) {
+    .editor-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .editor-header {
+        gap: 8px;
+    }
+
+    .config-container {
+        min-height: calc(100vh - 120px);
+    }
+}

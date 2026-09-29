@@ -204,6 +204,9 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 			CPUTempCriticalC:    85,
 			NotifyRecovery:      true,
 		},
+		// 公開ビューア（ゲストログイン）は標準で有効。
+		// 設定エディタの「認証」からオフにできる。
+		Auth: AuthConfig{PublicViewer: true},
 	}
 
 	data, err := os.ReadFile(path)

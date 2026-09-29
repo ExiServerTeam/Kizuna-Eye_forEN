@@ -99,3 +99,19 @@
         font-size: 0.75rem;
     }
 }
+
+/* ============================================================
+   表示崩れ防止（ログ）
+   ============================================================ */
+.log-viewer-container {
+    min-width: 0;
+    max-width: 100%;
+}
+
+/* 長い行は横スクロールで見せ、レイアウトは崩さない。 */
+.log-viewer {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre;
+    -webkit-overflow-scrolling: touch;
+}
