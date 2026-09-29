@@ -172,19 +172,20 @@ build_plugin() {
     log "🔌 ビルド: $name"
     ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . )
 }
+# ホストを再ビルドしたら、プラグインも必ず同じツールチェーン／依存で
+# 再ビルドする。Go プラグインは共有パッケージのハッシュ完全一致が必須で、
+# ツールチェーンや x/sys が 1 つでもずれるとロードに失敗する
+# （plugin was built with a different version of package ...）。
+# NEED_PLUGIN_REBUILD は「pkg/module|pkg/status が変わった」場合の目印だが、
+# それ以外でもホスト再ビルドでハッシュが変わり得るため常に再ビルドする。
 if [ "$BUILD_PLUGINS" -eq 1 ]; then
     log ""
-    log "▶ プラグインを確認中..."
-    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ] || [ ! -f "$PLUGIN_OUT_DIR/kizuna_backup_lite.so" ]; then
-        if ! build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite"; then rollback; err "LITE プラグインビルド失敗。ロールバックしました。"; exit 1; fi
-    else
-        log "ℹ️  kizuna_backup_lite.so は最新（再ビルド不要）"
+    log "▶ プラグインを再ビルド中（ホストとハッシュを揃えるため常に実施）..."
+    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ]; then
+        log "ℹ️  pkg/module または pkg/status の変更を検出済み"
     fi
-    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ] || [ ! -f "$PLUGIN_OUT_DIR/kizuna_security.so" ]; then
-        if ! build_plugin "$SEC_PLUGIN_DIR" "kizuna_security"; then rollback; err "Security プラグインビルド失敗。ロールバックしました。"; exit 1; fi
-    else
-        log "ℹ️  kizuna_security.so は最新（再ビルド不要）"
-    fi
+    if ! build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite"; then rollback; err "LITE プラグインビルド失敗。ロールバックしました。"; exit 1; fi
+    if ! build_plugin "$SEC_PLUGIN_DIR" "kizuna_security"; then rollback; err "Security プラグインビルド失敗。ロールバックしました。"; exit 1; fi
 fi
 
 # ---- 6. 再起動 & 生存確認 ----
