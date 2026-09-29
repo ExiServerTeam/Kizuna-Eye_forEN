@@ -2940,9 +2940,12 @@ html {
         z-index: 100;
     }
 
-    /* タブは折り返さず横スクロール（親指でスワイプ） */
+    /* タブは折り返さず横スクロール（親指でスワイプ）。
+       overflow-x:auto が無いと nowrap のタブが枠からはみ出す。 */
     .nav-tabs {
         flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
         scroll-snap-type: x proximity;
     }
 
@@ -3314,11 +3317,6 @@ svg {
 
 /* ヘッダーは折り返しを許可し、はみ出しを防ぐ。 */
 .header-main {
-    flex-wrap: wrap;
-    min-width: 0;
-}
-
-.nav-tabs {
     flex-wrap: wrap;
     min-width: 0;
 }
