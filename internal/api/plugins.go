@@ -351,36 +351,40 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	soPath := filepath.Join(p.pluginsDir, name+".so")
+	metaPath := filepath.Join(p.pluginsDir, name+".meta.json")
 
 	// Use a unique temp file so concurrent uploads of the same plugin name
-	// (or a stale .tmp left by a crash) cannot collide.
+	// (or a stale .tmp left by a crash) cannot collide. The upload stays in
+	// the temp file until inspect + meta + modules.json all succeed, so a
+	// failure never leaves an orphan, potentially-runnable .so behind.
 	out, err := os.CreateTemp(p.pluginsDir, name+".so.tmp-*")
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "一時ファイル作成失敗: "+err.Error())
 		return
 	}
 	tmpPath := out.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
 	written, err := io.Copy(out, file)
 	if cerr := out.Close(); cerr != nil && err == nil {
 		err = cerr
 	}
 	if err != nil {
-		_ = os.Remove(tmpPath)
 		writeJSONError(w, http.StatusInternalServerError, "ファイル書き込み失敗: "+err.Error())
-		return
-	}
-	if err := os.Rename(tmpPath, soPath); err != nil {
-		_ = os.Remove(tmpPath)
-		writeJSONError(w, http.StatusInternalServerError, "リネーム失敗: "+err.Error())
 		return
 	}
 
 	if p.logger != nil {
-		p.logger.Info("プラグインアップロード: %s (%d bytes) from %s", name, written, r.RemoteAddr)
+		p.logger.Info("プラグインアップロード受信: %s (%d bytes) from %s", name, written, r.RemoteAddr)
 	}
 
-	// Inspect with plugin-inspect.
-	meta, err := p.inspectPlugin(r.Context(), name, soPath, r.RemoteAddr)
+	// Inspect the temp file BEFORE moving it into place.
+	meta, err := p.inspectPlugin(r.Context(), name, tmpPath, r.RemoteAddr)
 	if err != nil {
 		if p.logger != nil {
 			p.logger.Error("プラグイン検証失敗: %s: %v", name, err)
@@ -394,16 +398,8 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Save meta.json.
-	metaPath := filepath.Join(p.pluginsDir, name+".meta.json")
-	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
-	// meta.json includes the uploader IP; keep it owner-only.
-	if err := os.WriteFile(metaPath, metaBytes, 0o600); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "meta.json 書き込み失敗: "+err.Error())
-		return
-	}
-
-	// Register in modules.json (build JSON safely).
+	// Build the modules.json entry up front so a JSON failure cannot leave a
+	// committed .so either.
 	cfgBytes, err := json.Marshal(map[string]string{"plugin_path": soPath})
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "設定JSON生成失敗: "+err.Error())
@@ -415,11 +411,34 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		Enabled: true,
 		Config:  json.RawMessage(cfgBytes),
 	}
-	// Add persists internally and rolls back on save failure.
+
+	// Move the inspected .so into place, then write meta.json. If meta.json
+	// cannot be written, roll back the .so so no orphan remains.
+	if err := os.Rename(tmpPath, soPath); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "リネーム失敗: "+err.Error())
+		return
+	}
+	committed = true
+
+	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
+	// meta.json includes the uploader IP; keep it owner-only.
+	if err := os.WriteFile(metaPath, metaBytes, 0o600); err != nil {
+		_ = os.Remove(soPath)
+		writeJSONError(w, http.StatusInternalServerError, "meta.json 書き込み失敗: "+err.Error())
+		return
+	}
+
+	// Register in modules.json. Add persists internally and rolls back its
+	// in-memory list on save failure; on failure we also remove the .so and
+	// meta.json so the plugin is not left half-registered.
 	if err := p.storage.Add(modConfig); err != nil {
 		if p.logger != nil {
-			p.logger.Warn("モジュール登録スキップ: %s: %v", name, err)
+			p.logger.Warn("モジュール登録失敗: %s: %v", name, err)
 		}
+		_ = os.Remove(soPath)
+		_ = os.Remove(metaPath)
+		writeJSONError(w, http.StatusInternalServerError, "モジュール登録に失敗しました: "+err.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, meta)
