@@ -92,6 +92,48 @@ func (s *smartCache) markChecked() {
 	s.lastCheck = time.Now()
 }
 
+// smartctlOnce/smartctlPrefix memoize how to invoke smartctl.
+// Preference order:
+//  1. passwordless sudo ("sudo -n smartctl") when a sudoers drop-in grants
+//     NOPASSWD for smartctl only. This lets S.M.A.R.T work while the agent
+//     runs as a non-root user (least privilege).
+//  2. the plain binary in PATH.
+var (
+	smartctlOnce   sync.Once
+	smartctlPrefix []string
+)
+
+// smartctlCommand builds an exec.Cmd for smartctl, choosing sudo when usable.
+func smartctlCommand(args ...string) *exec.Cmd {
+	smartctlOnce.Do(func() {
+		if _, err := exec.LookPath("sudo"); err == nil {
+			// Non-interactive probe; succeeds only if the NOPASSWD rule exists.
+			if err := exec.Command("sudo", "-n", "smartctl", "--version").Run(); err == nil {
+				smartctlPrefix = []string{"sudo", "-n", "smartctl"}
+			}
+		}
+	})
+	if len(smartctlPrefix) > 0 {
+		full := append(append([]string{}, smartctlPrefix[1:]...), args...)
+		return exec.Command(smartctlPrefix[0], full...)
+	}
+	return exec.Command("smartctl", args...)
+}
+
+// smartctlAvailable reports whether S.M.A.R.T can be queried, either directly
+// or through the passwordless sudo path.
+func smartctlAvailable() bool {
+	if _, err := exec.LookPath("smartctl"); err == nil {
+		return true
+	}
+	if _, err := exec.LookPath("sudo"); err == nil {
+		if err := exec.Command("sudo", "-n", "smartctl", "--version").Run(); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *smartCache) checkAvailable() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,12 +141,8 @@ func (s *smartCache) checkAvailable() bool {
 		return s.available
 	}
 	s.checked = true
-	if _, err := exec.LookPath("smartctl"); err != nil {
-		s.available = false
-		return false
-	}
-	s.available = true
-	return true
+	s.available = smartctlAvailable()
+	return s.available
 }
 
 // ============================================================
@@ -813,7 +851,7 @@ func resolveBlockDevice(device string) string {
 // runSmartctl
 // ============================================================
 func runSmartctl(device string) smartEntry {
-	cmd := exec.Command("smartctl", "-A", "-H", "-i", "-j", device)
+	cmd := smartctlCommand("-A", "-H", "-i", "-j", device)
 	out, err := cmd.Output()
 	if len(out) == 0 {
 		return smartEntry{}
@@ -841,8 +879,8 @@ func runSmartctl(device string) smartEntry {
 		// ATA attributes: Total_LBA_Written (241) and Power_On_Hours (9).
 		ATASmartAttributes struct {
 			Table []struct {
-				ID    int `json:"id"`
-				Raw   struct {
+				ID  int `json:"id"`
+				Raw struct {
 					Value uint64 `json:"value"`
 				} `json:"raw"`
 			} `json:"table"`

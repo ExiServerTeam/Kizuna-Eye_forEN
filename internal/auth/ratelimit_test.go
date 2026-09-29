@@ -23,6 +23,20 @@ func TestLoginLimiterLockout(t *testing.T) {
 	}
 }
 
+func TestLoginLimiterHitLocksOut(t *testing.T) {
+	l := newLoginLimiter(3, time.Minute, time.Minute)
+	ip := "9.9.9.9"
+	for i := 0; i < 3; i++ {
+		if !l.Allow(ip) {
+			t.Fatalf("attempt %d should be allowed", i)
+		}
+		l.Hit(ip)
+	}
+	if l.Allow(ip) {
+		t.Fatal("Hit should lock out after reaching the limit")
+	}
+}
+
 func TestLoginLimiterReset(t *testing.T) {
 	l := newLoginLimiter(3, time.Minute, time.Minute)
 	ip := "5.6.7.8"

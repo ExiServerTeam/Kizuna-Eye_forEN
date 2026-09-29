@@ -12,24 +12,27 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-BIN_DIR="/opt/kizuna-eye/bin"
-BACKUP_ROOT="/opt/kizuna-eye/backup"
+BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
+BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-/opt/kizuna-eye/backup}"
 HEALTH_URL="${KIZUNA_HEALTH_URL:-http://127.0.0.1:8080/health}"
 
-# 直近のバックアップ（update.sh が作った最新）を控えておく。
-LATEST_BACKUP="$(ls -1dt "$BACKUP_ROOT"/*/ 2>/dev/null | head -n1 || true)"
+# update.sh と同じ規則でバックアップ先を解決する（/opt が sudo 所有のときは
+# HOME 配下へ退避）。ここがずれるとロールバック先を見失う。
+if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
+    BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-$HOME/.kizuna-eye/backup}"
+    mkdir -p "$BACKUP_ROOT" 2>/dev/null || true
+fi
 
 echo "▶ update.sh を実行..."
 if ! ./update.sh "$@"; then
-    echo "❌ update.sh が失敗しました。"
-    if [ -n "$LATEST_BACKUP" ]; then
-        echo "⚠️  ロールバックします: $LATEST_BACKUP"
-        for f in agent_linux dashboard_linux plugin-inspect; do
-            [ -f "$LATEST_BACKUP/$f" ] && cp -a "$LATEST_BACKUP/$f" "$BIN_DIR/$f"
-        done
-    fi
+    echo "❌ update.sh が失敗しました（update.sh 側でロールバック済み）。"
     exit 1
 fi
+
+# update.sh が作った「直前のバイナリ」のバックアップ（最新）を取得する。
+# update.sh 実行「後」に取るのが重要: 実行前に取ると一つ前の更新のバックアップを
+# 指してしまい、失敗時にさらに古いバイナリへ戻す事故になる。
+LATEST_BACKUP="$(ls -1dt "$BACKUP_ROOT"/*/ 2>/dev/null | head -n1 || true)"
 
 # 再起動
 echo "▶ 再起動..."

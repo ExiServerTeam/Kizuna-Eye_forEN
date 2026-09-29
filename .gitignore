@@ -3,6 +3,9 @@ agent_config.json
 modules.json
 # users.json holds bcrypt password hashes; never commit it.
 users.json
+# sessions.json holds session hashes; never commit it.
+sessions.json
+sessions.json.*
 # Uploaded avatar images are runtime data; never commit them.
 avatars/
 logs/

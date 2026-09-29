@@ -53,7 +53,7 @@ func TestMiddlewareRejectsViewerOnDeleteAlerts(t *testing.T) {
 
 	mgr := NewSessionManager(0, 0)
 	defer mgr.Stop()
-	sess, err := mgr.Create("viewer1", RoleViewer)
+	sess, err := mgr.Create("viewer1", RoleViewer, "")
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestMiddlewareAllowsOperatorOnDeleteAlerts(t *testing.T) {
 
 	mgr := NewSessionManager(0, 0)
 	defer mgr.Stop()
-	sess, err := mgr.Create("op1", RoleOperator)
+	sess, err := mgr.Create("op1", RoleOperator, "")
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}

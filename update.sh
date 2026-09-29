@@ -1,187 +1,239 @@
 #!/bin/bash
 # ============================================================
 # Kizuna-Eye update.sh
-# アップデート用。以下を行う:
-#   1. 必要なパッケージのうち「足りないものだけ」を差分インストール
-#   2. 本体（agent/dashboard/plugin-inspect）を再ビルド
-#   3. プラグイン（.so）を同一ソースから自動ビルド
-#   4. 失敗時は前のバイナリへロールバック（safe_update 相当）
-#
-# 重要: Go プラグインは共有パッケージのハッシュ完全一致が必須。
-#       pkg/status / pkg/module を変更した場合は、本体と全プラグインを
-#       同一ソースから「同時に」再ビルドする必要がある。
+# GitHub から更新し、本体とプラグインを再ビルドして再起動する。
+#   1. git fetch で比較 → 同じなら「すでに最新版です」で終了
+#   2. 更新前バイナリ/.so をバックアップ
+#   3. pkg/module, pkg/status の変更を検出（全プラグイン再ビルド要否）
+#   4. git pull（コンフリクト時は中止）
+#   5. 本体＋（必要なら）プラグインを再ビルド
+#   6. 再起動しプロセス生存を確認、失敗時はロールバック
 #
 # 使い方:
-#   ./update.sh                 # パッケージ確認＋ビルド＋プラグインビルド
-#   ./update.sh --install       # 足りないパッケージも実際に導入
-#   ./update.sh --no-plugin     # プラグインビルドをスキップ
-#   ./update.sh --plugin-dir DIR  # プラグインソースのルートを指定
+#   ./update.sh / --no-git / --no-restart / --no-plugin / --force-rebuild / --install
 # ============================================================
-set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")"
+set -u
+cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
-BIN_DIR="/opt/kizuna-eye/bin"
-PLUGIN_OUT_DIR="/opt/kizuna-eye/bin/plugins"
-BACKUP_DIR="/opt/kizuna-eye/backup"
+BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
+PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-/opt/kizuna-eye/bin/plugins}"
+LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-/samba/share/Kizuna-Backup/Kizuna-Backup-LITE/plugin}"
+SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-/samba/share/Kizuna-Security/plugin}"
 
-DO_INSTALL=0
-BUILD_PLUGINS=1
-PLUGIN_SRC_ROOT="${KIZUNA_PLUGIN_SRC_ROOT:-}"
-
-while [ $# -gt 0 ]; do
-    case "$1" in
+DO_GIT=1; DO_RESTART=1; BUILD_PLUGINS=1; FORCE_REBUILD=0; DO_INSTALL=0
+for arg in "$@"; do
+    case "$arg" in
+        --no-git) DO_GIT=0 ;;
+        --no-restart) DO_RESTART=0 ;;
+        --no-plugin) BUILD_PLUGINS=0 ;;
+        --force-rebuild) FORCE_REBUILD=1 ;;
         --install|-i) DO_INSTALL=1 ;;
-        --no-plugin)  BUILD_PLUGINS=0 ;;
-        --plugin-dir) PLUGIN_SRC_ROOT="$2"; shift ;;
-        -h|--help)
-            echo "使い方: $0 [--install] [--no-plugin] [--plugin-dir DIR]"
-            exit 0
-            ;;
-        *) echo "不明な引数: $1"; exit 1 ;;
+        -h|--help) echo "使い方: $0 [--no-git] [--no-restart] [--no-plugin] [--force-rebuild] [--install]"; exit 0 ;;
+        *) echo "不明な引数: $arg"; exit 1 ;;
     esac
-    shift
 done
 
-# ---- パッケージマネージャ判定（apt / dnf / yum / pacman）----
-PM=""
-INSTALL_CMD=""
-if command -v apt-get >/dev/null 2>&1; then
-    PM="apt"; INSTALL_CMD="apt-get install -y"
-elif command -v dnf >/dev/null 2>&1; then
-    PM="dnf"; INSTALL_CMD="dnf install -y"
-elif command -v yum >/dev/null 2>&1; then
-    PM="yum"; INSTALL_CMD="yum install -y"
-elif command -v pacman >/dev/null 2>&1; then
-    PM="pacman"; INSTALL_CMD="pacman -S --noconfirm"
+log()  { echo "$*"; }
+warn() { echo "⚠️  $*"; }
+err()  { echo "❌ $*"; }
+ok()   { echo "✅ $*"; }
+
+# root なら素で、そうでなければ sudo（NOPASSWD なら -n）で systemctl を叩く。
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
 fi
 
-# ---- 必須コマンドと提供パッケージ ----
-# cmd:package の対応で持つ。
-REQUIRED=(
-    "rsync:rsync"
-    "smartctl:smartmontools"
-    "git:git"
-    "curl:curl"
-)
-
-MISSING_PKGS=()
-for entry in "${REQUIRED[@]}"; do
-    cmd="${entry%%:*}"
-    pkg="${entry##*:}"
-    if ! command -v "$cmd" >/dev/null 2>&1; then
-        echo "❌ $cmd （未導入 → $pkg）"
-        MISSING_PKGS+=("$pkg")
-    else
-        echo "✅ $cmd"
-    fi
-done
-
-if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
-    echo ""
-    if [ -z "$PM" ]; then
-        echo "⚠️  パッケージマネージャ未検出。手動で導入してください: ${MISSING_PKGS[*]}"
-    elif [ "$DO_INSTALL" -eq 1 ]; then
-        echo "▶ 不足分のみインストール: sudo $INSTALL_CMD ${MISSING_PKGS[*]}"
-        sudo $INSTALL_CMD "${MISSING_PKGS[@]}"
-    else
-        echo "不足分があります。導入するには:"
-        echo "    sudo $INSTALL_CMD ${MISSING_PKGS[*]}"
-        echo "または --install を付けて再実行してください。"
-    fi
-fi
-
-# ============================================================
-# ビルド（失敗時にロールバックできるよう、事前にバックアップ）
-# ============================================================
-mkdir -p "$BIN_DIR" "$BACKUP_DIR" "$PLUGIN_OUT_DIR"
-
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-ROLLBACK_DIR="$BACKUP_DIR/$STAMP"
-mkdir -p "$ROLLBACK_DIR"
-
-backup_existing() {
-    for f in agent_linux dashboard_linux plugin-inspect; do
-        if [ -f "$BIN_DIR/$f" ]; then
-            cp -a "$BIN_DIR/$f" "$ROLLBACK_DIR/$f"
-        fi
-    done
+# systemd 管理下で動いているか。動いていれば stop.sh/start.sh ではなく
+# systemctl restart を使う。そうしないと systemd の管理外でプロセスが
+# 入れ替わり、「status は active なのに実体は別プロセス」という状態になる。
+systemd_active() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    $SUDO systemctl is-active --quiet kizuna-eye 2>/dev/null
 }
+
+# ---- 0. --install 指定時は不足パッケージを install.sh に委譲して導入 ----
+# （以前は --install を解析するだけで何もしていなかった＝無効なフラグだった）
+if [ "$DO_INSTALL" -eq 1 ]; then
+    if [ -x ./install.sh ]; then
+        log "▶ 不足パッケージを確認/導入します (install.sh)..."
+        ./install.sh --no-build --no-start --no-sudoers || warn "パッケージ導入で警告がありました（続行します）。"
+    else
+        warn "--install が指定されましたが install.sh が見つかりません。"
+    fi
+fi
+
+# ---- 1. git チェック & 最新確認 ----
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo master)"
+REMOTE_NAME="$(git remote 2>/dev/null | head -n1)"
+if [ "$DO_GIT" -eq 1 ]; then
+    [ -d .git ] || { err "git リポジトリではありません: $PWD"; exit 1; }
+    command -v git >/dev/null 2>&1 || { err "git が見つかりません。install.sh を実行してください。"; exit 1; }
+    [ -n "$REMOTE_NAME" ] || { err "git リモートが設定されていません"; exit 1; }
+    log "ブランチ: $BRANCH / リモート: $REMOTE_NAME"
+    log "▶ GitHub から最新を確認中..."
+    FETCH_OK=1
+    if ! git fetch --prune "$REMOTE_NAME" "$BRANCH" >/dev/null 2>&1; then
+        FETCH_OK=0
+    fi
+    LOCAL="$(git rev-parse HEAD)"
+    REMOTE="$(git rev-parse --verify --quiet "$REMOTE_NAME/$BRANCH" 2>/dev/null || true)"
+
+    # 最新を確認できないのに「すでに最新」と誤判定して更新をスキップすると、
+    # サイレントに更新されない事故になる（fetch 失敗時に REMOTE を LOCAL へ
+    # フォールバックしていたのが原因）。確認できない場合は中止する。
+    # 再ビルドだけしたい場合は --force-rebuild / --no-git を使う。
+    if [ "$FETCH_OK" -eq 0 ] || [ -z "$REMOTE" ]; then
+        if [ "$FORCE_REBUILD" -eq 1 ]; then
+            warn "最新を確認できませんでしたが --force-rebuild のため再ビルドを続行します。"
+        else
+            err "最新を取得できませんでした（fetch 失敗 or 追跡ブランチ $REMOTE_NAME/$BRANCH 無し）。"
+            err "ネットワーク/認証を確認してください。再ビルドのみなら --force-rebuild を付けてください。"
+            exit 1
+        fi
+    elif [ "$LOCAL" = "$REMOTE" ] && [ "$FORCE_REBUILD" -eq 0 ]; then
+        ok "すでに最新版です ($(git describe --tags --always 2>/dev/null || echo "$LOCAL"))"
+        exit 0
+    else
+        log "更新: $LOCAL → $REMOTE"
+    fi
+fi
+
+# ---- 2. バックアップ ----
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-/var/backups/kizuna-eye}"
+if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
+    BACKUP_ROOT="$HOME/.kizuna-eye/backup"
+    mkdir -p "$BACKUP_ROOT" 2>/dev/null || { err "バックアップ先を作成できません"; exit 1; }
+    warn "/var/backups に書けないため $BACKUP_ROOT を使用します"
+fi
+ROLLBACK_DIR="$BACKUP_ROOT/$STAMP"
+mkdir -p "$ROLLBACK_DIR" || { err "バックアップディレクトリ作成失敗"; exit 1; }
+for f in agent_linux dashboard_linux plugin-inspect; do
+    [ -f "$BIN_DIR/$f" ] && cp -a "$BIN_DIR/$f" "$ROLLBACK_DIR/$f" || true
+done
+if [ -d "$PLUGIN_OUT_DIR" ]; then
+    mkdir -p "$ROLLBACK_DIR/plugins"
+    cp -a "$PLUGIN_OUT_DIR"/*.so "$ROLLBACK_DIR/plugins/" 2>/dev/null || true
+fi
+ok "バックアップ: $ROLLBACK_DIR"
+PREV_VERSION="$(git describe --tags --always 2>/dev/null || echo unknown)"
 
 rollback() {
-    echo "⚠️  ビルド失敗。前のバイナリへロールバックします..."
+    warn "ロールバックします: $ROLLBACK_DIR"
     for f in agent_linux dashboard_linux plugin-inspect; do
-        if [ -f "$ROLLBACK_DIR/$f" ]; then
-            cp -a "$ROLLBACK_DIR/$f" "$BIN_DIR/$f"
-            echo "  復元: $f"
-        fi
+        [ -f "$ROLLBACK_DIR/$f" ] && cp -a "$ROLLBACK_DIR/$f" "$BIN_DIR/$f"
     done
+    [ -d "$ROLLBACK_DIR/plugins" ] && cp -a "$ROLLBACK_DIR/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
 }
 
-backup_existing
+# ---- 3. 変更検出 ----
+NEED_PLUGIN_REBUILD=0
+if [ "$DO_GIT" -eq 1 ]; then
+    CHANGED="$(git diff --name-only HEAD "$REMOTE_NAME/$BRANCH" 2>/dev/null || true)"
+    if echo "$CHANGED" | grep -qE '^pkg/(module|status)/'; then
+        NEED_PLUGIN_REBUILD=1
+        warn "pkg/module または pkg/status が変更 → 全プラグイン再ビルドが必要"
+    fi
+fi
 
-VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo v0.0.0)}"
+# ---- 4. コード更新 ----
+if [ "$DO_GIT" -eq 1 ]; then
+    if ! git diff --quiet || ! git diff --cached --quiet; then
+        err "ローカルに未コミットの変更があります。コミット/退避してから再実行してください。"; exit 1
+    fi
+    log "▶ git pull 中..."
+    if ! git pull --ff-only "$REMOTE_NAME" "$BRANCH"; then
+        err "git pull に失敗（コンフリクト/分岐）。更新を中止します。"; exit 1
+    fi
+    ok "コード更新完了"
+fi
+
+# ---- 5. 再ビルド ----
+VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
+export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
-echo ""
-echo "🔨 本体をビルド中... (version=${VERSION})"
-if ! CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect \
-   || ! CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard \
-   || ! CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent; then
-    rollback
-    exit 1
+log ""
+log "▶ 本体（Eye）を再ビルド中... (version=${VERSION})"
+build_one() { CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$1" "$2"; }
+if ! build_one plugin-inspect ./cmd/plugin-inspect \
+   || ! build_one dashboard_linux ./cmd/dashboard \
+   || ! build_one agent_linux ./cmd/agent; then
+    rollback; err "本体ビルド失敗。ロールバックしました。"; exit 1
 fi
-echo "✅ 本体ビルド完了"
+ok "本体再ビルド完了"
 
-# ============================================================
-# プラグイン（.so）を同一ソースから自動ビルド
-# pkg/status / pkg/module の変更時は必須。
-# ============================================================
-build_plugins() {
-    # 探索ルート（優先順）:
-    #   1. --plugin-dir / KIZUNA_PLUGIN_SRC_ROOT
-    #   2. リポジトリ隣接の Kizuna-Security/plugin など
-    local roots=()
-    [ -n "$PLUGIN_SRC_ROOT" ] && roots+=("$PLUGIN_SRC_ROOT")
-    roots+=("../Kizuna-Security/plugin" "../kizuna-plugins" "./plugins-src")
-
-    local found=0
-    for root in "${roots[@]}"; do
-        [ -d "$root" ] || continue
-        # main パッケージ（plugin ビルド可能）なディレクトリを探す。
-        while IFS= read -r dir; do
-            [ -f "$dir/main.go" ] || continue
-            # buildmode=plugin でビルドできるのは main パッケージのみ。
-            local name
-            name="$(basename "$dir")"
-            local out="$PLUGIN_OUT_DIR/${name}.so"
-            echo "🔌 プラグインをビルド: $dir → $out"
-            if ! ( cd "$dir" && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o "$out" . ); then
-                echo "❌ プラグインビルド失敗: $dir"
-                return 1
-            fi
-            found=1
-        done < <(find "$root" -maxdepth 3 -type d 2>/dev/null)
-    done
-
-    if [ "$found" -eq 0 ]; then
-        echo "ℹ️  プラグインソースが見つかりませんでした（--plugin-dir で指定できます）。"
-    fi
-    return 0
+build_plugin() {
+    local dir="$1" name="$2"
+    [ -d "$dir" ] || { log "ℹ️  プラグインソース無し: $dir"; return 0; }
+    grep -rqsE '^package main' "$dir"/*.go || { warn "$name: main パッケージでないためスキップ"; return 0; }
+    log "🔌 ビルド: $name"
+    ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . )
 }
-
 if [ "$BUILD_PLUGINS" -eq 1 ]; then
-    echo ""
-    echo "🔌 プラグインをビルド中..."
-    if ! build_plugins; then
-        echo "⚠️  プラグインのビルドに失敗しました。本体は更新済みです。"
-        echo "    plugin was built with a different version of package ... を避けるため、"
-        echo "    pkg/status / pkg/module を変更した場合は必ず全プラグインを再ビルドしてください。"
-        exit 2
+    log ""
+    log "▶ プラグインを確認中..."
+    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ] || [ ! -f "$PLUGIN_OUT_DIR/kizuna_backup_lite.so" ]; then
+        if ! build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite"; then rollback; err "LITE プラグインビルド失敗。ロールバックしました。"; exit 1; fi
+    else
+        log "ℹ️  kizuna_backup_lite.so は最新（再ビルド不要）"
+    fi
+    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ] || [ ! -f "$PLUGIN_OUT_DIR/kizuna_security.so" ]; then
+        if ! build_plugin "$SEC_PLUGIN_DIR" "kizuna_security"; then rollback; err "Security プラグインビルド失敗。ロールバックしました。"; exit 1; fi
+    else
+        log "ℹ️  kizuna_security.so は最新（再ビルド不要）"
     fi
 fi
 
-echo ""
-echo "✅ アップデート完了 (version=${VERSION})"
-echo "   バックアップ: $ROLLBACK_DIR"
-echo "   再起動するには: ./stop.sh && ./start.sh"
+# ---- 6. 再起動 & 生存確認 ----
+# 運用モードに応じて再起動方法を切り替える:
+#   - systemd 管理下 → systemctl restart kizuna-eye
+#   - 手動管理       → stop.sh → start.sh
+if [ "$DO_RESTART" -eq 1 ]; then
+    log ""
+    USE_SYSTEMD=0
+    if systemd_active; then USE_SYSTEMD=1; fi
+
+    restart_manual() { ./stop.sh || true; sleep 1; ./start.sh; }
+    restart_systemd() { $SUDO systemctl restart kizuna-eye; }
+    rollback_restart() {
+        rollback
+        if [ "$USE_SYSTEMD" -eq 1 ]; then $SUDO systemctl restart kizuna-eye || true; else ./stop.sh || true; ./start.sh || true; fi
+    }
+
+    if [ "$USE_SYSTEMD" -eq 1 ]; then
+        log "▶ systemd 管理下を検知。systemctl restart で再起動します..."
+        if ! restart_systemd; then
+            rollback_restart
+            err "systemd 再起動に失敗。ロールバックして再起動しました。"; exit 1
+        fi
+        sleep 3
+        if ! systemd_active; then
+            rollback_restart
+            err "再起動後 kizuna-eye が active ではありません。ロールバックしました。"; exit 1
+        fi
+    else
+        log "▶ 手動管理モード。stop.sh → start.sh で再起動します..."
+        if ! restart_manual; then
+            rollback_restart
+            err "起動に失敗。ロールバックして再起動しました。"; exit 1
+        fi
+        sleep 3
+        if ! pgrep -f "$BIN_DIR/dashboard_linux" >/dev/null 2>&1 || ! pgrep -f "$BIN_DIR/agent_linux" >/dev/null 2>&1; then
+            rollback_restart
+            err "起動後の生存確認に失敗。ロールバックして再起動しました。"; exit 1
+        fi
+    fi
+    ok "再起動完了"
+fi
+
+# ---- 7. 完了 ----
+NEW_VERSION="$(git describe --tags --always 2>/dev/null || echo "$VERSION")"
+log ""
+log "============================================================"
+ok "アップデート成功"
+log "  バージョン: ${PREV_VERSION} → ${NEW_VERSION}"
+log "  バックアップ: $ROLLBACK_DIR"
+log "============================================================"

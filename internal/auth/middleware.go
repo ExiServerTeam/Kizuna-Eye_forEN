@@ -42,12 +42,16 @@ var protectedRules = []routeRule{
 	{"", "/api/modules", RoleOperator},
 	{"", "/plugins", RoleOperator},
 
+	// Logs may contain usernames, IP addresses, file paths and internal
+	// errors, so they are operator-and-above only. A read-only viewer must
+	// not be able to read them.
+	{"", "/api/logs", RoleOperator},
+
 	// Viewer and above: read-only monitoring endpoints.
 	{"", "/api/status", RoleViewer},
 	{"", "/api/metrics", RoleViewer},
 	{"", "/api/history", RoleViewer},
 	{"", "/api/alerts", RoleViewer},
-	{"", "/api/logs", RoleViewer},
 	{"", "/api/version", RoleViewer},
 	{"", "/ws", RoleViewer},
 }

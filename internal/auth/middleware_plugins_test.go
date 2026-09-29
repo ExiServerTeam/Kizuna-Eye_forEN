@@ -38,7 +38,7 @@ func TestMiddlewareRejectsViewerOnPlugins(t *testing.T) {
 
 	mgr := NewSessionManager(0, 0)
 	defer mgr.Stop()
-	sess, err := mgr.Create("viewer1", RoleViewer)
+	sess, err := mgr.Create("viewer1", RoleViewer, "")
 	if err != nil {
 		t.Fatalf("session: %v", err)
 	}

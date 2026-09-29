@@ -8,6 +8,9 @@
     const addForm = document.getElementById('addUserForm');
     const addError = document.getElementById('addError');
 
+    // i18n 翻訳ヘルパー
+    const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
+
     function showError(el, msg) {
         if (!el) return;
         el.textContent = msg;
@@ -22,14 +25,14 @@
         fetch('/api/users', { credentials: 'same-origin' })
             .then(function (r) {
                 if (r.status === 401) { location.replace('/login.html'); throw new Error('unauth'); }
-                if (r.status === 403) { throw new Error('管理者権限が必要です'); }
+                if (r.status === 403) { throw new Error(t('users.need_admin')); }
                 return r.json();
             })
             .then(function (data) {
                 render(data.users || []);
             })
             .catch(function (e) {
-                if (e.message !== 'unauth') showError(errEl, e.message || '読み込みに失敗しました');
+                if (e.message !== 'unauth') showError(errEl, e.message || t('users.load_failed'));
             });
     }
 
@@ -57,13 +60,13 @@
 
             const pwBtn = document.createElement('button');
             pwBtn.className = 'btn-sm';
-            pwBtn.textContent = 'PW変更';
+            pwBtn.textContent = t('users.change_pw');
             pwBtn.addEventListener('click', function () { changePassword(u.username); });
             tdAct.appendChild(pwBtn);
 
             const delBtn = document.createElement('button');
             delBtn.className = 'btn-sm danger';
-            delBtn.textContent = '削除';
+            delBtn.textContent = t('users.delete');
             delBtn.style.marginLeft = '6px';
             delBtn.addEventListener('click', function () { removeUser(u.username); });
             tdAct.appendChild(delBtn);
@@ -74,7 +77,7 @@
     }
 
     function changePassword(username) {
-        const pw = prompt(username + ' の新しいパスワード（8文字以上）');
+        const pw = prompt(t('users.prompt_new_pw', username));
         if (!pw) return;
         fetch('/api/users/' + encodeURIComponent(username) + '/password', {
             method: 'PUT',
@@ -84,24 +87,24 @@
         })
             .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
             .then(function (res) {
-                if (!res.ok) { alert((res.body && res.body.error) || '変更に失敗しました'); return; }
-                alert('パスワードを変更しました');
+                if (!res.ok) { alert((res.body && res.body.error) || t('users.change_failed')); return; }
+                alert(t('users.pw_changed'));
             })
-            .catch(function () { alert('通信エラー'); });
+            .catch(function () { alert(t('users.network_error')); });
     }
 
     function removeUser(username) {
-        if (!confirm(username + ' を削除しますか？')) return;
+        if (!confirm(t('users.confirm_delete', username))) return;
         fetch('/api/users/' + encodeURIComponent(username), {
             method: 'DELETE',
             credentials: 'same-origin'
         })
             .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
             .then(function (res) {
-                if (!res.ok) { alert((res.body && res.body.error) || '削除に失敗しました'); return; }
+                if (!res.ok) { alert((res.body && res.body.error) || t('users.delete_failed')); return; }
                 load();
             })
-            .catch(function () { alert('通信エラー'); });
+            .catch(function () { alert(t('users.network_error')); });
     }
 
     // ---- add modal ----
@@ -129,11 +132,11 @@
         })
             .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
             .then(function (res) {
-                if (!res.ok) { showError(addError, (res.body && res.body.error) || '作成に失敗しました'); return; }
+                if (!res.ok) { showError(addError, (res.body && res.body.error) || t('users.create_failed')); return; }
                 addModal.hidden = true;
                 load();
             })
-            .catch(function () { showError(addError, '通信エラー'); });
+            .catch(function () { showError(addError, t('users.network_error')); });
     });
 
     load();

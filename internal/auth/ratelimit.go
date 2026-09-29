@@ -134,6 +134,13 @@ func (l *loginLimiter) RecordFailure(ip string) {
 	}
 }
 
+// Hit records one attempt against ip and locks out when the limit is reached.
+// It is RecordFailure under a name that also fits successful-but-abusive
+// calls (e.g. guest-login spam) that should still be rate limited.
+func (l *loginLimiter) Hit(ip string) {
+	l.RecordFailure(ip)
+}
+
 // Reset clears the failure record for ip after a successful login.
 func (l *loginLimiter) Reset(ip string) {
 	l.mu.Lock()
