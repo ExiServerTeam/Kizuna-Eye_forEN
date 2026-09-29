@@ -35,6 +35,11 @@ type Logger interface {
 // ============================================================
 type ModuleManager interface {
 	Register(ctx context.Context, module Module) error
+	// Unregister stops a single module's run loop (if running) and removes it.
+	// Used when a plugin is disabled or removed so it stops executing without
+	// an agent restart. Plugins cannot be unloaded from memory (Go limitation),
+	// but their run loop and callbacks stop.
+	Unregister(name string) error
 	Get(name string) (Module, bool)
 	Start(ctx context.Context)
 	Stop()
@@ -46,7 +51,8 @@ type ModuleManager interface {
 type moduleManager struct {
 	mu      sync.RWMutex
 	modules map[string]Module
-	resets  map[string]chan struct{} // module name -> interval reset signal
+	resets  map[string]chan struct{}      // module name -> interval reset signal
+	cancels map[string]context.CancelFunc // module name -> per-module cancel
 	logger  Logger
 	running bool
 	cancel  context.CancelFunc
@@ -58,6 +64,7 @@ func NewModuleManager(logger Logger) ModuleManager {
 	return &moduleManager{
 		modules: make(map[string]Module),
 		resets:  make(map[string]chan struct{}),
+		cancels: make(map[string]context.CancelFunc),
 		logger:  logger,
 	}
 }
@@ -82,11 +89,43 @@ func (m *moduleManager) Register(ctx context.Context, module Module) error {
 	// otherwise never run.
 	running := m.running
 	runCtx := m.runCtx
+	if running && runCtx != nil {
+		// Give this module its own cancellable context so it can be stopped
+		// individually via Unregister without stopping the whole manager.
+		modCtx, cancel := context.WithCancel(runCtx)
+		m.cancels[name] = cancel
+		m.wg.Add(1)
+		go m.runModuleLoop(modCtx, module)
+	}
+	m.mu.Unlock()
+	return nil
+}
+
+// Unregister stops and removes a single module. It is idempotent: an unknown
+// name is not an error. Plugins cannot be unloaded from memory (Go limitation),
+// but their run loop is cancelled so they stop executing.
+func (m *moduleManager) Unregister(name string) error {
+	m.mu.Lock()
+	mod, ok := m.modules[name]
+	if !ok {
+		m.mu.Unlock()
+		return nil
+	}
+	cancel := m.cancels[name]
+	delete(m.modules, name)
+	delete(m.resets, name)
+	delete(m.cancels, name)
 	m.mu.Unlock()
 
-	if running && runCtx != nil {
-		m.wg.Add(1)
-		go m.runModuleLoop(runCtx, module)
+	if cancel != nil {
+		cancel()
+	}
+	// Best-effort graceful stop for modules that support it.
+	if s, ok := mod.(interface{ Stop() error }); ok {
+		_ = s.Stop()
+	}
+	if m.logger != nil {
+		m.logger.Info("モジュールを停止・解除しました: %s", name)
 	}
 	return nil
 }
@@ -120,8 +159,13 @@ func (m *moduleManager) Start(ctx context.Context) {
 	}
 
 	for _, mod := range mods {
+		name := mod.Name()
+		modCtx, modCancel := context.WithCancel(ctx)
+		m.mu.Lock()
+		m.cancels[name] = modCancel
+		m.mu.Unlock()
 		m.wg.Add(1)
-		go m.runModuleLoop(ctx, mod)
+		go m.runModuleLoop(modCtx, mod)
 	}
 }
 
@@ -180,6 +224,12 @@ func (m *moduleManager) Stop() {
 	m.running = false
 	if m.cancel != nil {
 		m.cancel()
+	}
+	for name, c := range m.cancels {
+		if c != nil {
+			c()
+		}
+		delete(m.cancels, name)
 	}
 	m.mu.Unlock()
 

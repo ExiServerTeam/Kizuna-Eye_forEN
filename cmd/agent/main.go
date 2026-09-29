@@ -169,7 +169,18 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 		if !cfg.Enabled {
-			lg.Info("プラグイン '%s' は無効のためスキップ", cfg.Name)
+			// Stop a previously-loaded plugin when it is disabled, so it
+			// stops executing without an agent restart.
+			if loadedPlugins.names[cfg.Name] {
+				if err := manager.Unregister(cfg.Name); err != nil {
+					lg.Error("プラグイン '%s' の停止に失敗: %v", cfg.Name, err)
+				} else {
+					delete(loadedPlugins.names, cfg.Name)
+					lg.Info("プラグイン '%s' を無効化し停止しました", cfg.Name)
+				}
+			} else {
+				lg.Info("プラグイン '%s' は無効のためスキップ", cfg.Name)
+			}
 			continue
 		}
 		if loadedPlugins.names[cfg.Name] {
