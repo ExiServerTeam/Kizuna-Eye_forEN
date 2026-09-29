@@ -13,6 +13,11 @@ import (
 // so an alert storm cannot spawn an unbounded number of them.
 const maxConcurrentSends = 32
 
+// criticalSendWait bounds how long a critical alert waits for a free send slot
+// when the manager is saturated. Non-critical alerts are dropped instead, so a
+// burst of low-priority noise can never starve a critical notification.
+const criticalSendWait = 5 * time.Second
+
 // ============================================================
 // Manager fans out notifications to multiple channels.
 // ============================================================
@@ -101,31 +106,52 @@ func (m *Manager) Notify(a *Alert) {
 		m.log.Info("通知送信: [%s] %s", a.Level, a.Message)
 	}
 
+	isCritical := a.Level == LevelCritical
 	for _, n := range m.notifiers {
 		select {
 		case m.sem <- struct{}{}:
-			go func(notifier Notifier) {
-				defer func() { <-m.sem }()
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-				defer cancel()
-				if err := notifier.Send(ctx, a); err != nil {
-					if m.log != nil {
-						m.log.Warn("通知失敗 [%s]: %v", notifier.Name(), err)
-					}
-					return
-				}
-				if m.log != nil {
-					m.log.Debug("通知成功 [%s]", notifier.Name())
-				}
-			}(n)
+			m.sendAsync(n, a)
 		default:
-			// Saturated: skip this send rather than block the caller or
-			// spawn unbounded goroutines.
-			if m.log != nil {
-				m.log.Warn("通知の同時実行が上限(%d)のため [%s] への送信をスキップしました", maxConcurrentSends, n.Name())
+			// Saturated. A critical alert is worth waiting for a slot (bounded),
+			// so it is not lost. Non-critical alerts are dropped to protect the
+			// system from an alert storm.
+			if !isCritical {
+				if m.log != nil {
+					m.log.Warn("通知の同時実行が上限(%d)のため [%s] への送信をスキップしました", maxConcurrentSends, n.Name())
+				}
+				continue
+			}
+			timer := time.NewTimer(criticalSendWait)
+			select {
+			case m.sem <- struct{}{}:
+				timer.Stop()
+				m.sendAsync(n, a)
+			case <-timer.C:
+				if m.log != nil {
+					m.log.Warn("重大通知の送信待ちがタイムアウトしたため [%s] への送信をスキップしました", n.Name())
+				}
 			}
 		}
 	}
+}
+
+// sendAsync runs one notifier in its own goroutine, holding a send slot until
+// it finishes.
+func (m *Manager) sendAsync(notifier Notifier, a *Alert) {
+	go func() {
+		defer func() { <-m.sem }()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if err := notifier.Send(ctx, a); err != nil {
+			if m.log != nil {
+				m.log.Warn("通知失敗 [%s]: %v", notifier.Name(), err)
+			}
+			return
+		}
+		if m.log != nil {
+			m.log.Debug("通知成功 [%s]", notifier.Name())
+		}
+	}()
 }
 
 // HasChannels reports whether at least one channel is enabled.
