@@ -254,7 +254,7 @@ func validateAgentConfig(cfg *AgentConfig) error {
 		fmt.Printf("[CONFIG] warning: DashboardURL does not start with ws:// or wss://: %s\n", cfg.DashboardURL)
 	}
 	if cfg.Interval <= 0 {
-		return fmt.Errorf("Interval は 0 より大きい値を指定してください (現在: %f)", cfg.Interval)
+		return fmt.Errorf("interval は 0 より大きい値を指定してください (現在: %f)", cfg.Interval)
 	}
 	if cfg.Interval < 0.2 {
 		fmt.Printf("[CONFIG] 警告: Interval が %.1f秒 と短すぎます。0.2秒以上を推奨します。\n", cfg.Interval)
