@@ -160,6 +160,17 @@ func isPublicPath(p string) bool {
 	return false
 }
 
+// staticPageRules maps a static HTML page to the minimum role required to
+// view it. The data APIs behind these pages are already protected, but gating
+// the pages themselves removes the reliance on client-side redirects (defense
+// in depth: a viewer or JS-disabled client cannot even load the admin shell).
+var staticPageRules = map[string]Role{
+	"/logs.html":          RoleOperator,
+	"/modules.html":       RoleOperator,
+	"/config-editor.html": RoleAdmin,
+	"/users.html":         RoleAdmin,
+}
+
 // minRoleFor returns the minimum role for an HTTP method and API path, and
 // whether it is covered by a rule. Rules with a non-empty method only apply
 // to that method. Paths without a rule fall through to viewer (any login).
@@ -254,12 +265,20 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		}
 
 		// For /api paths and plugin web UIs, enforce the minimum role.
-		// Static pages are gated by the frontend (role-based nav hiding) but
-		// the data behind them is always enforced here.
 		if strings.HasPrefix(path, "/api/") || path == "/ws" || strings.HasPrefix(path, "/plugins/") {
 			min, _ := minRoleFor(r.Method, path)
 			if !sess.Role.AtLeast(min) {
 				writeError(w, http.StatusForbidden, "権限が不足しています")
+				return
+			}
+		}
+
+		// Gate role-restricted static pages on the server too, so the admin UI
+		// shell is never served to a lower role (the frontend also redirects,
+		// but that must not be the only barrier).
+		if min, ok := staticPageRules[path]; ok {
+			if !sess.Role.AtLeast(min) {
+				http.Redirect(w, r, "/", http.StatusFound)
 				return
 			}
 		}
