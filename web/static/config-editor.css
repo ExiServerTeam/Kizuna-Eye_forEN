@@ -76,6 +76,9 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    /* 幅が足りないときは綺麗に折り返す（詰まって崩れるのを防ぐ）。 */
+    flex-wrap: wrap;
+    gap: 10px 12px;
     padding: 16px 20px;
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
@@ -85,11 +88,18 @@
     font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-primary);
+    /* タイトルは伸縮し、長い場合は折り返す。 */
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .editor-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: 12px;
+    /* ボタン群は自分の幅を保ち、足りなければ次の行へ。 */
+    flex: 0 0 auto;
 }
 
 .btn-secondary, .btn-primary {
@@ -228,7 +238,10 @@
 }
 
 /* レスポンシブ */
-@media (max-width: 768px) {
+/* 設定エディタはサイドバー(280px)＋ヘッダー(タイトル+モード+4ボタン)が
+   横に並ぶため、狭いタブレット幅（〜900px）で先に縦積みへ切り替える。
+   768px のままだと 800〜900px 帯でヘッダーが潰れて崩れる。 */
+@media (max-width: 900px) {
     .config-container {
         grid-template-columns: 1fr;
         grid-template-rows: auto 1fr;
@@ -243,6 +256,13 @@
         flex-direction: column;
         gap: 12px;
         align-items: stretch;
+    }
+
+    /* 縦積み時はモード切替の自動マージンを解除して左寄せに。 */
+    .editor-mode {
+        margin-left: 0;
+        margin-right: 0;
+        align-self: flex-start;
     }
 
     .editor-actions {

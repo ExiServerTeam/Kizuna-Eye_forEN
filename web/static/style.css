@@ -3265,18 +3265,22 @@ html {
     min-width: 0;
 }
 
-/* 横スクロールを根本から防ぐ。 */
+/* 横スクロール防止。overflow-x:hidden は position:sticky を無効化する
+   （sticky は overflow が visible でない祖先内では効かない）ため使わない。
+   代わりに width/max-width と各要素の min-width:0 で収める。 */
 html,
 body {
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
 }
 
+/* .app で横はみ出しをクリップする。overflow-x: clip は scroll container
+   を作らないため position: sticky（ヘッダー）を壊さない。hidden だと
+   スクロールコンテナになり sticky が効かなくなる。 */
 .app {
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
 }
 
 /* 画像・キャンバスは絶対に親からはみ出さない。 */
@@ -3389,5 +3393,34 @@ svg {
 
     .gauge-container {
         height: 200px;
+    }
+}
+
+/* ============================================================
+   タッチ端末（タブレット含む）向け
+   ホバーが「貼り付いたまま」になって変形が残るのを防ぐ。
+   Nexus 7 などタッチのみの端末で特に有効。
+   ============================================================ */
+@media (hover: none) and (pointer: coarse) {
+    /* カードの浮き上がり変形を無効化（タップ後に戻らない現象を防ぐ） */
+    .gauge-card:hover {
+        transform: none;
+    }
+
+    /* コアの拡大も無効化（タップで拡大したまま残るのを防ぐ） */
+    .cpu-core-item:hover {
+        transform: none;
+    }
+
+    /* ドロップダウン等のホバー変化も無効化 */
+    .backup-header:hover,
+    .disk-item:hover,
+    .nav-tab:hover {
+        background: transparent;
+    }
+
+    /* ツールチップはタッチでは意味がないので無効化 */
+    .core-tooltip {
+        display: none;
     }
 }
