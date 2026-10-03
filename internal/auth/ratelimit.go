@@ -7,6 +7,11 @@ import (
 	"time"
 )
 
+// maxLimiterEntries bounds the per-IP attempt map. Login attempts can arrive
+// from many (possibly spoofed) source addresses, so an unbounded map is a slow
+// memory-exhaustion vector (G-5).
+const maxLimiterEntries = 10000
+
 // loginLimiter throttles failed login attempts per client IP.
 // It is a simple in-memory sliding window: after maxFailures failures
 // within window, the IP is locked out for lockDuration.
@@ -149,6 +154,36 @@ func (l *loginLimiter) RecordFailure(ip string) {
 	info.count++
 	if info.count >= l.max {
 		info.lockedTill = now.Add(l.lockout)
+	}
+	if len(l.attempts) > maxLimiterEntries {
+		l.evictLocked(now)
+	}
+}
+
+// evictLocked drops expired entries and, if the map is still too large, the
+// oldest ones, so its size stays bounded even under a flood of distinct source
+// addresses (G-5).
+func (l *loginLimiter) evictLocked(now time.Time) {
+	for ip, info := range l.attempts {
+		if now.After(info.lockedTill) && now.Sub(info.firstAt) > l.window {
+			delete(l.attempts, ip)
+		}
+	}
+	for len(l.attempts) > maxLimiterEntries {
+		var oldestIP string
+		var oldest time.Time
+		first := true
+		for ip, info := range l.attempts {
+			if first || info.firstAt.Before(oldest) {
+				oldest = info.firstAt
+				oldestIP = ip
+				first = false
+			}
+		}
+		if oldestIP == "" {
+			return
+		}
+		delete(l.attempts, oldestIP)
 	}
 }
 

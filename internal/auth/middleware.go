@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 )
 
@@ -247,6 +248,14 @@ var staticPageRules = map[string]Role{
 	"/users.html":         RoleAdmin,
 }
 
+// canonicalPath normalizes a request path before rule matching, so that an
+// alias such as /api/plugins/x/../upload cannot match a weaker rule than the
+// real path it resolves to (G-4). net/http's mux redirects the alias to this
+// canonical form, so the checks and the finally-served route always agree.
+func canonicalPath(p string) string {
+	return path.Clean(p)
+}
+
 // minRoleFor returns the minimum role for an HTTP method and API path, and
 // whether it is covered by a rule. Rules with a non-empty method only apply
 // to that method. Paths without a rule fall through to viewer (any login).
@@ -265,6 +274,12 @@ func minRoleFor(method, p string) (Role, bool) {
 // Wrap returns next wrapped with the authentication/authorization checks.
 func (m *Middleware) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// G-4: パスを正規化してからルール照合する。/api/plugins/../config の
+		// ような別名が本来より緩いルール（前方一致）にマッチして権限判定を
+		// すり抜けるのを防ぐ。mux 側も正規形へリダイレクトするため、ここで
+		// 判定するパスと最終的に処理されるパスが一致する。
+		cleanPath := canonicalPath(r.URL.Path)
+
 		// CSRF defense in depth, applied even when auth is off (harmless and
 		// keeps the check in one place). SameSite=Lax already blocks the
 		// session cookie on cross-site POSTs; verifying Origin closes the gap.
@@ -277,7 +292,7 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 			// Auth is disabled (trusted-network mode), so routes are normally
 			// open. Plugin upload is the exception: an unauthenticated .so
 			// upload is remote code execution, so refuse it until auth is on.
-			if isPluginUploadPath(r.URL.Path) {
+			if isPluginUploadPath(cleanPath) {
 				writeError(w, http.StatusForbidden, "プラグインのアップロードには認証が必要です（dashboard_config.json の auth.enabled を true にしてください）")
 				return
 			}
@@ -285,7 +300,7 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 			return
 		}
 
-		path := r.URL.Path
+		path := cleanPath
 
 		// Agent WebSocket connections authenticate with a shared token, not
 		// a session cookie. Let them through to the /ws handler, which
