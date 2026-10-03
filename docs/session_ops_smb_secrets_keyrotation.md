@@ -288,6 +288,19 @@ sha256sum "$KEY" > "$HOME/.kizuna-eye/keys/NEW-key.sha256"
 （§3-3）。なお `TCP ポート 8080 が新たに待ち受けを開始しました` はダッシュボード再起動に伴う
 1 回限りの warning（正常）。
 
+---
+
+## 6. 参考: 残タスク優先順位 #1（FIM デッドロック / F-1）の確認（2026-10-03）
+
+`docs/session_security_audit_20261003.md` §4 #1 は**対応済み**を確認した。
+
+- `plugins/Kizuna-Security/plugin/fim.go`: `langMu` が `mu` から分離されている
+  （`Check()` は `mu` のみ、`lang()` / `SetLang()` は `langMu`）→ 通知経路の `lang()` 取得が
+  監視ループを待たせない（56-60 / 142-143 / 323-335 行）。
+- 配備版 `kizuna_security.so` は 2026-10-03 18:14 に本リポジトリのソースから再ビルド済み
+  （= 配備版にも適用されている）。
+- 検証: `verify.sh --smoke` PASS=12 / FAIL=0、プラグイン `go test ./...` ok（デッドロック再現テストを含む）。
+
 
 ---
 
