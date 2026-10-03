@@ -35,7 +35,6 @@ plugins/Kizuna-Security/plugin/kizuna-security-plugin
 /agent_test
 *.test
 *.tmp
-*.bak
 
 # バックアップファイル
 *.bak
