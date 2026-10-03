@@ -19,6 +19,11 @@ import (
 type alertHistoryState struct {
 	Lines    int    `json:"lines"`
 	FileHash string `json:"file_hash"`
+	// LastHash は最終（最後の非空）行の sha256。ダッシュボードは履歴が上限に
+	// 達すると末尾を残してファイルを書き直す（compaction）ため、全体ハッシュ
+	// だけでは正規の圧縮と改ざんを区別できない。最終行が進んでいれば
+	// 「追記を伴う書き直し = 正規の圧縮」と判断する。
+	LastHash string `json:"last_hash,omitempty"`
 }
 
 // runIntegrityChecks verifies, on every tick:
@@ -29,7 +34,9 @@ type alertHistoryState struct {
 // The dashboard compacts alert_history.jsonl (drops old entries) as a normal
 // operation, so a DECREASE in line count cannot be told apart from a
 // truncation attack and is reported as a warning, not critical. A same-length
-// in-place modification is a genuine tamper and is reported as critical.
+// rewrite is critical only when the newest entry did NOT change: compaction
+// always keeps the newest entries and therefore advances the last line, so a
+// rewrite with an unchanged tail is a genuine in-place tamper.
 func (p *SecurityPlugin) runIntegrityChecks() {
 	p.mu.RLock()
 	cfg := p.config
@@ -118,16 +125,25 @@ func checkAlertHistory(path, statePath string) (string, string) {
 	h := sha256.New()
 	lines := 0
 	buf := make([]byte, 64*1024)
-	var last byte
+	// 最終行（最後の非空行）の内容も覚えておく。ダッシュボードは履歴が上限に
+	// 達すると「末尾を残してファイルを書き直す」ため、全体ハッシュだけでは
+	// 正規の圧縮と改ざんを区別できない（最終行が進んでいれば追記を伴う
+	// 書き直し = 正規の圧縮と判断する）。
+	var cur, lastLine []byte
 	for {
 		n, rerr := f.Read(buf)
 		if n > 0 {
 			h.Write(buf[:n])
-			last = buf[n-1]
 			for _, b := range buf[:n] {
 				if b == '\n' {
 					lines++
+					if len(cur) > 0 {
+						lastLine = append(lastLine[:0], cur...)
+						cur = cur[:0]
+					}
+					continue
 				}
+				cur = append(cur, b)
 			}
 		}
 		if rerr == io.EOF {
@@ -137,10 +153,16 @@ func checkAlertHistory(path, statePath string) (string, string) {
 			return "read failed: " + rerr.Error(), "warning"
 		}
 	}
-	if last != '\n' && last != 0 {
+	if len(cur) > 0 { // 末尾に改行が無い場合
 		lines++
+		lastLine = append(lastLine[:0], cur...)
 	}
 	sum := hex.EncodeToString(h.Sum(nil))
+	lastHash := ""
+	if len(lastLine) > 0 {
+		s := sha256.Sum256(lastLine)
+		lastHash = hex.EncodeToString(s[:])
+	}
 
 	var st alertHistoryState
 	if data, err := os.ReadFile(statePath); err == nil {
@@ -153,13 +175,27 @@ func checkAlertHistory(path, statePath string) (string, string) {
 		reason = fmt.Sprintf("line count decreased (%d -> %d): possible compaction or truncation", st.Lines, lines)
 		level = "warning"
 	case st.Lines > 0 && lines == st.Lines && st.FileHash != "" && sum != st.FileHash:
-		reason = "file modified in place (same line count, different hash)"
-		level = "critical"
+		switch {
+		case st.LastHash == "":
+			// 旧形式の状態ファイル（最終行ハッシュ未保存）からの移行直後。
+			// 基準が無いので、正規の圧縮を critical と誤報しないよう warning に留める。
+			reason = "file modified in place (same line count, different hash; no last-line baseline yet)"
+			level = "warning"
+		case lastHash != "" && lastHash != st.LastHash:
+			// 行数は同じでも最終行が進んでいる = 追記を伴う書き直し。
+			// ダッシュボードの圧縮（末尾を残して書き直す）はこの形になる。
+			reason = "file rewritten in place but the newest entry changed (compaction suspected)"
+			level = "warning"
+		default:
+			// 最終行が変わらないのに内容が変わった = 改ざん。
+			reason = "file modified in place (same line count, different hash)"
+			level = "critical"
+		}
 	}
 
 	// Persist the new baseline (on append, compaction, or first run).
-	newState := alertHistoryState{Lines: lines, FileHash: sum}
-	if newState.Lines != st.Lines || newState.FileHash != st.FileHash {
+	newState := alertHistoryState{Lines: lines, FileHash: sum, LastHash: lastHash}
+	if newState != st {
 		if data, err := json.Marshal(newState); err == nil {
 			// fsutil: 同一ディレクトリに一時ファイル→fsync→rename。従来の
 			// ".tmp 固定名 + fsync 無し" はクラッシュで切り詰められ得た。

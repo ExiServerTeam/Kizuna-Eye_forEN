@@ -324,6 +324,70 @@ func TestCheckLogMonotonicDetectsRemoval(t *testing.T) {
 // 新チェーン（数行）に対して「line count decreased」の critical が出続けないこと。
 // アンカーを残すと、新チェーンが旧行数を超えるまで毎回の整合性チェックで
 // 誤検知が発生し、本物の異常が埋もれる。
+// --- V2-B: アラート履歴の整合性チェック（正規の圧縮 vs 改ざん） ---
+
+// ダッシュボードの正規圧縮（行数は同じで最終行が進む書き直し）は critical では
+// なく warning とし、最終行が変わらない書き換えだけを critical として検知する。
+func TestCheckAlertHistoryCompactionIsWarning(t *testing.T) {
+	dir := t.TempDir()
+	histPath := filepath.Join(dir, "alert_history.jsonl")
+	statePath := filepath.Join(dir, "alertstate.json")
+
+	write := func(lines ...string) {
+		t.Helper()
+		if err := os.WriteFile(histPath, []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// 初回はベースラインを作るだけで検知しない。
+	write(`{"i":1}`, `{"i":2}`, `{"i":3}`)
+	if reason, level := checkAlertHistory(histPath, statePath); reason != "" || level != "" {
+		t.Fatalf("first run = (%q, %q), want no finding", reason, level)
+	}
+	// 最終行ハッシュが保存されていること（次回以降の判定に必要）。
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st alertHistoryState
+	if err := json.Unmarshal(data, &st); err != nil {
+		t.Fatal(err)
+	}
+	if st.LastHash == "" {
+		t.Fatalf("state must persist the last-line hash: %s", data)
+	}
+
+	// 正規の圧縮: 行数は同じ・最終行が進む -> warning。
+	write(`{"i":2}`, `{"i":3}`, `{"i":4}`)
+	reason, level := checkAlertHistory(histPath, statePath)
+	if level != "warning" {
+		t.Fatalf("compaction = (%q, %q), want warning", reason, level)
+	}
+	if !strings.Contains(reason, "newest entry changed") {
+		t.Fatalf("compaction reason = %q, want the newest-entry wording", reason)
+	}
+
+	// 中間行だけの書き換え（最終行は同じ）-> critical。
+	write(`{"i":2}`, `{"i":999}`, `{"i":4}`)
+	reason, level = checkAlertHistory(histPath, statePath)
+	if level != "critical" {
+		t.Fatalf("middle-line tamper = (%q, %q), want critical", reason, level)
+	}
+
+	// 旧形式（last_hash なし）の状態ファイルからの移行直後は warning に留める。
+	if err := os.WriteFile(statePath, []byte(`{"lines":3,"file_hash":"deadbeef"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	reason, level = checkAlertHistory(histPath, statePath)
+	if level != "warning" {
+		t.Fatalf("legacy state = (%q, %q), want warning", reason, level)
+	}
+	if !strings.Contains(reason, "no last-line baseline yet") {
+		t.Fatalf("legacy state reason = %q, want the baseline wording", reason)
+	}
+}
+
 func TestQuarantineResetsLineCountAnchor(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "kizuna-security.log")
