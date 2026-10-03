@@ -685,7 +685,7 @@
             const freqText = f > 0 ? `${(f / 1000).toFixed(2)} GHz` : t('process.col_freq', 'N/A');
             html += `
                 <div class="cpu-core-item">
-                    <canvas id="core-gauge-${index}" width="64" height="64"></canvas>
+                    <canvas id="core-gauge-${Number(index)}" width="64" height="64"></canvas>
                     <span class="core-value">${pct.toFixed(0)}%</span>
                     <span class="core-label">C${index + 1}</span>
                     <span class="core-tooltip">Core ${index + 1}<br>${pct.toFixed(1)}% / ${freqText}</span>
@@ -733,7 +733,7 @@
                                    disk.health === 'FAILED' ? 'fail' : 'unknown';
                 const healthLabel = disk.health === 'PASSED' ? t('disk.health.ok') :
                                    disk.health === 'FAILED' ? t('disk.health.fail') : t('disk.health.unknown');
-                smartHtml += `<span class="disk-health ${healthClass}" title="S.M.A.R.T: ${escapeHtml(disk.health)}">${healthLabel}</span>`;
+                smartHtml += `<span class="disk-health ${cssClass(healthClass)}" title="S.M.A.R.T: ${escapeHtml(disk.health)}">${healthLabel}</span>`;
             }
             if (Number(disk.temp) > 0) {
                 smartHtml += `<span class="disk-temp">${Math.round(disk.temp)}℃</span>`;
@@ -750,7 +750,7 @@
                     </div>
                     <div class="disk-usage">${formatStorage(used)} / ${formatStorage(total)}</div>
                     <div class="disk-free-row">
-                        <span class="${freeClass}" title="Free: ${freePercent.toFixed(1)}%">${t('disk.free', formatStorage(free))}</span>
+                        <span class="${cssClass(freeClass)}" title="Free: ${freePercent.toFixed(1)}%">${t('disk.free', formatStorage(free))}</span>
                     </div>
                 </div>
             `;
@@ -800,7 +800,7 @@
             <div class="storage-card">
                 <div class="storage-card-head">
                     <span class="storage-path" title="${escapeHtml(disk.path || '-')}">${escapeHtml(disk.path || '-')}</span>
-                    <span class="disk-health ${hi.cls}">${escapeHtml(hi.label)}</span>
+                    <span class="disk-health ${cssClass(hi.cls)}">${escapeHtml(hi.label)}</span>
                 </div>
                 <div class="storage-grid">
                     <div class="storage-item"><span class="label">${t('storage.col_model')}</span><span class="value" title="${model}">${model}</span></div>
@@ -962,7 +962,7 @@
                 <tr>
                     <td class="col-pid">${escapeHtml(p.pid)}</td>
                     <td class="col-name" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</td>
-                    <td class="col-cpu ${cpuClass}">${cpu.toFixed(1)}%</td>
+                    <td class="col-cpu ${cssClass(cpuClass)}">${cpu.toFixed(1)}%</td>
                     <td class="col-mem">${formatMemMB(memMB)}</td>
                     <td class="col-user" title="${escapeHtml(p.user || '')}">${escapeHtml(p.user || '-')}</td>
                 </tr>
@@ -1196,11 +1196,11 @@
         const target = meta.has_web_ui ? ' target="_blank" rel="noopener"' : '';
 
         return `
-            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''}" href="${href}"${target}>
+            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''}" href="${escapeAttr(href)}"${target}>
                 <div class="plugin-card-header">
                     <span class="plugin-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
                     <span class="plugin-row-type">${escapeHtml(type)}</span>
-                    <span class="plugin-row-state ${stateCls}">${escapeHtml(stateLabel)}</span>
+                    <span class="plugin-row-state ${cssClass(stateCls)}">${escapeHtml(stateLabel)}</span>
                 </div>
                 <div class="plugin-card-body">
                     ${body}
@@ -1641,11 +1641,11 @@
                 const trusted = a.trusted === true;
                 const cls = trusted ? 'trusted' : 'untrusted';
                 const label = trusted ? t('alerts.source_trusted') : t('alerts.source_untrusted');
-                srcBadge = `<span class="alert-source-badge ${cls}" title="${escapeHtml(a.source)}">${escapeHtml(label)}</span>`;
+                srcBadge = `<span class="alert-source-badge ${cssClass(cls)}" title="${escapeHtml(a.source)}">${escapeHtml(label)}</span>`;
             }
             html += `
-                <div class="alert-item ${escapeHtml(level)}">
-                    <span class="alert-level-badge ${escapeHtml(level)}">${escapeHtml(levelLabel)}</span>
+                <div class="alert-item ${cssClass(level)}">
+                    <span class="alert-level-badge ${cssClass(level)}">${escapeHtml(levelLabel)}</span>
                     ${srcBadge}
                     <div class="alert-item-body">
                         <div class="alert-item-title">${escapeHtml(a.title || '')}</div>

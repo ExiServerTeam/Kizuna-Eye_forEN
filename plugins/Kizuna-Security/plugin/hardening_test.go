@@ -97,6 +97,62 @@ func TestFIMWarnsWhenWatchedFileBecomesUnreadable(t *testing.T) {
 	_ = os.Chmod(target, 0600)
 }
 
+// 読取不能が複数あっても、通知は1件にまとめること（ノイズ削減）。
+// 非 root 運用では /etc/shadow, /etc/sudoers, /root/.ssh/authorized_keys の
+// ように複数の監視対象が同時に読めず、1ファイル1通知だと履歴が埋まる。
+func TestFIMUnreadableNotificationsAreAggregated(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can read mode 0000 files, so the unreadable case cannot be reproduced")
+	}
+	dir := t.TempDir()
+	names := []string{"a.conf", "b.conf", "c.conf"}
+	targets := make([]string, 0, len(names))
+	for _, n := range names {
+		p := filepath.Join(dir, n)
+		if err := os.WriteFile(p, []byte("v1"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		targets = append(targets, p)
+	}
+	baseline := filepath.Join(dir, "fim.json")
+
+	var events []module.SecurityEvent
+	emit := func(ev module.SecurityEvent) { events = append(events, ev) }
+	fim := NewFIM(targets, baseline, nil, emit)
+	fim.Check() // 初回はベースライン記録のみ
+	events = nil
+
+	for _, p := range targets {
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fim.Check()
+
+	if len(events) != 1 {
+		t.Fatalf("three unreadable files must be aggregated into one alert, got %d (%+v)", len(events), events)
+	}
+	if events[0].Level != "info" {
+		t.Fatalf("permission errors must stay info, got %+v", events[0])
+	}
+	for _, p := range targets {
+		if !strings.Contains(events[0].Message, p) {
+			t.Fatalf("aggregated message must mention %s: %s", p, events[0].Message)
+		}
+	}
+
+	// 同じ状態の繰り返しでは再通知しない（間隔内）。
+	events = nil
+	fim.Check()
+	if len(events) != 0 {
+		t.Fatalf("aggregated alert must be rate limited, got %+v", events)
+	}
+
+	for _, p := range targets {
+		_ = os.Chmod(p, 0600)
+	}
+}
+
 // ベースラインを書き換えても署名で検知できること。
 func TestFIMDetectsTamperedBaseline(t *testing.T) {
 	dir := t.TempDir()

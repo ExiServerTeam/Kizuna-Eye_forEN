@@ -9,6 +9,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -193,6 +195,7 @@ func (f *FIM) Check() {
 	if f.unreadableAt == nil {
 		f.unreadableAt = make(map[string]time.Time)
 	}
+	var pendingPerm, pendingOther []string
 	for p := range unreadable {
 		// 通知済みで、まだ再通知の間隔内なら見送る。「読めなかった」事実は
 		// ディスクに残るため、再起動直後でも同じ警告を繰り返さない
@@ -201,21 +204,50 @@ func (f *FIM) Check() {
 		if last, notified := f.unreadableAt[p]; notified && time.Since(last) < fimUnreadableWarnInterval {
 			continue
 		}
-		level, key := "warning", "integrity.unreadable.msg"
+		// 権限不足は非 root 運用では常時発生するため info へ降格する。
+		// symlink 差し替えなど権限以外の理由は warning のまま（危険度が違う）。
 		if unreadPerm[p] {
-			level, key = "info", "integrity.unreadable.perm.msg"
+			pendingPerm = append(pendingPerm, p)
+		} else {
+			pendingOther = append(pendingOther, p)
+		}
+		f.unreadableAt[p] = time.Now()
+	}
+
+	// 同じチェックで複数件あっても通知は1件にまとめる。監視対象が多い環境で
+	// 1ファイル1通知にすると、ログと通知が同じ内容で埋まり本物の異常が
+	// 見えなくなる（1件のときは従来どおり個別のメッセージを出す）。
+	pending := append(append([]string{}, pendingPerm...), pendingOther...)
+	sort.Strings(pending)
+	if len(pending) > 0 {
+		level := "info"
+		if len(pendingOther) > 0 {
+			level = "warning"
 		}
 		if f.emitFn != nil {
-			f.emitFn(module.SecurityEvent{
+			ev := module.SecurityEvent{
 				Category:  "integrity",
 				Level:     level,
 				Title:     msg(f.lang(), "integrity.unreadable.title"),
-				Message:   msg(f.lang(), key, p, unreadErr[p]),
-				Source:    p,
+				Source:    strings.Join(pending, ","),
 				Timestamp: time.Now(),
-			})
+			}
+			if len(pending) == 1 {
+				key := "integrity.unreadable.perm.msg"
+				if len(pendingOther) == 1 {
+					key = "integrity.unreadable.msg"
+				}
+				ev.Source = pending[0]
+				ev.Message = msg(f.lang(), key, pending[0], unreadErr[pending[0]])
+			} else {
+				key := "integrity.unreadable.multi.perm.msg"
+				if len(pendingOther) > 0 {
+					key = "integrity.unreadable.multi.msg"
+				}
+				ev.Message = msg(f.lang(), key, len(pending), strings.Join(pending, ", "))
+			}
+			f.emitFn(ev)
 		}
-		f.unreadableAt[p] = time.Now()
 	}
 	// 読めるように戻ったら履歴を消し、次に読めなくなった時点で再通知する。
 	for p := range f.unreadable {

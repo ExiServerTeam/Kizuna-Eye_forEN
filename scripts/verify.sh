@@ -134,6 +134,19 @@ else
     echo "  [skip] node 未検出のため i18n チェックをスキップ"
 fi
 
+# フロントエンド XSS 静的検査（web/static/*.js）
+# escapeHtml/escapeAttr/cssClass の一元化・読み込み順・属性値補間の無害化漏れを
+# 検出する。プラグイン由来データを innerHTML に埋め込む際の取り決めを守る。
+if command -v node >/dev/null 2>&1; then
+    if node scripts/check_xss.js web/static >/tmp/ke_xss.log 2>&1; then
+        ok "frontend XSS ($(cat /tmp/ke_xss.log))"
+    else
+        ng "frontend XSS (詳細: /tmp/ke_xss.log)"; cat /tmp/ke_xss.log
+    fi
+else
+    echo "  [skip] node 未検出のため XSS チェックをスキップ"
+fi
+
 if [ "$MODE" = "static" ]; then
     head_ "結果: PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
     [ "$FAIL" -eq 0 ] && exit 0 || exit 1
