@@ -38,8 +38,11 @@ for (const f of fs.readdirSync(dir)) {
     const re = /data-i18n(?:-[a-z-]+)?="([^"]+)"/g;
     while ((m = re.exec(text)) !== null) used.add(m[1]);
   } else if (f.endsWith('.js') && f !== 'i18n.js') {
-    // t('key') / t("key") / t(`key`) を対象にする（補間を含むテンプレートは除外）
-    const re = /\bt\(\s*(?:'([a-zA-Z0-9_.]+)'|"([a-zA-Z0-9_.]+)"|`([a-zA-Z0-9_.]+)`)/g;
+    // t('key') / t("key") / t(`key`) を対象にする。
+    // 引用符の直後が ')' か ','（第2引数あり）のときだけキーとして採用し、
+    // 動的キー（t('level.' + x) / t(`a.${b}`)）は抽出しない。以前は
+    // 'level.' のような連結の断片を未定義キーとして誤検出していた。
+    const re = /\bt\(\s*(?:'([a-zA-Z0-9_.]+)'|"([a-zA-Z0-9_.]+)"|`([a-zA-Z0-9_.]+)`)\s*[,)]/g;
     while ((m = re.exec(text)) !== null) used.add(m[1] || m[2] || m[3]);
   }
 }
