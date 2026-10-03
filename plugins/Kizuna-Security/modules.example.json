@@ -1,0 +1,16 @@
+[
+  {
+    "name": "kizuna_security",
+    "type": "plugin",
+    "config": {
+      "plugin_path": "/opt/kizuna-eye/bin/plugins/kizuna_security.so",
+      "watch_files": "/var/log/auth.log,/var/log/dpkg.log,/var/log/apt/history.log",
+      "poll_interval_sec": 15,
+      "notify_min_level": "warning",
+      "failed_burst": 5,
+      "burst_window_sec": 60,
+      "log_path": "./logs/kizuna-security.log"
+    },
+    "enabled": true
+  }
+]
