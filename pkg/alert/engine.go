@@ -132,17 +132,19 @@ func (e *Engine) ClearAlerts() error {
 
 // ReportAlert records an externally supplied alert to history and notifies.
 // Used by plugins (e.g. security) that detect their own events.
-func (e *Engine) ReportAlert(a *notify.Alert) {
-	e.dispatch(a)
+// source identifies the origin; trusted is true only for alerts the
+// dashboard generated itself (not from a forgeable log line).
+func (e *Engine) ReportAlert(a *notify.Alert, source string, trusted bool) {
+	e.dispatch(a, source, trusted)
 }
 
 // dispatch records to history and then notifies.
-func (e *Engine) dispatch(a *notify.Alert) {
+func (e *Engine) dispatch(a *notify.Alert, source string, trusted bool) {
 	if a == nil {
 		return
 	}
 	if e.history != nil {
-		e.history.Add(a)
+		e.history.AddSourced(a, source, trusted)
 	}
 	if e.notifier != nil {
 		e.notifier.Notify(a)
@@ -212,7 +214,7 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 	e.mu.Unlock()
 
 	for _, a := range pending {
-		e.dispatch(a)
+		e.dispatch(a, "dashboard", true)
 	}
 }
 
@@ -221,10 +223,37 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 // ============================================================
 func (e *Engine) CheckAgentTimeout() {
 	e.mu.Lock()
-	if !e.agentOnline || e.agentLastSeen.IsZero() {
+	if e.agentLastSeen.IsZero() {
+		// The agent has never been seen yet; nothing to time out.
 		e.mu.Unlock()
 		return
 	}
+
+	// Already offline: this is the path that used to return early and never
+	// fire again, so an agent that stayed disconnected produced exactly one
+	// alert and then silence. Re-alert on the cooldown so a long outage keeps
+	// surfacing in the history and notifications.
+	if !e.agentOnline {
+		if e.allowAgentOfflineNotifyLocked(time.Now()) {
+			reason := e.agentOfflineReason
+			if reason == "" {
+				reason = "offline"
+			}
+			e.mu.Unlock()
+			e.dispatch(&notify.Alert{
+				Type:      "agent_offline_ongoing",
+				Level:     notify.LevelCritical,
+				Icon:      iconForLevel(notify.LevelCritical),
+				Title:     "Agent 未接続が継続",
+				Message:   "Agentとの接続が回復していません（原因: " + reason + "）。監視が停止しています。",
+				Timestamp: time.Now(),
+			}, "dashboard", true)
+			return
+		}
+		e.mu.Unlock()
+		return
+	}
+
 	if time.Since(e.agentLastSeen) < e.cfg.AgentTimeout {
 		e.mu.Unlock()
 		return
@@ -241,7 +270,7 @@ func (e *Engine) CheckAgentTimeout() {
 			Title:     "Agent 応答なし",
 			Message:   "Agentから応答がありません。至急確認してください。",
 			Timestamp: time.Now(),
-		})
+		}, "dashboard", true)
 		return
 	}
 	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。
@@ -270,7 +299,7 @@ func (e *Engine) OnAgentDisconnect() {
 			Title:     "Agent 切断",
 			Message:   "Agentが切断されました。",
 			Timestamp: time.Now(),
-		})
+		}, "dashboard", true)
 		return
 	}
 	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。

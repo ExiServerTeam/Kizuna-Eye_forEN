@@ -120,6 +120,32 @@ func TestRestoreSecretsTypeChangeDropsMask(t *testing.T) {
 	}
 }
 
+// Regression: two channels of the SAME type must each restore their own
+// secret. Matching only by type sent every masked discord channel to the
+// first old discord channel, losing the second channel's webhook_url.
+func TestRestoreSecretsTwoSameTypeChannels(t *testing.T) {
+	old := map[string]interface{}{
+		"channels": []interface{}{
+			map[string]interface{}{"type": "discord", "webhook_url": "https://one"},
+			map[string]interface{}{"type": "discord", "webhook_url": "https://two"},
+		},
+	}
+	incoming := map[string]interface{}{
+		"channels": []interface{}{
+			map[string]interface{}{"type": "discord", "webhook_url": maskedValue},
+			map[string]interface{}{"type": "discord", "webhook_url": maskedValue},
+		},
+	}
+	out := restoreSecrets(incoming, old).(map[string]interface{})
+	chans := out["channels"].([]interface{})
+	if chans[0].(map[string]interface{})["webhook_url"] != "https://one" {
+		t.Errorf("first channel = %v, want https://one", chans[0])
+	}
+	if chans[1].(map[string]interface{})["webhook_url"] != "https://two" {
+		t.Errorf("second channel = %v, want https://two (secret must not be overwritten by the first)", chans[1])
+	}
+}
+
 func TestRestoreSecretsNested(t *testing.T) {
 	old := map[string]interface{}{
 		"notifications": map[string]interface{}{

@@ -50,9 +50,20 @@ type SessionManager struct {
 	path string
 	// ipBind binds a session to the IP that created it (optional).
 	ipBind bool
+	// stopOnce makes Stop idempotent and safe under concurrent calls: the
+	// select/close pattern it replaced could close stopCh twice and panic.
+	stopOnce sync.Once
 	// logf, when set, receives persistence-failure messages. Without it a
 	// full disk or permission error would silently stop persisting sessions.
 	logf func(format string, args ...interface{})
+
+	// saveMu serializes disk writes. save() snapshots the session map under
+	// m.mu, releases it, then writes the file; without saveMu two concurrent
+	// saves could interleave so that the later-started one finishes first and
+	// the older snapshot's rename wins, dropping the newer sessions from disk
+	// (lost update). Holding saveMu across snapshot+write makes each save
+	// write the newest state and keeps writes ordered.
+	saveMu sync.Mutex
 
 	stopCh chan struct{}
 }
@@ -80,7 +91,11 @@ func NewSessionManager(ttl, idle time.Duration) *SessionManager {
 	if ttl <= 0 {
 		ttl = 12 * time.Hour
 	}
-	if idle <= 0 {
+	// idle == 0 selects the default (2h). A negative value disables the idle
+	// timeout entirely, so a session stays valid until its absolute TTL. This
+	// lets an operator stop the "logged out when I come back" behaviour
+	// without losing the absolute expiry as a safety net.
+	if idle == 0 {
 		idle = 2 * time.Hour
 	}
 	m := &SessionManager{
@@ -133,6 +148,18 @@ func newID() (string, error) {
 // Create issues a new session for the user. ip may be empty when IP binding is
 // not used.
 func (m *SessionManager) Create(username string, role Role, ip string) (*Session, error) {
+	return m.CreateWithTTL(username, role, ip, m.ttl)
+}
+
+// CreateWithTTL is Create with an explicit absolute lifetime. It is used for
+// guest sessions, which should expire far sooner than a real user's session:
+// a guest is an anonymous, throw-away viewer, so leaving it valid for the full
+// (e.g. 30-day) user TTL would keep useless sessions in the store and on disk.
+// ttl <= 0 falls back to the manager's configured TTL.
+func (m *SessionManager) CreateWithTTL(username string, role Role, ip string, ttl time.Duration) (*Session, error) {
+	if ttl <= 0 {
+		ttl = m.ttl
+	}
 	token, err := newID()
 	if err != nil {
 		return nil, err
@@ -145,7 +172,7 @@ func (m *SessionManager) Create(username string, role Role, ip string) (*Session
 		IP:        ip,
 		CreatedAt: now,
 		LastSeen:  now,
-		ExpiresAt: now.Add(m.ttl),
+		ExpiresAt: now.Add(ttl),
 	}
 	key := hashToken(token)
 
@@ -207,7 +234,7 @@ func (m *SessionManager) Get(token string) (*Session, bool) {
 		m.mu.Unlock()
 		return nil, false
 	}
-	if now.After(s.ExpiresAt) || now.Sub(s.LastSeen) > m.idle {
+	if now.After(s.ExpiresAt) || (m.idle > 0 && now.Sub(s.LastSeen) > m.idle) {
 		delete(m.sessions, key)
 		m.mu.Unlock()
 		m.save()
@@ -215,6 +242,12 @@ func (m *SessionManager) Get(token string) (*Session, bool) {
 	}
 	s.LastSeen = now
 	copy := *s
+	// Restore the raw token on the returned copy. Sessions loaded from disk
+	// are keyed by sha256(token) and their ID field is empty, so without this
+	// a caller doing Delete(session.ID) after a restart would call
+	// Delete("") and fail to remove the server-side session (logout and the
+	// login-time session-fixation defense would silently do nothing).
+	copy.ID = token
 	m.mu.Unlock()
 	return &copy, true
 }
@@ -300,7 +333,7 @@ func (m *SessionManager) load() error {
 			continue
 		}
 		// Drop already-expired records so a stale file cannot resurrect them.
-		if now.After(rec.ExpiresAt) || now.Sub(rec.LastSeen) > m.idle {
+		if now.After(rec.ExpiresAt) || (m.idle > 0 && now.Sub(rec.LastSeen) > m.idle) {
 			continue
 		}
 		loaded[rec.Hash] = &Session{
@@ -322,6 +355,12 @@ func (m *SessionManager) load() error {
 // save writes the session table atomically. It is a no-op when persistence is
 // disabled. Callers must NOT hold m.mu.
 func (m *SessionManager) save() {
+	// Serialize writers so a slow save cannot overwrite a newer one (lost
+	// update). saveMu is released before any logger call, which only takes
+	// m.mu, so there is no lock-order inversion.
+	m.saveMu.Lock()
+	defer m.saveMu.Unlock()
+
 	m.mu.RLock()
 	path := m.path
 	list := make([]persistedSession, 0, len(m.sessions))
@@ -399,7 +438,7 @@ func (m *SessionManager) reaper() {
 			m.mu.Lock()
 			changed := false
 			for key, s := range m.sessions {
-				if now.After(s.ExpiresAt) || now.Sub(s.LastSeen) > m.idle {
+				if now.After(s.ExpiresAt) || (m.idle > 0 && now.Sub(s.LastSeen) > m.idle) {
 					delete(m.sessions, key)
 					changed = true
 				}
@@ -412,12 +451,9 @@ func (m *SessionManager) reaper() {
 	}
 }
 
-// Stop terminates the reaper goroutine and flushes sessions to disk.
+// Stop terminates the reaper goroutine and flushes sessions to disk. It is
+// idempotent and safe to call from multiple goroutines.
 func (m *SessionManager) Stop() {
-	select {
-	case <-m.stopCh:
-	default:
-		close(m.stopCh)
-	}
+	m.stopOnce.Do(func() { close(m.stopCh) })
 	m.save()
 }

@@ -2,8 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,6 +66,44 @@ func TestModulesStorageCRUD(t *testing.T) {
 	}
 	if err := s2.Delete("p1"); err == nil {
 		t.Fatal("Delete of missing should fail")
+	}
+}
+
+// Regression: a save failure during Update/Delete must NOT be reported as
+// "not found" (404); the caller must see an error status, while a genuinely
+// missing module stays 404.
+func TestModuleHandlersDistinguishNotFoundFromSaveFailure(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "modules.json")
+	s := NewModulesStorage(path)
+	if err := s.Add(ModuleConfig{Name: "p1", Type: "plugin", Enabled: true}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	h := NewModuleHandler(s, "")
+
+	// Missing module -> 404.
+	req := httptest.NewRequest(http.MethodPut, "/api/modules/nope", strings.NewReader(`{}`))
+	req.SetPathValue("name", "nope")
+	rec := httptest.NewRecorder()
+	h.handleUpdate(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing module update = %d, want 404", rec.Code)
+	}
+
+	// Make saves fail: replace the file with a directory.
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	req = httptest.NewRequest(http.MethodPut, "/api/modules/p1", strings.NewReader(`{"name":"p1"}`))
+	req.SetPathValue("name", "p1")
+	rec = httptest.NewRecorder()
+	h.handleUpdate(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("save-failure update = %d, want 500 (not 404)", rec.Code)
 	}
 }
 

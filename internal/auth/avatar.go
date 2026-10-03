@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -110,6 +111,13 @@ func (h *Handler) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	old := h.store.AvatarOf(sess.Username)
 	if err := h.store.SetAvatar(sess.Username, name); err != nil {
 		_ = os.Remove(path)
+		// A guest session (or any session whose user no longer exists) has
+		// no entry in users.json, so SetAvatar fails. That is a client
+		// problem (403), not a server fault: do not surface it as 500.
+		if errors.Is(err, ErrUserNotFound) {
+			writeError(w, http.StatusForbidden, "この操作には実アカウントが必要です")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "保存に失敗しました")
 		return
 	}
@@ -148,7 +156,11 @@ func (h *Handler) handleAvatarDelete(w http.ResponseWriter, r *http.Request) {
 // so an <img> tag can load it; names are unguessable random suffixes.
 func (h *Handler) handleAvatarServe(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+	// Reject path separators and bare dot names. Do NOT reject every ".."
+	// substring: a legitimate avatar name is "<user>-<hex>.<ext>" and the
+	// username charset allows consecutive dots, so "a..b-1a2b.png" is a real
+	// file that must be served. filepath.Base below already blocks traversal.
+	if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
 		http.NotFound(w, r)
 		return
 	}

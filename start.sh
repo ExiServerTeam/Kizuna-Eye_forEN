@@ -35,6 +35,15 @@ done
 
 mkdir -p logs
 
+# Go ランタイムのメモリ調整。
+# GOGC を下げると GC が早く動き、アイドル時のヒープ（RSS）を小さく保つ。
+# GOMEMLIMIT はソフト上限で、超えそうになると GC を強める。
+# どちらも環境変数で上書きできる（KIZUNA_GOGC / KIZUNA_GOMEMLIMIT）。
+# 注: これで下がるのはヒープのみ。RSS の大半はバイナリとプラグインの
+#     コードページ(.text)で、そちらは削れない。
+export GOGC="${KIZUNA_GOGC:-50}"
+export GOMEMLIMIT="${KIZUNA_GOMEMLIMIT:-64MiB}"
+
 # is_running <binary-name> -> 0 if running
 is_running() {
     local name="$1" pidfile="$RUN_DIR/$name.pid"
@@ -44,25 +53,33 @@ is_running() {
 }
 
 # start_one <binary-name> <config> <logfile>
+# 起動した場合は 0、既に起動中だった場合は 1 を返す。
+# 個別の出力はせず、呼び出し側でまとめて表示する。
 start_one() {
     local name="$1" cfg="$2" log="$3"
     if is_running "$name"; then
-        echo "ℹ️  $name は既に起動中です (PID: $(cat "$RUN_DIR/$name.pid"))"
-        return 0
+        return 1
     fi
     # nohup: SSH セッション終了時の SIGHUP を無視。stdin を /dev/null に。
     nohup "$BIN_DIR/$name" -config "$cfg" >> "$log" 2>&1 < /dev/null &
     local pid=$!
     echo "$pid" > "$RUN_DIR/$name.pid"
     disown 2>/dev/null || true
-    echo "✅ $name 起動 (PID: $pid)"
+    return 0
 }
 
-start_one dashboard_linux dashboard_config.json logs/dashboard.log
+new_started=0
+already_running=0
+start_one dashboard_linux dashboard_config.json logs/dashboard.log && new_started=1 || already_running=1
 sleep 1
-start_one agent_linux agent_config.json logs/agent.log
+start_one agent_linux agent_config.json logs/agent.log && new_started=1 || already_running=1
 
 echo ""
-LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
-[ -n "$LAN_IP" ] && echo "🌐 http://$LAN_IP:8080"
+if [ "$new_started" -eq 1 ]; then
+    echo "✅ Kizuna-Eyeを起動しました。"
+else
+    echo "ℹ️  Kizuna-Eyeは既に起動しています。"
+fi
+echo ""
+echo "🌐 http://localhost:8080"
 exit 0

@@ -91,6 +91,32 @@ func (s *SystemStatus) IsStale(maxAge int64) bool {
 	return (now - s.Timestamp) > maxAge
 }
 
+// SanitizeForViewer returns a copy of the status with fields that are not
+// part of the public viewer view removed: the live process list (PIDs, users)
+// and the S.M.A.R.T metadata of each disk (model, serial, written bytes,
+// power-on hours, rotation rate). Public viewer mode exposes only CPU/memory/
+// disk *usage*, so these must not be served to unauthenticated clients even
+// though the UI hides the detail modals.
+func (s *SystemStatus) SanitizeForViewer() *SystemStatus {
+	if s == nil {
+		return nil
+	}
+	c := s.Clone()
+	c.Processes = nil
+	for i := range c.Disks {
+		c.Disks[i].Model = ""
+		c.Disks[i].Serial = ""
+		c.Disks[i].WriteBytes = 0
+		c.Disks[i].PowerOnHours = 0
+		c.Disks[i].RotationRate = 0
+		// Health and temperature are also S.M.A.R.T-derived, so they are
+		// not part of the "usage only" public view either.
+		c.Disks[i].Health = ""
+		c.Disks[i].Temp = 0
+	}
+	return c
+}
+
 // Clone returns a deep copy of the SystemStatus.
 // Slices and pointer fields are copied, not shared.
 func (s *SystemStatus) Clone() *SystemStatus {

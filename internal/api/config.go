@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"Kizuna-Eye/pkg/config"
 )
 
 // ConfigHandler serves config file APIs.
@@ -14,6 +16,11 @@ type ConfigHandler struct {
 	agentConfigPath     string
 	dashboardConfigPath string
 	modulesConfigPath   string
+	// templateDir is the directory the *.example.json templates are read
+	// from. It defaults to the dashboard config's directory so template
+	// loading does not depend on the process working directory (a -config
+	// path elsewhere, or systemd, would otherwise 404).
+	templateDir string
 }
 
 // NewConfigHandler creates a ConfigHandler.
@@ -22,6 +29,7 @@ func NewConfigHandler(agentConfigPath, dashboardConfigPath, modulesConfigPath st
 		agentConfigPath:     agentConfigPath,
 		dashboardConfigPath: dashboardConfigPath,
 		modulesConfigPath:   modulesConfigPath,
+		templateDir:         filepath.Dir(dashboardConfigPath),
 	}
 }
 
@@ -106,12 +114,14 @@ func restoreSecrets(incoming, old interface{}) interface{} {
 		return t
 	case []interface{}:
 		oldArr, _ := old.([]interface{})
+		// typeSeen counts how many elements of each type have been matched so
+		// far, so the Nth incoming element of a type maps to the Nth old one.
+		// Matching by type alone would send every masked element of a type to
+		// the first old element of that type, so with two discord channels the
+		// second one's webhook_url would be overwritten by the first's.
+		typeSeen := make(map[string]int)
 		for i, val := range t {
-			// Match the old element to this one by type, scanning the whole old
-			// array. Matching by position would pair a masked value with the
-			// wrong element after a reorder/delete and silently assign another
-			// channel's secret. If no type match exists, the mask is dropped.
-			oldVal := matchOldElement(val, oldArr, i)
+			oldVal := matchOldElement(val, oldArr, i, typeSeen)
 			t[i] = restoreSecrets(val, oldVal)
 		}
 		return t
@@ -122,22 +132,30 @@ func restoreSecrets(incoming, old interface{}) interface{} {
 
 // matchOldElement finds the old array element that corresponds to incoming
 // element val. Objects with a "type" field (e.g. notification channels) are
-// matched by type, scanning the whole old array, so a reorder/delete does not
-// misassign secrets. Elements without a type fall back to positional matching.
-func matchOldElement(val interface{}, oldArr []interface{}, idx int) interface{} {
+// matched to the Nth old element of the same type (typeSeen tracks how many of
+// each type have already been matched), so a reorder/delete does not misassign
+// secrets and multiple channels of the same type keep their own secret.
+// Elements without a type fall back to positional matching.
+func matchOldElement(val interface{}, oldArr []interface{}, idx int, typeSeen map[string]int) interface{} {
 	vm, vok := val.(map[string]interface{})
 	if vok {
 		if vt, ok := vm["type"].(string); ok {
+			want := typeSeen[vt]
+			typeSeen[vt] = want + 1
+			seen := 0
 			for _, cand := range oldArr {
 				cm, cok := cand.(map[string]interface{})
 				if !cok {
 					continue
 				}
 				if ct, ok := cm["type"].(string); ok && ct == vt {
-					return cand
+					if seen == want {
+						return cand
+					}
+					seen++
 				}
 			}
-			return nil // no same-type element: drop the mask
+			return nil // no matching old element of this type: drop the mask
 		}
 	}
 	if idx < len(oldArr) {
@@ -154,7 +172,38 @@ func (c *ConfigHandler) restoreSecretsFromFile(filePath string, incoming interfa
 	if err != nil {
 		return incoming
 	}
-	return restoreSecrets(incoming, existing)
+	incoming = restoreSecrets(incoming, existing)
+	// A PUT replaces the whole file, so a body that omits a security-critical
+	// block would silently delete it. That is an easy way for an admin session
+	// (or a scripted client) to disable authentication or the agent token and
+	// then have it take effect on the next restart. Preserve those blocks from
+	// the existing file when the incoming body does not mention them.
+	return preserveCriticalBlocks(incoming, existing)
+}
+
+// criticalBlocks are top-level config keys that must not be dropped by a
+// partial update. If the incoming object does not contain the key at all, the
+// existing value is copied over so the block is never silently removed.
+var criticalBlocks = []string{"auth", "notifications"}
+
+func preserveCriticalBlocks(incoming, existing interface{}) interface{} {
+	inc, ok := incoming.(map[string]interface{})
+	if !ok {
+		return incoming
+	}
+	old, ok := existing.(map[string]interface{})
+	if !ok {
+		return incoming
+	}
+	for _, k := range criticalBlocks {
+		if _, present := inc[k]; present {
+			continue
+		}
+		if v, ok := old[k]; ok {
+			inc[k] = v
+		}
+	}
+	return inc
 }
 
 // exampleFileFor returns the example file name for a config type.
@@ -180,7 +229,26 @@ func (c *ConfigHandler) handleGetTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	data, err := os.ReadFile(name)
+	// Prefer the config directory, then fall back to the bare name (process
+	// working directory) and finally the directory of the running executable,
+	// so the template works whether the example files ship next to the config
+	// or next to the binary in a deployed layout.
+	candidates := []string{name}
+	if c.templateDir != "" && c.templateDir != "." {
+		candidates = append([]string{filepath.Join(c.templateDir, name)}, candidates...)
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), name))
+	}
+
+	var data []byte
+	var err error
+	for _, cand := range candidates {
+		data, err = os.ReadFile(cand)
+		if err == nil {
+			break
+		}
+	}
 	if err != nil {
 		writeJSONError(w, http.StatusNotFound, fmt.Sprintf("Template not found: %s", name))
 		return
@@ -435,8 +503,12 @@ func validateNotificationChannels(v interface{}) error {
 		// in notify.FromConfig (e.g. "Discord" must not be rejected here).
 		switch strings.ToLower(strings.TrimSpace(typ)) {
 		case "discord", "slack":
-			if s, _ := ch["webhook_url"].(string); strings.TrimSpace(s) == "" {
+			wurl, _ := ch["webhook_url"].(string)
+			if strings.TrimSpace(wurl) == "" {
 				return fmt.Errorf("notifications.channels[%d]: %s には webhook_url が必須です", i, typ)
+			}
+			if err := config.ValidateWebhookURL(wurl); err != nil {
+				return fmt.Errorf("notifications.channels[%d]: %s の webhook_url が不正です: %w", i, typ, err)
 			}
 		case "telegram":
 			bot, _ := ch["bot_token"].(string)
@@ -473,6 +545,8 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 		}
 		if dashboardURL, ok := cfgMap["dashboard_url"].(string); !ok || dashboardURL == "" {
 			return fmt.Errorf("dashboard_url is required")
+		} else if err := config.ValidateAgentURL(dashboardURL); err != nil {
+			return fmt.Errorf("dashboard_url が不正です: %w", err)
 		}
 		if v, ok := cfgMap["interval"]; ok {
 			f, isNum := v.(float64)
@@ -500,6 +574,17 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 		}
 		if err := validateNotificationChannels(cfgMap["notifications"]); err != nil {
 			return err
+		}
+		// Guard the agent token: when auth is enabled, an empty agent_token
+		// forces the legacy heuristic agent detection, which lets any
+		// non-browser client with ?role=agent (no Origin) be promoted to the
+		// agent and inject fake statuses. Refuse to empty it.
+		if authRaw, ok := cfgMap["auth"].(map[string]interface{}); ok {
+			if enabled, _ := authRaw["enabled"].(bool); enabled {
+				if tok, ok := authRaw["agent_token"].(string); ok && strings.TrimSpace(tok) == "" {
+					return fmt.Errorf("auth.enabled=true のとき auth.agent_token を空にはできません（Agent 認証が無効化されます）")
+				}
+			}
 		}
 	case "modules":
 		// Validate modules config: it must be an array of objects each with

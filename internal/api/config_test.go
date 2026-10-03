@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -102,6 +103,29 @@ func TestBulkUpdateValidates(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bulk update with invalid agent config: got status %d, want 400", rec.Code)
+	}
+}
+
+// Regression: the template must be read from the config directory, not the
+// process working directory, so a -config path elsewhere (or systemd) does not
+// 404 on "insert template".
+func TestGetTemplateResolvesFromConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "agent_config.example.json"), []byte(`{"ok":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := NewConfigHandler(dir+"/agent.json", dir+"/dashboard.json", dir+"/modules.json")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config/agent/template", nil)
+	req.SetPathValue("type", "agent")
+	rec := httptest.NewRecorder()
+	c.handleGetTemplate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("template from config dir: status = %d, want 200 (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "\"ok\"") {
+		t.Errorf("unexpected template body: %s", rec.Body.String())
 	}
 }
 

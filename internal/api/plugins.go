@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,6 +48,22 @@ type PluginManager struct {
 	// a second run until the matching backup_result arrives (or times out).
 	runMu   sync.Mutex
 	running map[string]runGuard
+
+	// audit, when set, receives security-relevant plugin actions (upload /
+	// delete) so they are recorded in the alert history, not only logged.
+	audit func(kind, detail string)
+}
+
+// SetAuditHook installs the callback for plugin audit events.
+func (p *PluginManager) SetAuditHook(fn func(kind, detail string)) {
+	p.audit = fn
+}
+
+// reportAudit invokes the audit hook, if any.
+func (p *PluginManager) reportAudit(kind, detail string) {
+	if p.audit != nil {
+		p.audit(kind, detail)
+	}
 }
 
 // runGuard records an in-flight manual run so its backup_result can be matched
@@ -152,6 +169,38 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Append index.html for directory requests.
+	if st, err := os.Stat(fullPath); err == nil && st.IsDir() {
+		fullPath = filepath.Join(fullPath, "index.html")
+	}
+
+	// Resolve symlinks and re-check containment. The lexical HasPrefix above
+	// does not follow symlinks: a symlink inside the web UI dir (e.g.
+	// link.txt -> /etc/passwd) passes the prefix check but ServeFile would
+	// send the target's contents. A plugin .web dir is writable by the agent
+	// user, so a compromised plugin could plant such a link and read any file
+	// the agent can read. EvalSymlinks resolves the real path; the request is
+	// only served when the real file is still inside baseDir.
+	realBase, err := filepath.EvalSymlinks(baseDir)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	realPath, err := filepath.EvalSymlinks(fullPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !strings.HasPrefix(realPath, realBase+string(os.PathSeparator)) && realPath != realBase {
+		http.NotFound(w, r)
+		return
+	}
+	// Reject anything that is not a regular file (devices, sockets, dirs).
+	if st, err := os.Stat(realPath); err != nil || !st.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+
 	// Plugin web UIs are third-party code and are served outside the main
 	// static handler, so apply the same baseline security headers here.
 	h := w.Header()
@@ -159,12 +208,13 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "same-origin")
 
-	// Append index.html for directory requests.
-	if st, err := os.Stat(fullPath); err == nil && st.IsDir() {
-		fullPath = filepath.Join(fullPath, "index.html")
-	}
+	http.ServeFile(w, r, realPath)
+}
 
-	http.ServeFile(w, r, fullPath)
+// fileExists reports whether path exists (any type).
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 var safeNameRe = regexp.MustCompile(`^[A-Za-z0-9_\-]+$`)
@@ -350,8 +400,9 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	soPath := filepath.Join(p.pluginsDir, name+".so")
-	metaPath := filepath.Join(p.pluginsDir, name+".meta.json")
+	// soPath/metaPath are finalized after plugin-inspect: the canonical
+	// name comes from the plugin itself (see below).
+	var soPath, metaPath string
 
 	// Use a unique temp file so concurrent uploads of the same plugin name
 	// (or a stale .tmp left by a crash) cannot collide. The upload stays in
@@ -383,19 +434,65 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		p.logger.Info("プラグインアップロード受信: %s (%d bytes) from %s", name, written, r.RemoteAddr)
 	}
 
-	// Inspect the temp file BEFORE moving it into place.
+	// Inspect the temp file BEFORE moving it into place. A plugin that cannot
+	// be inspected must NOT be installed: plugin-inspect loads the .so to read
+	// its metadata, so a failed inspect means the file is not a loadable Go
+	// plugin (wrong arch, corrupt, or a non-plugin). Committing it would place
+	// a broken/malicious .so on disk for the agent to load on the next restart.
+	// Reject the upload and let the deferred cleanup remove the temp file.
 	meta, err := p.inspectPlugin(r.Context(), name, tmpPath, r.RemoteAddr)
 	if err != nil {
 		if p.logger != nil {
-			p.logger.Error("プラグイン検証失敗: %s: %v", name, err)
+			p.logger.Error("プラグイン検証失敗のため拒否: %s: %v", name, err)
 		}
-		meta = &PluginMeta{
-			Name:         name,
-			SOFilename:   name + ".so",
-			UploadedAt:   time.Now().Format(time.RFC3339),
-			UploaderIP:   r.RemoteAddr,
-			InspectError: err.Error(),
+		writeJSONError(w, http.StatusBadRequest,
+			"プラグインの検証に失敗したため登録できません（.so が壊れているか、対応していない形式です）: "+err.Error())
+		return
+	}
+
+	// The canonical name MUST match the plugin's own Name(): the agent keys
+	// its module registry by plugin.Name(), while modules.json and meta.json
+	// are keyed by this name. If they differ, the agent registers the plugin
+	// under one name while the dashboard looks it up under the other, so
+	// security events and backup results are silently dropped. Prefer the
+	// plugin's self-declared name (sanitized); fall back to the upload name
+	// only when it is unusable.
+	canonical := name
+	if meta != nil && meta.Name != "" {
+		safe, serr := sanitizeName(meta.Name)
+		if serr != nil {
+			// The plugin reports a module name that cannot be used as an
+			// identifier (e.g. it contains spaces or a path separator). The
+			// agent would register it under that name while modules.json
+			// uses the upload name, so its events/results would be dropped.
+			// Reject it loudly rather than create a broken registration.
+			writeJSONError(w, http.StatusBadRequest,
+				"プラグインの Name() が不正です（英数字・ハイフン・アンダースコアのみ使用可）: "+meta.Name)
+			return
 		}
+		canonical = safe
+	}
+
+	// Refuse a duplicate BEFORE touching the installed plugin's files.
+	// Two checks are needed:
+	//   1. modules.json still lists it (normal case), and
+	//   2. the .so / .meta.json exist on disk even if modules.json does not.
+	// Without check 2, deleting a module from modules.json (a separate
+	// operation) would let a later upload with the same name pass the
+	// storage.Get test and overwrite the installed .so via os.Rename below,
+	// destroying a working plugin.
+	if p.storage.Get(canonical) != nil {
+		writeJSONError(w, http.StatusConflict, "同名のプラグインが既に登録されています: "+canonical)
+		return
+	}
+	meta.Name = canonical
+	meta.SOFilename = canonical + ".so"
+	soPath = filepath.Join(p.pluginsDir, canonical+".so")
+	metaPath = filepath.Join(p.pluginsDir, canonical+".meta.json")
+	if fileExists(soPath) || fileExists(metaPath) {
+		writeJSONError(w, http.StatusConflict,
+			"同名のプラグインファイルが既に存在します。先に削除してください: "+canonical)
+		return
 	}
 
 	// Build the modules.json entry up front so a JSON failure cannot leave a
@@ -406,7 +503,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	modConfig := ModuleConfig{
-		Name:    name,
+		Name:    canonical,
 		Type:    "plugin",
 		Enabled: true,
 		Config:  json.RawMessage(cfgBytes),
@@ -440,6 +537,10 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "モジュール登録に失敗しました: "+err.Error())
 		return
 	}
+
+	// Audit: installing a plugin is a code-execution boundary and must be
+	// recorded in the alert history, not only logged.
+	p.reportAudit("plugin_upload", "プラグイン '"+canonical+"' をアップロード・登録しました (from "+r.RemoteAddr+")")
 
 	writeJSON(w, http.StatusOK, meta)
 }
@@ -500,9 +601,14 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete persists internally and rolls back on save failure.
+	// Delete persists internally and rolls back on save failure. A save
+	// failure (disk full, permissions) must not be reported as 404.
 	if err := p.storage.Delete(name); err != nil {
-		writeJSONError(w, http.StatusNotFound, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrModuleNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, status, err.Error())
 		return
 	}
 
@@ -524,6 +630,8 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if p.logger != nil {
 		p.logger.Info("プラグインモジュール削除: %s", name)
 	}
+	// Audit: removing a plugin is a code-execution boundary change.
+	p.reportAudit("plugin_delete", "プラグイン '"+name+"' を削除しました (from "+r.RemoteAddr+")")
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
@@ -562,6 +670,11 @@ func (p *PluginManager) inspectPlugin(
 	}
 
 	if raw.Name == "" {
+		raw.Name = name
+	} else if _, err := sanitizeName(raw.Name); err != nil {
+		// The plugin self-reported a name that is not filesystem-safe
+		// (e.g. contains a path separator). Fall back to the sanitized
+		// upload name so meta.json cannot carry a path-traversal name.
 		raw.Name = name
 	}
 

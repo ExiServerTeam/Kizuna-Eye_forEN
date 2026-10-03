@@ -25,6 +25,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // アラート閾値エディタ
     const alertConfigPanel = document.getElementById('alertConfigPanel');
     const alertConfigSaveBtn = document.getElementById('alertConfigSaveBtn');
+
     const acFields = {
         acMemWarn: document.getElementById('acMemWarn'),
         acMemCrit: document.getElementById('acMemCrit'),
@@ -439,7 +440,12 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    if (guiSaveBtn) guiSaveBtn.addEventListener('click', saveGui);
+    if (guiSaveBtn) guiSaveBtn.addEventListener('click', () => guardedSave(saveGui));
+    // GUI フォームの変更で自動保存。
+    if (guiBody) {
+        guiBody.addEventListener('input', scheduleAutosave);
+        guiBody.addEventListener('change', scheduleAutosave);
+    }
 
     // ============================================================
     // モード切替
@@ -451,6 +457,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function applyMode() {
         const isAlerts = currentConfigType === 'alerts';
+        // アラートは専用パネルなので GUI/JSON 切替と操作ボタンを隠す。
         if (editorMode) editorMode.style.display = isAlerts ? 'none' : 'inline-flex';
         if (editorActions) editorActions.style.display = isAlerts ? 'none' : 'flex';
 
@@ -507,18 +514,23 @@ document.addEventListener('DOMContentLoaded', function () {
     }
     function setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('kizuna-theme', theme);
+        // localStorage はプライベートモード等で例外を投げる。失敗しても
+        // DOMContentLoaded ハンドラ全体を止めないよう握りつぶす。
+        try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
         const themeIcon = document.getElementById('themeIcon');
         const themeLabel = document.getElementById('themeLabel');
         if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-    const savedTheme = localStorage.getItem('kizuna-theme');
+    let savedTheme = null;
+    try { savedTheme = localStorage.getItem('kizuna-theme'); } catch (e) { /* ignore */ }
     if (savedTheme) setTheme(savedTheme);
     else setTheme(prefersDark.matches ? 'dark' : 'light');
     prefersDark.addEventListener('change', (e) => {
-        if (!localStorage.getItem('kizuna-theme')) setTheme(e.matches ? 'dark' : 'light');
+        let manual = null;
+        try { manual = localStorage.getItem('kizuna-theme'); } catch (err) { /* ignore */ }
+        if (!manual) setTheme(e.matches ? 'dark' : 'light');
     });
     const themeToggle = document.getElementById('themeToggle');
     if (themeToggle) {
@@ -534,6 +546,7 @@ document.addEventListener('DOMContentLoaded', function () {
             btn.classList.add('active');
             currentConfigType = btn.dataset.type;
             if (currentConfigType === 'alerts') {
+                // 専用パネル（アラート）は applyMode 経由で表示する。
                 applyMode();
             } else {
                 loadConfig(currentConfigType);
@@ -593,7 +606,12 @@ document.addEventListener('DOMContentLoaded', function () {
             showToast(t('config.save_failed'), 'error');
         }
     }
-    if (alertConfigSaveBtn) alertConfigSaveBtn.addEventListener('click', saveAlertConfig);
+    if (alertConfigSaveBtn) alertConfigSaveBtn.addEventListener('click', () => guardedSave(saveAlertConfig));
+    if (alertConfigPanel) {
+        alertConfigPanel.addEventListener('input', scheduleAutosave);
+        alertConfigPanel.addEventListener('change', scheduleAutosave);
+    }
+
 
     // ============================================================
     // JSON エディタ
@@ -678,6 +696,81 @@ document.addEventListener('DOMContentLoaded', function () {
         lineCount.textContent = t('config.lines', text.split('\n').length);
     }
 
+    // ============================================================
+    // 自動保存（デバウンス）
+    // ============================================================
+    // 入力が止まって AUTOSAVE_DELAY 経過したら自動で保存する。
+    // - JSON モード: 構文が有効なときだけ保存（壊れた JSON を送らない）。
+    // - GUI / アラート: フォーム変更時に保存。
+    // 手動保存（ボタン / Ctrl+S）と競合しないよう、保存中は予約を1つに畳む。
+    const AUTOSAVE_DELAY = 1500; // ms
+    let autosaveTimer = null;
+    let saving = false;
+    let saveQueued = false;
+
+    function setSavingLabel(on) {
+        // フッターの文字数表示の隣に「保存中… / 自動保存済み」を出す（任意）。
+        if (!validationStatus) return;
+        const st = validationStatus.querySelector('.status-text');
+        if (!st) return;
+        if (on) {
+            st.dataset.prevText = st.textContent;
+            st.textContent = t('config.saving');
+        } else if (st.dataset.prevText) {
+            st.textContent = st.dataset.prevText;
+            delete st.dataset.prevText;
+        }
+    }
+
+    // scheduleAutosave は自動保存を予約する。連続入力では最後の1回だけ走る。
+    function scheduleAutosave() {
+        if (autosaveTimer) clearTimeout(autosaveTimer);
+        autosaveTimer = setTimeout(() => {
+            autosaveTimer = null;
+            runAutosave();
+        }, AUTOSAVE_DELAY);
+    }
+
+    // 現在の設定タイプに応じて保存関数を選ぶ。
+    async function currentSaveFn() {
+        if (currentConfigType === 'alerts') return saveAlertConfig;
+        if (currentMode === 'gui') return saveGui;
+        return saveConfig;
+    }
+
+    // 自動保存の可否。JSON モードで構文が壊れているときは保存しない。
+    function autosaveAllowed() {
+        if (currentConfigType === 'alerts') return true;
+        if (currentMode === 'gui') return true;
+        try { JSON.parse(configEditor.value); return true; }
+        catch (e) { return false; }
+    }
+
+    async function runAutosave() {
+        if (!autosaveAllowed()) return; // 壊れた JSON は自動保存しない
+        const fn = await currentSaveFn();
+        await guardedSave(fn, true);
+    }
+
+    // guardedSave は保存の多重実行を防ぐ。手動保存は saving 中でも予約して
+    // 最後に1回実行される（入力の取りこぼしを防ぐ）。
+    async function guardedSave(fn, silent) {
+        if (saving) { saveQueued = true; return; }
+        saving = true;
+        if (!silent) setSavingLabel(true);
+        try {
+            await fn();
+        } finally {
+            saving = false;
+            if (!silent) setSavingLabel(false);
+            if (saveQueued) {
+                saveQueued = false;
+                // 予約分を1回だけ実行（無限ループ防止のため直接呼ぶ）。
+                await runAutosave();
+            }
+        }
+    }
+
     function showToast(message, type = 'info') {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
@@ -707,20 +800,31 @@ document.addEventListener('DOMContentLoaded', function () {
     if (templateBtn) templateBtn.addEventListener('click', insertTemplate);
     if (formatBtn) formatBtn.addEventListener('click', formatJSON);
     if (validateBtn) validateBtn.addEventListener('click', validateJSON);
-    if (saveBtn) saveBtn.addEventListener('click', saveConfig);
+    if (saveBtn) saveBtn.addEventListener('click', () => guardedSave(currentSaveFn()));
 
     configEditor.addEventListener('input', () => {
         updateCharCount();
         try { JSON.parse(configEditor.value); updateValidationStatus(true); }
         catch (error) { updateValidationStatus(false); }
+        // 入力が落ち着いたら自動保存（構文が有効なときのみ実際に送る）。
+        scheduleAutosave();
     });
 
-    configEditor.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveConfig(); }
-        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') { e.preventDefault(); formatJSON(); }
+    // Ctrl/Cmd+S はグローバルに効かせる（エディタ外にフォーカスがあっても保存）。
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+            e.preventDefault();
+            guardedSave(currentSaveFn());
+            return;
+        }
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'F' || e.key === 'f')) {
+            e.preventDefault();
+            formatJSON();
+        }
     });
 
     window.addEventListener('kizuna-lang-change', () => {
+        setTheme(getTheme());
         updateCharCount();
         updateValidationStatus(true);
         if (currentConfigType !== 'alerts' && currentMode === 'gui') renderGui();

@@ -6,6 +6,8 @@
     const btn = document.getElementById('loginBtn');
     const errEl = document.getElementById('authError');
 
+    const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
+
     function showError(msg) {
         if (!errEl) return;
         errEl.textContent = msg;
@@ -48,11 +50,11 @@
                         return;
                     }
                     guestBtn.disabled = false;
-                    showError((res.body && res.body.error) || 'ゲストログインに失敗しました');
+                    showError((res.body && res.body.error) || t('login.err_guest_failed'));
                 })
                 .catch(function () {
                     guestBtn.disabled = false;
-                    showError('通信エラーが発生しました');
+                    showError(t('login.err_network'));
                 });
         });
     }
@@ -65,7 +67,7 @@
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
             if (!username || !password) {
-                showError('ユーザー名とパスワードを入力してください');
+                showError(t('login.err_empty'));
                 return;
             }
 
@@ -85,11 +87,11 @@
                         return;
                     }
                     btn.disabled = false;
-                    showError((res.body && res.body.error) || 'ログインに失敗しました');
+                    showError((res.body && res.body.error) || t('login.err_failed'));
                 })
                 .catch(function () {
                     btn.disabled = false;
-                    showError('通信エラーが発生しました');
+                    showError(t('login.err_network'));
                 });
         });
     }

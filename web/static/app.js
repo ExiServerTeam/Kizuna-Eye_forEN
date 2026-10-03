@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.7.1';
+    const VERSION = 'v0.8.11';
 
     const GAUGE = {
         radiusRatio: 0.40,
@@ -133,7 +133,9 @@
 
     function setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('kizuna-theme', theme);
+        // localStorage はプライベートモード等で例外を投げる。失敗しても
+        // 初期化 IIFE 全体（イベント登録・データ取得）を止めないよう握りつぶす。
+        try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
         if (elements.themeIcon) {
             elements.themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
@@ -152,7 +154,8 @@
 
     // Phase 9-2: OS設定に基づく自動テーマ切り替え
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-    const savedTheme = localStorage.getItem('kizuna-theme');
+    let savedTheme = null;
+    try { savedTheme = localStorage.getItem('kizuna-theme'); } catch (e) { /* ignore */ }
 
     // localStorageに保存がある場合はそれを使用
     // 保存がない場合はOS設定を使用
@@ -164,7 +167,9 @@
 
     // OS設定の変更を監視（localStorageに手動設定がない場合のみ）
     prefersDark.addEventListener('change', (e) => {
-        if (!localStorage.getItem('kizuna-theme')) {
+        let manual = null;
+        try { manual = localStorage.getItem('kizuna-theme'); } catch (err) { /* ignore */ }
+        if (!manual) {
             setTheme(e.matches ? 'dark' : 'light');
         }
     });
@@ -548,6 +553,65 @@
     }
 
     // ============================================================
+    // ツールチップ（data-tooltip 属性）
+    // ============================================================
+    // 祖先の overflow（.app の overflow-x: clip 等）で ::after 方式は
+    // 見切れるため、body 直下に position: fixed の要素を出して
+    // 位置を JS で計算する。
+    (function setupTooltips() {
+        const tip = document.createElement('div');
+        tip.className = 'kizuna-tooltip';
+        tip.hidden = true;
+        document.body.appendChild(tip);
+
+        function show(el) {
+            const text = el.getAttribute('data-tooltip');
+            if (!text) return;
+            tip.textContent = text;
+            tip.hidden = false;
+
+            // 一旦測定してから、画面内に収まるよう位置を補正する。
+            tip.style.left = '0px';
+            tip.style.top = '0px';
+            const r = el.getBoundingClientRect();
+            const tr = tip.getBoundingClientRect();
+
+            let left = r.right - tr.width;                       // 右端を要素に合わせる
+            const margin = 8;
+            if (left < margin) left = margin;
+            if (left + tr.width > window.innerWidth - margin) {
+                left = window.innerWidth - margin - tr.width;
+            }
+
+            let top = r.bottom + 6;
+            if (top + tr.height > window.innerHeight - margin) {
+                top = r.top - tr.height - 6;                     // 下に出せなければ上に
+            }
+            if (top < margin) top = margin;
+
+            tip.style.left = left + 'px';
+            tip.style.top = top + 'px';
+        }
+
+        function hide() { tip.hidden = true; }
+
+        document.addEventListener('mouseover', (e) => {
+            const el = e.target.closest && e.target.closest('[data-tooltip]');
+            if (el) show(el);
+        });
+        document.addEventListener('mouseout', (e) => {
+            const el = e.target.closest && e.target.closest('[data-tooltip]');
+            if (el) hide();
+        });
+        document.addEventListener('focusin', (e) => {
+            const el = e.target.closest && e.target.closest('[data-tooltip]');
+            if (el) show(el);
+        });
+        document.addEventListener('focusout', hide);
+        window.addEventListener('scroll', hide, true);
+    })();
+
+    // ============================================================
     // 温度バッジ
     // ============================================================
     const NA_TOOLTIP = () => t('card.temp.na.tooltip');
@@ -558,16 +622,20 @@
 
         if (!Number.isFinite(tempNum) || tempNum <= 25) {
             el.hidden = false;
-            el.textContent = 'N/A℃';
+            el.textContent = t('card.temp.na');
             el.classList.remove('cool', 'warm', 'hot', 'critical');
             el.classList.add('na');
-            el.setAttribute('title', NA_TOOLTIP());
+            // title 属性は改行できないため、CSS ツールチップ用の data-tooltip に
+            // 入れる（改行 \n は CSS の white-space: pre-line で表示される）。
+            el.removeAttribute('title');
+            el.setAttribute('data-tooltip', NA_TOOLTIP());
             return;
         }
 
         el.hidden = false;
         el.textContent = `${Math.round(tempNum)}℃`;
         el.removeAttribute('title');
+        el.removeAttribute('data-tooltip');
         el.classList.remove('na', 'cool', 'warm', 'hot', 'critical');
 
         if (tempNum <= 45) el.classList.add('cool');
@@ -802,7 +870,12 @@
     function setupStorageCardClick() {
         const card = elements.diskCard;
         if (!card) return;
-        const handler = () => openStorageModal();
+        const handler = () => {
+            // Same guard as the process cards: a public viewer must not open
+            // the S.M.A.R.T storage details (model / serial / written bytes).
+            if (card.dataset.click !== 'storage') return;
+            openStorageModal();
+        };
         card.addEventListener('click', handler);
         card.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -908,6 +981,10 @@
     function setupProcessCardClicks() {
         document.querySelectorAll('[data-click="process"]').forEach(card => {
             const handler = () => {
+                // Re-check the attribute at click time: applyAccessMode removes
+                // data-click for public viewers, but the listener was attached
+                // earlier and would otherwise still open the modal.
+                if (card.dataset.click !== 'process') return;
                 const sort = card.dataset.processSort || 'cpu';
                 openProcessModal(sort);
             };
@@ -1088,7 +1165,9 @@
             `;
         } else {
             const watchFiles = cfg.watch_files || '-';
-            const notifyLevel = cfg.notify_min_level || '-';
+            const notifyLevel = cfg.notify_min_level
+                ? t('level.' + String(cfg.notify_min_level).toLowerCase())
+                : '-';
             const burst = cfg.failed_burst
                 ? t('security.burst_value', cfg.failed_burst, cfg.burst_window_sec || '-')
                 : '-';
@@ -1556,11 +1635,24 @@
         if (elements.alertsCountBadge) elements.alertsCountBadge.textContent = String(alerts.length);
 
         let html = '';
+        const knownLevels = ['info', 'warning', 'critical', 'success'];
         alerts.forEach(a => {
-            const level = String(a.level || 'info');
+            const rawLevel = String(a.level || 'info').toLowerCase();
+            const level = knownLevels.indexOf(rawLevel) >= 0 ? rawLevel : 'info';
+            const levelLabel = t('level.' + level);
             const time = a.timestamp ? new Date(a.timestamp).toLocaleString() : '';
+            // Source badge: trusted (dashboard-generated) vs untrusted (agent/log-derived).
+            let srcBadge = '';
+            if (a.source) {
+                const trusted = a.trusted === true;
+                const cls = trusted ? 'trusted' : 'untrusted';
+                const label = trusted ? t('alerts.source_trusted') : t('alerts.source_untrusted');
+                srcBadge = `<span class="alert-source-badge ${cls}" title="${escapeHtml(a.source)}">${escapeHtml(label)}</span>`;
+            }
             html += `
                 <div class="alert-item ${escapeHtml(level)}">
+                    <span class="alert-level-badge ${escapeHtml(level)}">${escapeHtml(levelLabel)}</span>
+                    ${srcBadge}
                     <div class="alert-item-body">
                         <div class="alert-item-title">${escapeHtml(a.title || '')}</div>
                         <div class="alert-item-message">${escapeHtml(a.message || '')}</div>
@@ -1738,8 +1830,9 @@
             [elements.historySection, elements.backupSection, elements.alertsSection]
                 .forEach(el => { if (el) el.style.display = 'none'; });
 
-            // プロセス詳細（クリック）は公開しないため無効化する。
-            [elements.cpuCard, elements.memCard].forEach(card => {
+            // プロセス詳細（CPU/メモリ）とストレージ詳細（S.M.A.R.T の型番・
+            // シリアル等）は公開しないため無効化する。
+            [elements.cpuCard, elements.memCard, elements.diskCard].forEach(card => {
                 if (!card) return;
                 card.removeAttribute('data-click');
                 card.removeAttribute('role');
@@ -1796,7 +1889,9 @@
         // Re-render dynamic text on language change.
         window.addEventListener('kizuna-lang-change', () => {
             setConnectionState(currentConnectionState);
-            if (window._lastData) updateDashboard(window._lastData);
+            // setTheme re-applies the theme label in the new language and, when
+            // a status is present, re-renders the dashboard text.
+            setTheme(getTheme());
             loadAlerts();
             loadPluginList();
             loadHistory();

@@ -78,9 +78,37 @@ func eligibleForHeuristicPromotion(agentToken string, isAgentRole bool, origin s
 	return agentToken == "" && isAgentRole && origin == ""
 }
 
+// sanitizeLogField strips control characters (CR, LF, tab and other C0/C1
+// controls) from an untrusted value before it is written to a log. Plugin
+// events carry attacker-influenced text (log lines parsed from auth.log);
+// without this a crafted value could inject forged log lines.
+func sanitizeLogField(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+			// Drop other control characters (NUL, ESC, ANSI introducers, ...).
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // writeDashboardJSON writes JSON with a Content-Type header.
+// Cache-Control: no-store keeps sensitive API responses (log lines with
+// usernames/IPs, masked config, module paths, session-scoped data) out of
+// shared proxy and browser caches. The auth handler already sets no-store;
+// this keeps the dashboard APIs consistent.
 func writeDashboardJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
 }
@@ -143,10 +171,10 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 		Title:     env.Title,
 		Message:   body,
 		Timestamp: time.Now(),
-	})
+	}, "agent", false) // agent-reported: derived from a forgeable log line
 
 	if lg != nil {
-		lg.Info("セキュリティアラート: [%s] %s", env.Level, env.Title)
+		lg.Info("セキュリティアラート: [%s] %s", sanitizeLogField(env.Level), sanitizeLogField(env.Title))
 	}
 }
 
@@ -160,6 +188,10 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 type wsClient struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	// authed is true when the connection carried a valid session at upgrade
+	// time. In public viewer mode an unauthenticated client only receives
+	// sanitized statuses and no security events.
+	authed bool
 }
 
 func (c *wsClient) writeMessage(messageType int, data []byte, timeout time.Duration) error {
@@ -191,6 +223,11 @@ type Hub struct {
 	// authentication (legacy heuristic detection only).
 	agentToken string
 
+	// viewerMode filters what unauthenticated browser clients receive: when
+	// true, statuses are sanitized and events are withheld for clients that
+	// did not present a session. Set once during startup.
+	viewerMode bool
+
 	agentConn *wsClient
 
 	// Callbacks are set once during startup and read from WS goroutines.
@@ -204,12 +241,136 @@ type Hub struct {
 	// fields keeps memory small so ~1h of 1s-interval data fits.
 	samples    []api.HistorySample
 	maxSamples int
+
+	// maxViewers caps the number of *unauthenticated* WebSocket clients.
+	// The /ws endpoint is reachable without a session, so without a separate
+	// cap an attacker could open maxClients anonymous connections and starve
+	// the Agent (and every real browser) of the fixed client slots. Authenticated
+	// clients (the Agent and logged-in users) are never counted against this
+	// limit and are admitted as long as maxClients allows, so the monitoring
+	// feed cannot be denied by anonymous connection exhaustion.
+	maxViewers int
+
+	// Flood detection: a burst of rejected connections is the signature of a
+	// connection-exhaustion DoS. Without this, the dashboard only logged the
+	// rejections and never raised an alert, so an operator could not tell that
+	// the service was under attack. onFlood is called (at most once per
+	// floodWindow) when rejections cross floodThreshold inside a window.
+	onFlood func(rejected int, detail string)
+	// floodMu guards the counters below.
+	floodMu       sync.Mutex
+	floodCount    int
+	floodWindowAt time.Time
+
+	// onAuthReject is called (at most once per authRejectWindow and
+	// per reason) when suspicious agent connections are rejected.
+	// Without it, token brute-force / agent hijack attempts were only
+	// WARN lines in the log and never reached the operator.
+	onAuthReject func(reason string, count int)
+	// authRejectMu guards authRejects below.
+	authRejectMu sync.Mutex
+	authRejects  map[string]*authRejectCounter
+}
+
+// floodThreshold is how many rejected connections within floodWindow raise a
+// flood alert, and floodWindow is the measurement window. 200 rejections in 10
+// seconds is far above normal operation but well below what a real flood
+// produces (the DoS tests sent tens of thousands).
+const (
+	floodThreshold = 200
+	floodWindow    = 10 * time.Second
+)
+
+// noteRejected records a rejected connection and fires onFlood when the
+// threshold is crossed. The window resets after each alert so the alert is
+// raised at most once per floodWindow, not once per rejection.
+func (h *Hub) noteRejected(detail string) {
+	h.floodMu.Lock()
+	now := time.Now()
+	if h.floodWindowAt.IsZero() || now.Sub(h.floodWindowAt) > floodWindow {
+		h.floodWindowAt = now
+		h.floodCount = 0
+	}
+	h.floodCount++
+	count := h.floodCount
+	fire := count == floodThreshold // exactly once per window
+	cb := h.onFlood
+	h.floodMu.Unlock()
+	if fire && cb != nil {
+		cb(count, detail)
+	}
+}
+
+// authRejectThreshold is how many suspicious agent connections with the
+// SAME reason within authRejectWindow raise one alert, and authRejectWindow
+// is the measurement window. 10 attempts in 60s is well above normal
+// (a healthy agent connects once) but below a real brute-force burst.
+const (
+	authRejectThreshold = 10
+	authRejectWindow    = 60 * time.Second
+)
+
+// authRejectCounter tracks one rejection reason's windowed count.
+type authRejectCounter struct {
+	count    int
+	windowAt time.Time
+}
+
+// noteAuthReject records a suspicious agent connection and fires
+// onAuthReject when the threshold is reached. The window resets after
+// each alert so the alert is raised at most once per window per reason.
+func (h *Hub) noteAuthReject(reason string) {
+	h.authRejectMu.Lock()
+	if h.authRejects == nil {
+		h.authRejects = make(map[string]*authRejectCounter)
+	}
+	now := time.Now()
+	c := h.authRejects[reason]
+	if c == nil || now.Sub(c.windowAt) > authRejectWindow {
+		c = &authRejectCounter{windowAt: now}
+		h.authRejects[reason] = c
+	}
+	c.count++
+	count := c.count
+	fire := count == authRejectThreshold
+	cb := h.onAuthReject
+	h.authRejectMu.Unlock()
+	if fire && cb != nil {
+		cb(reason, count)
+	}
+}
+
+// SetAuthRejectCallback installs the callback invoked when suspicious
+// agent connections are detected. Call once during startup.
+func (h *Hub) SetAuthRejectCallback(fn func(reason string, count int)) {
+	h.authRejectMu.Lock()
+	h.onAuthReject = fn
+	h.authRejectMu.Unlock()
+}
+
+// SetFloodCallback installs the callback invoked when a connection flood is
+// detected. Call once during startup.
+func (h *Hub) SetFloodCallback(fn func(rejected int, detail string)) {
+	h.floodMu.Lock()
+	h.onFlood = fn
+	h.floodMu.Unlock()
 }
 
 func NewHub(maxClients int, log *logger.Logger) *Hub {
+	// Reserve the majority of the client slots for authenticated clients
+	// (Agent + logged-in browsers) so anonymous viewers cannot exhaust them.
+	// Keep a reasonable number of viewer slots for the public-viewer mode.
+	maxViewers := maxClients / 4
+	if maxViewers < 1 {
+		maxViewers = 1
+	}
+	if maxViewers > 50 {
+		maxViewers = 50
+	}
 	return &Hub{
 		clients:    make(map[*wsClient]bool),
 		maxClients: maxClients,
+		maxViewers: maxViewers,
 		log:        log,
 		maxSamples: 3600, // ~1h at the Agent's 1s interval
 	}
@@ -227,6 +388,31 @@ func (h *Hub) SetCallbacks(
 	h.onAgentStatus = onStatus
 	h.onAgentEvent = onEvent
 	h.Unlock()
+}
+
+// SetViewerMode enables public-viewer filtering: status broadcasts are
+// sanitized and events are withheld for clients that are not authenticated,
+// so an unauthenticated viewer cannot read the process list or disk S.M.A.R.T
+// metadata through the live WebSocket feed. Call once during startup.
+func (h *Hub) SetViewerMode(enabled bool) {
+	h.Lock()
+	h.viewerMode = enabled
+	h.Unlock()
+}
+
+// sanitizeStatusJSON returns msg unchanged unless it is a status payload, in
+// which case viewer-restricted fields are stripped. Non-status messages
+// (agent commands / events) are returned as-is.
+func sanitizeStatusJSON(msg []byte) []byte {
+	var s status.SystemStatus
+	if err := json.Unmarshal(msg, &s); err != nil || s.Timestamp <= 0 {
+		return msg
+	}
+	out, err := json.Marshal(s.SanitizeForViewer())
+	if err != nil {
+		return msg
+	}
+	return out
 }
 
 // SetOnAgentEvent installs just the agent-event callback.
@@ -252,31 +438,107 @@ func (h *Hub) onEventFn() func([]byte) {
 
 func (h *Hub) Broadcast(msg []byte) {
 	h.RLock()
+	viewerMode := h.viewerMode
 	clients := make([]*wsClient, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)
 	}
 	h.RUnlock()
 
+	// Compute the viewer-sanitized form once, not per client, so N public
+	// viewers do not trigger N JSON unmarshal/marshal cycles each broadcast.
+	// It is only needed when at least one unauthenticated viewer is connected;
+	// with only authenticated clients (the common case) the unmarshal+marshal
+	// per broadcast is skipped entirely.
+	needSanitized := false
+	if viewerMode {
+		for _, c := range clients {
+			if !c.authed {
+				needSanitized = true
+				break
+			}
+		}
+	}
+	var sanitized []byte
+	if needSanitized {
+		sanitized = sanitizeStatusJSON(msg)
+	}
+
 	for _, c := range clients {
-		if err := c.writeMessage(websocket.TextMessage, msg, 30*time.Second); err != nil {
+		out := msg
+		if viewerMode && !c.authed {
+			out = sanitized
+		}
+		if err := c.writeMessage(websocket.TextMessage, out, 30*time.Second); err != nil {
 			h.log.Debug("Broadcast 送信エラー: %v, クライアントを削除します", err)
 			h.Remove(c)
 		}
 	}
 }
 
-func (h *Hub) Add(conn *websocket.Conn) (*wsClient, bool) {
+// Add registers a WebSocket client. isAgent marks the single trusted Agent
+// connection; authed marks a logged-in browser. Authenticated clients (Agent
+// and logged-in users) are admitted up to maxClients. Unauthenticated clients
+// are additionally capped at maxViewers so anonymous connections cannot
+// exhaust the fixed client slots and deny service to the Agent or real users.
+func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) {
 	h.Lock()
 	defer h.Unlock()
-	if h.maxClients > 0 && len(h.clients) >= h.maxClients {
-		h.log.Warn("最大接続数 (%d) に達したため、接続を拒否しました", h.maxClients)
-		return nil, false
+
+	// Count unauthenticated viewers for the viewer-specific cap. The Agent and
+	// authenticated browsers are not viewers even though they also occupy a
+	// client slot.
+	if !authed && !isAgent {
+		viewers := 0
+		for c := range h.clients {
+			if !c.authed {
+				viewers++
+			}
+		}
+		if h.maxViewers > 0 && viewers >= h.maxViewers {
+			h.log.Warn("未認証ビューアの上限 (%d) に達したため、接続を拒否しました", h.maxViewers)
+			h.noteRejected("unauthenticated viewer cap")
+			return nil, false
+		}
 	}
-	client := &wsClient{conn: conn}
+
+	if h.maxClients > 0 && len(h.clients) >= h.maxClients {
+		// Authenticated clients take priority: if the slot is occupied by an
+		// anonymous viewer, evict it so the Agent / a real user can connect.
+		if authed || isAgent {
+			if evicted := h.evictViewerLocked(); evicted {
+				h.log.Warn("認証済みクライアントのため、未認証ビューアを1件切断しました (上限 %d)", h.maxClients)
+			} else {
+				h.log.Warn("最大接続数 (%d) に達したため、接続を拒否しました", h.maxClients)
+				h.noteRejected("max clients reached")
+				return nil, false
+			}
+		} else {
+			h.log.Warn("最大接続数 (%d) に達したため、接続を拒否しました", h.maxClients)
+			h.noteRejected("max clients reached")
+			return nil, false
+		}
+	}
+
+	client := &wsClient{conn: conn, authed: authed || isAgent}
 	h.clients[client] = true
 	h.log.Debug("クライアント追加: %s (現在 %d 接続)", conn.RemoteAddr(), len(h.clients))
 	return client, true
+}
+
+// evictViewerLocked disconnects one unauthenticated viewer to free a slot for
+// an authenticated client. Caller must hold h.Lock. It returns true when a
+// viewer was evicted. The connection close is deferred to a goroutine so it
+// does not run while holding the hub lock.
+func (h *Hub) evictViewerLocked() bool {
+	for c := range h.clients {
+		if !c.authed {
+			delete(h.clients, c)
+			go c.conn.Close()
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Hub) Remove(client *wsClient) {
@@ -367,13 +629,22 @@ func (h *Hub) HistorySamples() []api.HistorySample {
 	return out
 }
 
-func (h *Hub) MarkAgentConn(client *wsClient) {
+// MarkAgentConn registers client as the agent connection. It returns false
+// when another agent connection is already registered, so a second client that
+// presents the same token cannot displace the real agent. Without this, anyone
+// who learns the agent token (e.g. via an admin session) could repeatedly
+// connect and evict the real agent, flapping the monitoring feed.
+func (h *Hub) MarkAgentConn(client *wsClient) bool {
 	if client == nil {
-		return
+		return false
 	}
 	h.Lock()
+	defer h.Unlock()
+	if h.agentConn != nil && h.agentConn != client {
+		return false
+	}
 	h.agentConn = client
-	h.Unlock()
+	return true
 }
 
 // AgentConnected reports whether an Agent is currently connected.
@@ -405,6 +676,7 @@ func (h *Hub) SendToAgent(payload map[string]interface{}) error {
 func (h *Hub) BroadcastToBrowsers(msg []byte) {
 	h.RLock()
 	agentConn := h.agentConn
+	viewerMode := h.viewerMode
 	clients := make([]*wsClient, 0, len(h.clients))
 	for c := range h.clients {
 		if c == agentConn {
@@ -415,6 +687,11 @@ func (h *Hub) BroadcastToBrowsers(msg []byte) {
 	h.RUnlock()
 
 	for _, c := range clients {
+		// Security events carry actor/IP data; do not relay them to
+		// unauthenticated viewers.
+		if viewerMode && !c.authed {
+			continue
+		}
 		if err := c.writeMessage(websocket.TextMessage, msg, 30*time.Second); err != nil {
 			h.log.Debug("BroadcastToBrowsers 送信エラー: %v", err)
 			h.Remove(c)
@@ -434,7 +711,9 @@ func main() {
 		log.Fatalf("設定読み込み失敗: %v", err)
 	}
 
-	level := logger.DEBUG
+	// Default to INFO so DEBUG noise is not emitted unless explicitly
+	// enabled via dashboard_config.json's log_level ("debug").
+	level := logger.INFO
 	if cfg.LogLevel != "" {
 		level = logger.ParseLevel(cfg.LogLevel)
 	}
@@ -506,7 +785,45 @@ func main() {
 
 	hub := NewHub(100, lg)
 	hub.agentToken = cfg.Auth.AgentToken
+	// Public viewer filtering only matters when auth is enabled; with auth off
+	// every client is trusted and full data is served as before.
+	hub.SetViewerMode(cfg.Auth.Enabled && cfg.Auth.IsPublicViewer())
 	hub.SetCallbacks(engine.OnAgentDisconnect, engine.OnStatus, nil)
+	// Raise a security alert when a connection flood is detected, so an
+	// operator sees the DoS on the dashboard and in the notification channels
+	// instead of it being only a WARN line in the log.
+	hub.SetFloodCallback(func(rejected int, detail string) {
+		engine.ReportAlert(&notify.Alert{
+			Type:      "connection_flood",
+			Level:     notify.LevelCritical,
+			Icon:      "🚨",
+			Title:     "接続フラッドを検知",
+			Message:   fmt.Sprintf("短時間に %d 件の接続を拒否しました（%s）。接続枯渇型のDoS攻撃の可能性があります。", rejected, detail),
+			Timestamp: time.Now(),
+		}, "dashboard", true)
+		lg.Warn("接続フラッド検知: %d 件拒否 (%s)", rejected, detail)
+	})
+	// Raise a warning when suspicious agent connections (token mismatch
+	// or a duplicate agent) are rejected, so brute-force / hijack attempts
+	// reach the operator instead of only the log.
+	hub.SetAuthRejectCallback(func(reason string, count int) {
+		title := "不正なAgent接続を検知"
+		switch reason {
+		case "agent_token_mismatch":
+			title = "Agentトークン不一致（偽装の可能性）"
+		case "agent_duplicate":
+			title = "2つ目のAgent接続（乗っ取りの可能性）"
+		}
+		engine.ReportAlert(&notify.Alert{
+			Type:      reason,
+			Level:     notify.LevelWarning,
+			Icon:      "⚠️",
+			Title:     title,
+			Message:   fmt.Sprintf("短時間に %d 回の不正なAgent接続を拒否しました（%s）。", count, reason),
+			Timestamp: time.Now(),
+		}, "dashboard", true)
+		lg.Warn("不正Agent接続検知: %s x%d", reason, count)
+	})
 	if cfg.Auth.AgentToken != "" {
 		lg.Info("Agent トークン認証: 有効")
 	}
@@ -524,6 +841,11 @@ func main() {
 		}
 	}()
 
+	// authHandler is created later in startup; the closures below reference
+	// this variable so they can tell an authenticated browser from a public
+	// viewer at request time.
+	var authHandler *auth.Handler
+
 	mux := http.NewServeMux()
 
 	// ---- WebSocket handler ----
@@ -540,6 +862,7 @@ func main() {
 			if subtle.ConstantTimeCompare([]byte(token), []byte(hub.agentToken)) != 1 {
 				http.Error(w, "invalid agent token", http.StatusUnauthorized)
 				lg.Warn("Agent トークン不一致の接続を拒否: %s", r.RemoteAddr)
+				hub.noteAuthReject("agent_token_mismatch")
 				return
 			}
 		}
@@ -550,7 +873,12 @@ func main() {
 			return
 		}
 
-		client, ok := hub.Add(conn)
+		authed := authHandler != nil && authHandler.Authenticated(r)
+		// The Agent authenticates with the shared token above (isAgentRole +
+		// token match). Treat it as a trusted client so it is never counted
+		// as an anonymous viewer and always wins a slot.
+		isAgentConn := hub.agentToken != "" && isAgentRole
+		client, ok := hub.Add(conn, authed, isAgentConn)
 		if !ok {
 			conn.WriteMessage(websocket.CloseMessage, []byte("max clients reached"))
 			conn.Close()
@@ -598,7 +926,13 @@ func main() {
 			isAgent := hub.agentToken != "" && isAgentRole
 			canPromoteHeuristically := eligibleForHeuristicPromotion(hub.agentToken, isAgentRole, r.Header.Get("Origin"))
 			if isAgent {
-				hub.MarkAgentConn(client)
+				if !hub.MarkAgentConn(client) {
+					lg.Warn("既にAgent接続があるため、2つ目のAgent接続を拒否: %s", conn.RemoteAddr())
+					hub.noteAuthReject("agent_duplicate")
+					conn.WriteMessage(websocket.CloseMessage, []byte("another agent is connected"))
+					conn.Close()
+					return
+				}
 				lg.Info("Agent 認証済み接続: %s", conn.RemoteAddr())
 			}
 			for {
@@ -664,8 +998,11 @@ func main() {
 					continue
 				}
 				if promote {
+					if !hub.MarkAgentConn(client) {
+						lg.Warn("既にAgent接続があるため、ヒューリスティック昇格を拒否: %s", conn.RemoteAddr())
+						continue
+					}
 					isAgent = true
-					hub.MarkAgentConn(client)
 					lg.Info("Agent 識別: %s", conn.RemoteAddr())
 				}
 				hub.SetLastStatus(&s)
@@ -681,11 +1018,17 @@ func main() {
 			writeDashboardJSON(w, http.StatusNotFound, map[string]string{"error": "no status available"})
 			return
 		}
+		// In public viewer mode an unauthenticated client must not see the
+		// process list or disk S.M.A.R.T metadata, even though this endpoint
+		// is otherwise reachable without a session.
+		if cfg.Auth.Enabled && cfg.Auth.IsPublicViewer() && (authHandler == nil || !authHandler.Authenticated(r)) {
+			s = s.SanitizeForViewer()
+		}
 		writeDashboardJSON(w, http.StatusOK, s)
 	})
 
 	// ---- Module management API ----
-	moduleHandler := api.NewModuleHandler(storage)
+	moduleHandler := api.NewModuleHandler(storage, cfg.ResolvePluginsDir())
 	moduleHandler.RegisterRoutes(mux)
 
 	// ---- Plugin management API (passes hub) ----
@@ -694,6 +1037,18 @@ func main() {
 		lg.Error("PluginManager 初期化失敗: %v", err)
 		lg.Warn("プラグイン API は無効化されます")
 	} else {
+		// Record plugin upload/delete (a code-execution boundary) in the
+		// alert history and notifications, not only the log.
+		pluginManager.SetAuditHook(func(kind, detail string) {
+			engine.ReportAlert(&notify.Alert{
+				Type:      "audit_" + kind,
+				Level:     notify.LevelCritical,
+				Icon:      "🚨",
+				Title:     "プラグイン操作を検知",
+				Message:   detail,
+				Timestamp: time.Now(),
+			}, "dashboard", true)
+		})
 		pluginManager.RegisterRoutes(mux)
 		lg.Info("プラグイン API 有効")
 	}
@@ -800,9 +1155,15 @@ func main() {
 				"base-uri 'self'; "+
 				"form-action 'self'")
 
-		// HTML must always be revalidated so UI changes are picked up immediately.
-		// Versioned assets (?v=...) and other static files can be cached longer.
-		if strings.HasSuffix(r.URL.Path, ".html") || r.URL.Path == "/" {
+		// HTML, JS and CSS must be revalidated so UI/CSS edits are picked up
+		// immediately. A long max-age on .css/.js meant a CSS fix stayed
+		// invisible until the browser cache expired (24h) unless the version
+		// query (?v=) changed, which is easy to forget. Revalidation is cheap
+		// (304 when unchanged) and removes that footgun. Images/fonts keep the
+		// long cache.
+		p := r.URL.Path
+		if strings.HasSuffix(p, ".html") || p == "/" ||
+			strings.HasSuffix(p, ".js") || strings.HasSuffix(p, ".css") {
 			w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 		} else {
 			w.Header().Set("Cache-Control", "public, max-age=86400")
@@ -822,7 +1183,9 @@ func main() {
 		lg.Error("ユーザーストア読み込み失敗: %v", err)
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
-	sessionMgr := auth.NewSessionManager(sessionTTL, 0)
+	// Pass the configured idle timeout (0 = default 2h, negative = disabled)
+	// so an operator can stop sessions expiring on short inactivity.
+	sessionMgr := auth.NewSessionManager(sessionTTL, cfg.Auth.SessionIdleDuration())
 	sessionMgr.SetLogger(lg.Warn)
 	if err := sessionMgr.EnablePersistence(cfg.Auth.SessionFilePath(configDir), cfg.Auth.IsSessionIPBind()); err != nil {
 		lg.Warn("セッション永続化の読み込みに失敗（メモリのみで続行）: %v", err)
@@ -833,9 +1196,42 @@ func main() {
 		lg.Info("セッション永続化: 無効（再起動でログアウト）")
 	}
 	defer sessionMgr.Stop()
-	authHandler := auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
+	authHandler = auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
 	defer authHandler.Stop()
+	// Record security-relevant auth events (login lockouts = likely brute
+	// force) in the alert history and notifications, not only the log.
+	authHandler.SetSecurityEventHook(func(kind, detail, ip string) {
+		title := "セキュリティ操作を検知"
+		icon := "🔐"
+		switch kind {
+		case "login_lockout":
+			title = "ログイン試行のロックアウト"
+			icon = "🚨"
+		case "user_create":
+			title = "ユーザーを作成"
+			icon = "👤"
+		case "user_delete":
+			title = "ユーザーを削除"
+			icon = "🗑️"
+		case "role_change":
+			title = "ロールを変更"
+			icon = "🔑"
+		}
+		msg := detail
+		if ip != "" {
+			msg += "（接続元: " + ip + "）"
+		}
+		engine.ReportAlert(&notify.Alert{
+			Type:      "auth_" + kind,
+			Level:     notify.LevelCritical,
+			Icon:      icon,
+			Title:     title,
+			Message:   msg,
+			Timestamp: time.Now(),
+		}, "dashboard", true)
+	})
 	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))
+	authHandler.SetGuestTTL(cfg.Auth.GuestSessionTTL())
 	if cfg.Auth.IsPublicViewer() {
 		authHandler.SetAllowGuest(true)
 	}
@@ -875,6 +1271,20 @@ func main() {
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: bodyLimitMiddleware(authMiddleware.Wrap(mux)),
+		// Bound how long the server waits for request headers and for an idle
+		// keep-alive connection, so a slow-header (Slowloris) client cannot
+		// hold connections open indefinitely. WriteTimeout is intentionally
+		// NOT set: /api/logs/stream is a long-lived SSE response that a global
+		// write deadline would sever. WebSocket connections hijack the conn
+		// and are likewise unaffected by these values.
+		ReadHeaderTimeout: 15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// Cap request headers explicitly. Go's default is 1 MiB, which is far
+		// more than this app's requests need (no large cookies / no huge
+		// Authorization header); 64 KiB bounds memory per connection and makes
+		// an oversized-header request fail fast with 431 instead of being read
+		// into a 1 MiB buffer.
+		MaxHeaderBytes: 64 << 10, // 64 KiB
 	}
 
 	go func() {

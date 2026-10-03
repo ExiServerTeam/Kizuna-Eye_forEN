@@ -155,7 +155,14 @@ func (u *Updater) latestVersion() (string, error) {
 // runUpdateScript executes safe_update.sh and streams nothing (output is
 // inherited so it lands in the agent/dashboard log).
 func (u *Updater) runUpdateScript() error {
-	cmd := exec.Command(u.cfg.UpdateScript)
+	script := u.cfg.UpdateScript
+	// exec.Command searches $PATH for a name with no path separator, so the
+	// default relative name ("safe_update.sh") would never be found. Anchor a
+	// bare name to its directory (cmd.Dir) with an explicit "./".
+	if !strings.ContainsAny(script, `/\`) {
+		script = "./" + script
+	}
+	cmd := exec.Command(script)
 	cmd.Dir = scriptDir(u.cfg.UpdateScript)
 	out, err := cmd.CombinedOutput()
 	if u.lg != nil && len(out) > 0 {

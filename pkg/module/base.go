@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"runtime/debug"
 	"strconv"
 	"sync"
 	"time"
@@ -76,7 +77,7 @@ func (m *moduleManager) Register(ctx context.Context, module Module) error {
 		m.mu.Unlock()
 		return fmt.Errorf("module %s already registered", name)
 	}
-	if err := module.Init(ctx); err != nil {
+	if err := safeInit(ctx, module, m.logger); err != nil {
 		m.mu.Unlock()
 		return err
 	}
@@ -120,9 +121,20 @@ func (m *moduleManager) Unregister(name string) error {
 	if cancel != nil {
 		cancel()
 	}
-	// Best-effort graceful stop for modules that support it.
+	// Best-effort graceful stop for modules that support it. Guarded by
+	// recover because Stop is plugin code and a panic here must not crash
+	// the agent while it is unloading a plugin.
 	if s, ok := mod.(interface{ Stop() error }); ok {
-		_ = s.Stop()
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					if m.logger != nil {
+						m.logger.Error("モジュール '%s' の Stop がパニックしました: %v", name, r)
+					}
+				}
+			}()
+			_ = s.Stop()
+		}()
 	}
 	if m.logger != nil {
 		m.logger.Info("モジュールを停止・解除しました: %s", name)
@@ -169,6 +181,37 @@ func (m *moduleManager) Start(ctx context.Context) {
 	}
 }
 
+// safeInit calls a module's Init with panic recovery. A third-party plugin
+// that panics in Init must not crash the agent (Register holds the manager
+// lock at this point). The panic is converted into an error so registration
+// fails cleanly instead.
+func safeInit(ctx context.Context, mod Module, lg Logger) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.Error("モジュール '%s' の Init がパニックしました: %v\n%s", mod.Name(), r, debug.Stack())
+			}
+			err = fmt.Errorf("module %s: Init panicked: %v", mod.Name(), r)
+		}
+	}()
+	return mod.Init(ctx)
+}
+
+// safeRun invokes mod.Run with panic recovery. Plugins are third-party .so
+// code; a panic in Run must not take down the whole agent (and with it every
+// other plugin and the system monitoring). A recovered panic is logged so the
+// fault is visible, and the run loop continues on the next interval.
+func (m *moduleManager) safeRun(ctx context.Context, mod Module) {
+	defer func() {
+		if r := recover(); r != nil {
+			if m.logger != nil {
+				m.logger.Error("モジュール '%s' の Run がパニックしました: %v\n%s", mod.Name(), r, debug.Stack())
+			}
+		}
+	}()
+	mod.Run(ctx)
+}
+
 func (m *moduleManager) runModuleLoop(ctx context.Context, mod Module) {
 	defer m.wg.Done()
 	if mod.Interval() <= 0 {
@@ -179,7 +222,7 @@ func (m *moduleManager) runModuleLoop(ctx context.Context, mod Module) {
 	resetCh := m.resets[mod.Name()]
 	m.mu.RUnlock()
 
-	mod.Run(ctx)
+	m.safeRun(ctx, mod)
 
 	for {
 		// Re-read the interval every cycle so a config change takes effect.
@@ -196,7 +239,7 @@ func (m *moduleManager) runModuleLoop(ctx context.Context, mod Module) {
 			// Interval changed; re-evaluate without running now.
 			timer.Stop()
 		case <-timer.C:
-			mod.Run(ctx)
+			m.safeRun(ctx, mod)
 		}
 	}
 }

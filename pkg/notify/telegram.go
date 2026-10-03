@@ -76,10 +76,15 @@ func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err == nil {
-		if !out.OK {
-			return fmt.Errorf("telegram api error: %s", out.Description)
-		}
+	// A 200 response whose body is not the expected JSON cannot be confirmed
+	// as a delivered message (e.g. a proxy or captive portal returned HTML).
+	// Treat an unparseable body as a failure rather than reporting success for
+	// a notification that may never have been delivered.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err != nil {
+		return fmt.Errorf("telegram response decode: %w", err)
+	}
+	if !out.OK {
+		return fmt.Errorf("telegram api error: %s", out.Description)
 	}
 	return nil
 }

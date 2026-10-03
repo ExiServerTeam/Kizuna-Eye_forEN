@@ -1,12 +1,25 @@
 /* Phase 9-3: 設定エディタ用スタイル */
 
+/* この画面だけ左寄せにする。共通の .app は max-width:1280px + margin:0 auto
+   で中央寄せされるため、広い画面で余白が左右に分かれて左が空く。
+   設定エディタは左端に寄せたいので、ここで上書きする。 */
+body.config-editor-page .app,
+.app.config-editor-app {
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+}
+
 .config-main {
     padding: 24px;
 }
 
 .config-container {
     display: grid;
-    grid-template-columns: 280px 1fr;
+    /* minmax(0, 1fr) にするのが重要。素の 1fr は minmax(auto, 1fr) で、
+       auto の最小値が中身の min-content（nowrap ボタン等）になり、
+       列が押し広げられてページ全体が横スクロールし右端が切れる。 */
+    grid-template-columns: 280px minmax(0, 1fr);
     gap: 24px;
     height: calc(100vh - 80px);
 }
@@ -73,39 +86,59 @@
 }
 
 .editor-header {
+    /* タイトル（1行目）と操作群（2行目）の2段固定。
+       flex-wrap の折り返し任せだと中間幅で横並びになり、nowrap の
+       ボタン群が右へはみ出して崩れる。常に縦に積むことで確実に収める。 */
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    /* 幅が足りないときは綺麗に折り返す（詰まって崩れるのを防ぐ）。 */
-    flex-wrap: wrap;
-    gap: 10px 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
     padding: 16px 20px;
     border-bottom: 1px solid var(--border-color);
     background: var(--bg-secondary);
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .editor-title {
     font-size: 1.1rem;
     font-weight: 600;
     color: var(--text-primary);
-    /* タイトルは伸縮し、長い場合は折り返す。 */
-    flex: 1 1 auto;
     min-width: 0;
     overflow-wrap: anywhere;
+}
+
+/* 2行目: モード切替とボタン群を1本の行にまとめ、右寄せ。
+   収まりきらない幅では折り返して次段へ送る（切れない）。 */
+.editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px 12px;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .editor-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    /* ボタン群は自分の幅を保ち、足りなければ次の行へ。 */
-    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px 12px;
     min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
-/* ボタンは縮めず、ラベルは折り返さない（日本語が1文字ずつ縦折れするのを防ぐ）。 */
+/* ラベルは折り返さない（日本語の縦折れ防止）が、親幅で縮小は許可。 */
 .editor-actions button {
-    flex-shrink: 0;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
     white-space: nowrap;
 }
 
@@ -245,28 +278,10 @@
 }
 
 /* レスポンシブ */
-/* 中間幅（タブレット横向き〜小型ノート）では、サイドバーを残したまま
-   ヘッダーのタイトル・モード・4ボタンが1行に収まらず潰れる。
-   タイトルを単独行にし、モード＋ボタン群を次の行に回して右寄せにする。 */
-@media (max-width: 1100px) {
-    .editor-title {
-        flex: 1 1 100%;
-    }
-
-    .editor-mode {
-        margin-left: 0;
-    }
-
-    .editor-actions {
-        flex: 1 1 auto;
-        justify-content: flex-end;
-    }
-}
-
 /* 狭いタブレット〜スマホではサイドバーごと縦積みへ切り替える。 */
 @media (max-width: 900px) {
     .config-container {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         grid-template-rows: auto 1fr;
     }
 
@@ -275,31 +290,30 @@
         overflow-y: auto;
     }
 
-    .editor-header {
-        flex-direction: column;
-        gap: 12px;
-        align-items: stretch;
+    /* 縦積み時はツールバーを左揃えに。 */
+    .editor-toolbar {
+        justify-content: flex-start;
     }
 
-    /* 縦積み時はモード切替の自動マージンを解除して左寄せに。 */
     .editor-mode {
-        margin-left: 0;
-        margin-right: 0;
+        margin-right: auto;
         align-self: flex-start;
     }
 
-    /* 縦積み時はアクションを等幅の2列グリッドに。
-       文字は nowrap で折り返さない（狭いと日本語が縦折れするため）。 */
+    /* 狭い画面でもアクションは左揃えで内容幅のまま。横幅いっぱいに
+       引き伸ばさない（ボタンが間延びして押しにくくなるのを防ぐ）。 */
     .editor-actions {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-start;
         gap: 8px;
-        width: 100%;
+        width: auto;
     }
 
     .editor-actions button {
-        width: 100%;
-        padding: 12px;
+        width: auto;
+        box-sizing: border-box;
+        padding: 10px 16px;
         min-height: 44px;
         text-align: center;
         white-space: nowrap;
@@ -352,6 +366,51 @@
     text-align: right;
 }
 
+/* プラグイン設定パネル */
+.plugin-config-panel {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.plugin-config-body {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* プラグインごとのカード */
+.plugin-card {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    background: var(--bg-primary);
+}
+
+.plugin-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+}
+
+.plugin-card-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.plugin-card-note {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
 /* GUI / JSON モード切替 */
 .editor-mode {
     display: inline-flex;
@@ -360,8 +419,7 @@
     border-radius: 10px;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-color);
-    margin-left: auto;
-    margin-right: 12px;
+    margin-right: auto; /* モードは左、ボタン群は右へ寄せる */
 }
 
 .mode-btn {
@@ -662,12 +720,7 @@
     overflow-wrap: anywhere;
 }
 
-/* 狭い画面では編集アクションを 1 列にして確実に収める。 */
 @media (max-width: 480px) {
-    .editor-actions {
-        grid-template-columns: 1fr;
-    }
-
     .editor-header {
         gap: 8px;
     }

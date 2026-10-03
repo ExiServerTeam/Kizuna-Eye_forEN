@@ -19,6 +19,49 @@ type Logger interface {
 	Error(format string, args ...interface{})
 }
 
+// sanitizeLogField neutralises untrusted text before it is written to a log.
+//
+// Two classes of injection are handled:
+//
+//  1. Line breaking / control characters. CR, LF and other C0/C1 controls
+//     (NUL, ESC, ANSI introducers, ...) are DROPPED, not replaced with a
+//     space. Replacing them with a space still leaves a readable forged
+//     fragment such as "user=a [INFO] FORGED from=...", which a log parser
+//     can mistake for a real entry.
+//
+//  2. Log-parser metacharacters. Brackets are the marker a parser (and a
+//     human) uses to spot a level tag ([INFO], [WARN], ...). They are escaped
+//     with a backslash so an injected "[INFO] FORGED" can never look like a
+//     real log level.
+//
+// The value is only used for logging; authentication still uses the raw input.
+func sanitizeLogField(s string) string {
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			// Drop the character entirely: a space would still separate a
+			// forged "[INFO]" tag from the surrounding text.
+			continue
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
+			// Drop other control characters (NUL, ESC, ANSI introducers, ...).
+			continue
+		case r == '[' || r == ']':
+			// Escape the bracket so an injected "[INFO]"/"[WARN]" tag cannot
+			// be read as a real log level by a parser or by a human.
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // Handler serves the auth API and login/setup pages.
 type Handler struct {
 	store       *Store
@@ -40,6 +83,30 @@ type Handler struct {
 	// auth.public_viewer so the guest entry point only exists when the
 	// operator explicitly opted in to login-free viewer access.
 	allowGuest bool
+	// guestTTL is the absolute lifetime of a guest session. Guests are
+	// anonymous viewers, so their sessions expire far sooner than a real
+	// user's (default 12h) to keep the session store small and to limit the
+	// value of a stolen guest cookie.
+	guestTTL time.Duration
+	// onSecurityEvent, when set, receives security-relevant auth events (a
+	// login lockout = likely brute force). The auth package has no dependency
+	// on the alert engine, so the dashboard injects a callback that records
+	// the event in the alert history and notifications. Without this, a
+	// brute-force lockout was only a WARN line in the log.
+	onSecurityEvent func(kind, detail, ip string)
+}
+
+// SetSecurityEventHook installs the callback invoked for security-relevant
+// auth events (e.g. a login lockout). Call once during startup.
+func (h *Handler) SetSecurityEventHook(fn func(kind, detail, ip string)) {
+	h.onSecurityEvent = fn
+}
+
+// reportSecurityEvent invokes the hook, if any.
+func (h *Handler) reportSecurityEvent(kind, detail, ip string) {
+	if h.onSecurityEvent != nil {
+		h.onSecurityEvent(kind, detail, ip)
+	}
 }
 
 // NewHandler creates an auth Handler.
@@ -62,6 +129,10 @@ func NewHandler(store *Store, manager *SessionManager, logger Logger, secure, au
 
 // SetAvatarsDir sets the directory used for avatar images.
 func (h *Handler) SetAvatarsDir(dir string) { h.avatarsDir = dir }
+
+// SetGuestTTL sets the absolute lifetime of a guest session. A value <= 0
+// keeps the manager's default TTL.
+func (h *Handler) SetGuestTTL(ttl time.Duration) { h.guestTTL = ttl }
 
 // Stop terminates background goroutines owned by the handler (login/guest
 // rate-limiter reapers). Call on shutdown.
@@ -159,6 +230,14 @@ func (h *Handler) sessionFromRequest(r *http.Request) (*Session, bool) {
 	return s, true
 }
 
+// Authenticated reports whether the request carries a valid session. It is
+// used by the dashboard to decide whether a public-viewer response must be
+// sanitized (the middleware itself does not inject the session).
+func (h *Handler) Authenticated(r *http.Request) bool {
+	_, ok := h.sessionFromRequest(r)
+	return ok
+}
+
 // handleStatus reports whether setup is required and who is logged in.
 // This endpoint is intentionally unauthenticated.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +322,10 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		if h.logger != nil {
 			h.logger.Warn("ログイン試行がロック中: ip=%s", ip)
 		}
+		// A lockout means the per-IP failure threshold was reached: report it
+		// as a security event so it lands in the alert history / notifications,
+		// not just the log.
+		h.reportSecurityEvent("login_lockout", "ログイン試行がロックアウトされました", ip)
 		writeError(w, http.StatusTooManyRequests, "試行回数が多すぎます。しばらく待ってから再度お試しください")
 		return
 	}
@@ -253,7 +336,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			h.limiter.RecordFailure(ip)
 		}
 		if h.logger != nil {
-			h.logger.Warn("ログイン失敗: user=%s from=%s", body.Username, ip)
+			h.logger.Warn("ログイン失敗: user=%s from=%s", sanitizeLogField(body.Username), ip)
 		}
 		writeError(w, http.StatusUnauthorized, "ユーザー名またはパスワードが違います")
 		return
@@ -275,7 +358,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.setCookie(w, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
-		h.logger.Info("ログイン成功: user=%s role=%s from=%s", u.Username, u.Role, r.RemoteAddr)
+		h.logger.Info("ログイン成功: user=%s role=%s from=%s", sanitizeLogField(u.Username), u.Role, r.RemoteAddr)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"username": u.Username,
@@ -308,7 +391,7 @@ func (h *Handler) handleGuestLogin(w http.ResponseWriter, r *http.Request) {
 		h.manager.Delete(old.ID)
 	}
 
-	sess, err := h.manager.Create("guest", RoleViewer, clientIP(r))
+	sess, err := h.manager.CreateWithTTL("guest", RoleViewer, clientIP(r), h.guestTTL)
 	if err != nil {
 		if errors.Is(err, ErrTooManySessions) {
 			writeError(w, http.StatusServiceUnavailable, "混雑しています。しばらく待ってから再度お試しください")
@@ -435,6 +518,9 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	if h.logger != nil {
 		h.logger.Info("ユーザー作成: %s (role=%s)", body.Username, role)
 	}
+	// Audit: a new account (especially an admin) is a privilege change and
+	// must be recorded, not only logged.
+	h.reportSecurityEvent("user_create", "ユーザー '"+body.Username+"' を作成しました (role="+string(role)+")", clientIP(r))
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -466,6 +552,7 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.logger != nil {
 		h.logger.Info("ユーザー削除: %s", name)
 	}
+	h.reportSecurityEvent("user_delete", "ユーザー '"+name+"' を削除しました", clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -510,5 +597,6 @@ func (h *Handler) handleChangeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.manager.DeleteUserSessions(name)
+	h.reportSecurityEvent("role_change", "ユーザー '"+name+"' のロールを '"+body.Role+"' に変更しました", clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

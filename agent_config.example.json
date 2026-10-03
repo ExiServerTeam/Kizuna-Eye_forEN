@@ -2,8 +2,10 @@
     "dashboard_url": "ws://localhost:8080/ws",
     "interval": 1.0,
     "log_file": "logs/agent.log",
+    "log_level": "info",
     "disk_path": "/",
     "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
+    "plugins_dir": "/opt/kizuna-eye/bin/plugins",
     "auto_update": {
         "enabled": false,
         "repository_url": "github.com/your-org/Kizuna-Eye",

@@ -27,8 +27,10 @@ BIN_DIR="${BIN_DIR:-/opt/kizuna-eye/bin}"
 
 PASS=0
 FAIL=0
+SKIP=0
 ok()   { echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 ng()   { echo "  [ NG ] $1"; FAIL=$((FAIL+1)); }
+skip() { echo "  [skip] $1"; SKIP=$((SKIP+1)); }
 head_() { echo ""; echo "============================================================"; echo " $1"; echo "============================================================"; }
 
 # kill_by_exe <path-to-binary>
@@ -42,10 +44,37 @@ kill_by_exe() {
     for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
         [ "$pid" = "$self" ] && continue
         [ "$pid" = "$ppid" ] && continue
-        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+        exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        # 起動中にバイナリが再ビルド（上書き）されると、そのプロセスの
+        # /proc/PID/exe は "/path/to/bin (deleted)" を指す。サフィックスを
+        # 取り除かないと target と一致せず、旧 dashboard/agent を停止でき
+        # ないままポート 8080 を握られ、新ビルドが bind に失敗する。
+        exe="${exe% (deleted)}"
+        [ -n "$exe" ] || continue
         [ "$exe" = "$target" ] || continue
         kill "$pid" 2>/dev/null || true
     done
+}
+
+# wait_exe_gone <path-to-binary>: 対象バイナリを実行中のプロセスが消えるまで
+# 待つ（"(deleted)" の exe も一致とみなす）。最大20秒。
+wait_exe_gone() {
+    local target="$1" tries=0 pid exe
+    [ -d /proc ] || return 0
+    while [ "$tries" -lt 40 ]; do
+        local found=0
+        for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+            [ "$pid" = "$$" ] && continue
+            [ "$pid" = "$PPID" ] && continue
+            exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+            exe="${exe% (deleted)}"
+            if [ "$exe" = "$target" ]; then found=1; break; fi
+        done
+        [ "$found" -eq 0 ] && return 0
+        tries=$((tries+1))
+        sleep 0.5
+    done
+    return 1
 }
 
 # ------------------------------------------------------------
@@ -96,7 +125,7 @@ else
 fi
 
 if [ "$MODE" = "static" ]; then
-    head_ "結果: PASS=$PASS FAIL=$FAIL"
+    head_ "結果: PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
     [ "$FAIL" -eq 0 ] && exit 0 || exit 1
 fi
 
@@ -105,7 +134,7 @@ fi
 # ------------------------------------------------------------
 head_ "2. ビルド"
 mkdir -p "$BIN_DIR"
-VERSION="${VERSION:-v0.7.1}"
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 
@@ -131,13 +160,23 @@ head_ "3. 起動 + API スモーク"
 mkdir -p logs plugins
 kill_by_exe "$BIN_DIR/dashboard_linux"
 kill_by_exe "$BIN_DIR/agent_linux"
-sleep 1
+# 再ビルドで上書きされたバイナリを実行中の旧プロセスは exe が detached に
+# なる。ポートを握ったまま新プロセスが bind に失敗し、スモークが旧サーバーに
+# 当たるのを防ぐため、実際に消えるまで待つ。
+wait_exe_gone "$BIN_DIR/dashboard_linux" || true
+wait_exe_gone "$BIN_DIR/agent_linux" || true
 
 "$BIN_DIR/dashboard_linux" -config dashboard_config.json > logs/dashboard.log 2>&1 &
 DPID=$!
 "$BIN_DIR/agent_linux" -config agent_config.json > logs/agent.log 2>&1 &
 APID=$!
 echo "  dashboard PID=$DPID / agent PID=$APID"
+
+# 起動直後に落ちていないか確認する。bind 失敗や設定不正で即終了した場合、
+# 以降のチェックが古いサーバーに対して誤って成功するのを防ぐ。
+sleep 1
+if kill -0 "$DPID" 2>/dev/null; then ok "dashboard 起動 (PID=$DPID)"; else ng "dashboard が即時終了"; tail -5 logs/dashboard.log; fi
+if kill -0 "$APID" 2>/dev/null; then ok "agent 起動 (PID=$APID)"; else ng "agent が即時終了"; tail -5 logs/agent.log; fi
 
 cleanup() {
     kill "$DPID" "$APID" 2>/dev/null || true
@@ -163,12 +202,21 @@ if [ "$agent_up" -eq 1 ]; then ok "Agent 接続 (health=healthy)"; else ng "Agen
 
 check_json() {
     local path="$1" key="$2"
-    local body
-    body="$(curl -s "$BASE_URL$path")"
+    local resp body code
+    resp="$(curl -s -w '\n%{http_code}' "$BASE_URL$path")"
+    code="$(printf '%s' "$resp" | tail -n1)"
+    body="$(printf '%s' "$resp" | sed '$d')"
+    # 401 は auth.enabled=true でエンドポイントが正しくセッションを要求して
+    # いる状態。スモークは資格情報なしで実行するため、失敗ではなくスキップ
+    # として扱う。
+    if [ "$code" = "401" ]; then
+        skip "GET $path (401: 認証必須。auth.enabled=true)"
+        return
+    fi
     if printf '%s' "$body" | grep -q "$key"; then
         ok "GET $path ($key)"
     else
-        ng "GET $path ($key が見つからない)"
+        ng "GET $path ($key が見つからない, HTTP $code)"
     fi
 }
 
@@ -183,18 +231,24 @@ check_json /api/metrics       'kizuna_up'
 
 # 履歴が実際に伸びているか。Agent は interval ごとに1件追加するため、
 # 起動直後は1件しか無いことがある。数秒待って増加を確認する。
-before="$(curl -s "$BASE_URL/api/history" | grep -o '"timestamp"' | wc -l)"
-for _ in $(seq 1 10); do
-    sleep 1
-    cnt="$(curl -s "$BASE_URL/api/history" | grep -o '"timestamp"' | wc -l)"
-    if [ "$cnt" -ge 3 ] && [ "$cnt" -gt "$before" ]; then
-        break
-    fi
-done
-if [ "$cnt" -ge 3 ] && [ "$cnt" -gt "$before" ]; then
-    ok "メトリクス履歴サンプル数=$cnt (増加を確認)"
+hist_code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE_URL/api/history")"
+if [ "$hist_code" = "401" ]; then
+    skip "メトリクス履歴の増加確認 (401: 認証必須)"
 else
-    ng "メトリクス履歴サンプルが増えない (before=$before, now=$cnt)"
+    before="$(curl -s "$BASE_URL/api/history" | grep -o '"timestamp"' | wc -l)"
+    cnt="$before"
+    for _ in $(seq 1 10); do
+        sleep 1
+        cnt="$(curl -s "$BASE_URL/api/history" | grep -o '"timestamp"' | wc -l)"
+        if [ "$cnt" -ge 3 ] && [ "$cnt" -gt "$before" ]; then
+            break
+        fi
+    done
+    if [ "$cnt" -ge 3 ] && [ "$cnt" -gt "$before" ]; then
+        ok "メトリクス履歴サンプル数=$cnt (増加を確認)"
+    else
+        ng "メトリクス履歴サンプルが増えない (before=$before, now=$cnt)"
+    fi
 fi
 
 # ------------------------------------------------------------
@@ -214,5 +268,5 @@ if [ "$MODE" = "full" ]; then
     fi
 fi
 
-head_ "結果: PASS=$PASS FAIL=$FAIL"
+head_ "結果: PASS=$PASS FAIL=$FAIL SKIP=$SKIP"
 [ "$FAIL" -eq 0 ] && exit 0 || exit 1

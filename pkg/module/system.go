@@ -556,8 +556,25 @@ func (m *SystemModule) GetStatus() *status.SystemStatus {
 	if m.status == nil {
 		return nil
 	}
-	c := *m.status
-	return &c
+	// Deep copy: SystemStatus contains slices/pointers (Disks, Processes,
+	// CPUPerCore, LoadAverage, Network, NetworkSpeed). A shallow copy would
+	// share their backing arrays with the stored status, so a caller that
+	// mutates the result could corrupt the live status (or race with
+	// updateStatus).
+	return m.status.Clone()
+}
+
+// StatusTimestamp returns the timestamp of the latest collected status
+// without copying it. It is cheap (RLock only) and lets the agent skip
+// re-sending an unchanged status when its send interval is shorter than the
+// collection interval, avoiding a deep copy + JSON encode + broadcast per tick.
+func (m *SystemModule) StatusTimestamp() int64 {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.status == nil {
+		return 0
+	}
+	return m.status.Timestamp
 }
 
 func (m *SystemModule) getStaleThresholdLocked() time.Duration {
@@ -663,18 +680,28 @@ func (m *SystemModule) updateStatus() {
 
 	if len(disks) > 0 && totalDiskTotal > 0 {
 		totalDiskPercent = float64(totalDiskUsed) / float64(totalDiskTotal) * 100
-	} else if diskInfo, err := disk.Usage(diskPath); err == nil && diskInfo != nil {
-		disks = []status.DiskInfo{{
-			Path:    diskPath,
-			Total:   diskInfo.Total,
-			Used:    diskInfo.Used,
-			Percent: diskInfo.UsedPercent,
-		}}
-		totalDiskUsed = diskInfo.Used
-		totalDiskTotal = diskInfo.Total
-		totalDiskPercent = diskInfo.UsedPercent
-	} else if m.logger != nil {
-		m.logger.Warn("ディスク情報取得失敗: %s (%v)", diskPath, err)
+	} else {
+		diskInfo, uerr := disk.Usage(diskPath)
+		if uerr == nil && diskInfo != nil {
+			disks = []status.DiskInfo{{
+				Path:    diskPath,
+				Total:   diskInfo.Total,
+				Used:    diskInfo.Used,
+				Percent: diskInfo.UsedPercent,
+			}}
+			totalDiskUsed = diskInfo.Used
+			totalDiskTotal = diskInfo.Total
+			totalDiskPercent = diskInfo.UsedPercent
+		} else if m.logger != nil {
+			// Report the disk.Usage error, not the earlier Partitions error
+			// (which is nil on this branch), so the log points at the real
+			// failure instead of printing a stale nil.
+			if uerr != nil {
+				m.logger.Warn("ディスク情報取得失敗: %s (%v)", diskPath, uerr)
+			} else {
+				m.logger.Warn("ディスク情報取得失敗: %s", diskPath)
+			}
+		}
 	}
 
 	// ---------- Host ----------
@@ -840,9 +867,28 @@ func resolveBlockDevice(device string) string {
 		return device
 	}
 	name := strings.TrimPrefix(device, "/dev/")
+	// RAID, device-mapper, loop, optical and other virtual devices are whole
+	// devices whose trailing digits are part of the name (e.g. md0, dm-0,
+	// sr0, nbd0), not a partition number. Stripping the digits would query
+	// smartctl against a non-existent path.
+	// These prefixes never denote a partition of an sd/hd/vd disk, so a
+	// trailing digit is part of the whole-device name. Return unchanged.
+	for _, pfx := range []string{"md", "dm-", "loop", "ram", "zram", "sr", "nbd", "rbd"} {
+		if strings.HasPrefix(name, pfx) {
+			return device
+		}
+	}
 	// NVMe / mmcblk partitions: <base><digit>p<num>.
 	if m := partRe.FindStringSubmatch(name); len(m) == 2 {
 		return "/dev/" + m[1]
+	}
+	// A whole NVMe / mmcblk device (no partition suffix) still ends in a
+	// digit, e.g. /dev/nvme0n1 or /dev/mmcblk0. Those are whole disks, not
+	// partitions: sdRe below would match "mmcblk0" (letters+digits) and turn
+	// it into "/dev/mmcblk", a device that does not exist, so smartctl would
+	// silently query nothing. Return them unchanged.
+	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") {
+		return device
 	}
 	// sd/vd/hd partitions: <letters><num>.
 	if sdRe.MatchString(name) {

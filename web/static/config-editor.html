@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-i18n-doc-title="config.page_title">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>設定エディタ - Kizuna-Eye</title>
-    <link rel="stylesheet" href="style.css?v=0.7.1">
+    <link rel="stylesheet" href="style.css?v=0.8.11">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="config-editor.css?v=0.7.1">
+    <link rel="stylesheet" href="config-editor.css?v=0.8.11">
 </head>
-<body data-role-min="admin">
+<body class="config-editor-page" data-role-min="admin">
     <div class="app">
         <header class="header">
             <div class="header-main">
@@ -25,12 +25,12 @@
                         <span class="theme-icon" id="langIcon">🌐</span>
                         <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
                     </button>
-                    <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                    <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え" data-i18n-aria-label="theme.toggle">
                         <span class="theme-icon" id="themeIcon">🌙</span>
                         <span class="theme-track"><span class="theme-thumb"></span></span>
                         <span class="theme-label" id="themeLabel">ダーク</span>
                     </button>
-                    <span class="version-badge">v0.7.1</span>
+                    <span class="version-badge">v0.8.11</span>
                 </div>
             </div>
             <div class="header-user" id="headerUser"></div>
@@ -48,7 +48,7 @@
                             <span class="file-name" data-i18n="config.file_dashboard">ダッシュボードの設定</span>
                         </button>
                         <button class="config-file-btn" data-type="alerts">
-                            <span class="file-name" data-i18n="config.alerts_title">アラートの設定</span>
+                            <span class="file-name" data-i18n="config.alerts_title">システム監視アラート</span>
                         </button>
                     </div>
                 </div>
@@ -56,15 +56,17 @@
                 <div class="config-editor-area">
                     <div class="editor-header">
                         <h2 class="editor-title" id="editorTitle" data-i18n="config.file_agent">エージェントの設定</h2>
-                        <div class="editor-mode" id="editorMode">
-                            <button class="mode-btn active" id="modeGuiBtn" data-i18n="config.mode_gui">GUI</button>
-                            <button class="mode-btn" id="modeJsonBtn" data-i18n="config.mode_json">JSON</button>
-                        </div>
-                        <div class="editor-actions" id="editorActions">
-                            <button class="btn-secondary" id="templateBtn" data-i18n="config.insert_template">ひな形を挿入</button>
-                            <button class="btn-secondary" id="formatBtn" data-i18n="config.format">フォーマット</button>
-                            <button class="btn-secondary" id="validateBtn" data-i18n="config.validate">検証</button>
-                            <button class="btn-primary" id="saveBtn" data-i18n="config.save">保存</button>
+                        <div class="editor-toolbar">
+                            <div class="editor-mode" id="editorMode">
+                                <button class="mode-btn active" id="modeGuiBtn" data-i18n="config.mode_gui">GUI</button>
+                                <button class="mode-btn" id="modeJsonBtn" data-i18n="config.mode_json">JSON</button>
+                            </div>
+                            <div class="editor-actions" id="editorActions">
+                                <button class="btn-secondary" id="templateBtn" data-i18n="config.insert_template">ひな形を挿入</button>
+                                <button class="btn-secondary" id="formatBtn" data-i18n="config.format">フォーマット</button>
+                                <button class="btn-secondary" id="validateBtn" data-i18n="config.validate">検証</button>
+                                <button class="btn-primary" id="saveBtn" data-i18n="config.save">保存</button>
+                            </div>
                         </div>
                     </div>
 
@@ -98,6 +100,7 @@
 
                     <!-- アラート閾値エディタ -->
                     <div class="alert-config-panel" id="alertConfigPanel" style="display:none;">
+                        <p class="gui-help" data-i18n="config.alerts_help">CPU・メモリ・ディスク・温度の監視しきい値です（Kizuna-Eye 本体の機能。プラグインの有無に関係なく動作します）。セキュリティプラグインの通知設定は「モジュール管理」画面で行います。</p>
                         <div class="alert-config-body">
                             <div class="config-field">
                                 <label for="acMemWarn" data-i18n="config.memory_warn">メモリ警告閾値 (%)</label>
@@ -134,6 +137,7 @@
                             <button class="btn-primary" id="alertConfigSaveBtn" data-i18n="config.save">保存</button>
                         </div>
                     </div>
+
                 </div>
             </div>
         </main>
@@ -141,9 +145,9 @@
         <div class="toast-container" id="toastContainer"></div>
     </div>
 
-    <script src="i18n.js?v=0.7.1"></script>
-    <script src="auth-guard.js?v=0.7.1"></script>
-    <script src="connection.js?v=0.7.1"></script>
-    <script src="config-editor.js?v=0.7.1"></script>
+    <script src="i18n.js?v=0.8.11"></script>
+    <script src="auth-guard.js?v=0.8.11"></script>
+    <script src="connection.js?v=0.8.11"></script>
+    <script src="config-editor.js?v=0.8.11"></script>
 </body>
 </html>

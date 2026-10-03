@@ -11,6 +11,16 @@
 
     var STORAGE_KEY = 'kizuna-theme';
 
+    // t() uses the shared i18n dictionary when present, falling back to the
+    // key itself (or a default) so this file also works before i18n.js loads.
+    function t(key, fallback) {
+        if (window.KizunaI18n && window.KizunaI18n.t) {
+            var v = window.KizunaI18n.t(key);
+            if (v && v !== key) return v;
+        }
+        return fallback;
+    }
+
     function getTheme() {
         return document.documentElement.getAttribute('data-theme') || 'dark';
     }
@@ -19,7 +29,9 @@
         document.documentElement.setAttribute('data-theme', theme);
         var icon = document.getElementById('authThemeIcon') || document.getElementById('themeIcon');
         if (icon) icon.textContent = theme === 'dark' ? '🌙' : '☀️';
-        var label = theme === 'dark' ? 'ライトモードに切り替え' : 'ダークモードに切り替え';
+        var label = theme === 'dark'
+            ? t('theme.toggle_to_light', 'Switch to light mode')
+            : t('theme.toggle_to_dark', 'Switch to dark mode');
         var buttons = [
             document.getElementById('authThemeToggle'),
             document.getElementById('themeToggle')
@@ -79,4 +91,8 @@
     } else {
         wire();
     }
+
+    // Re-apply the theme label when the language changes (the aria-label /
+    // title are not data-i18n because they are computed).
+    window.addEventListener('kizuna-lang-change', function () { applyTheme(getTheme()); });
 })();

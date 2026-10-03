@@ -2,7 +2,9 @@
 # 仕様: build.sh と同じ成果物を /opt/kizuna-eye/bin に出力する。
 
 BIN_DIR ?= /opt/kizuna-eye/bin
-VERSION ?= v0.7.1
+# VERSION is the single source of truth (repo root). Never hardcode a version
+# here: it would drift from build.sh / the web UI on the next release.
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo v0.7.1)
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X Kizuna-Eye/internal/api.Version=$(VERSION) -X Kizuna-Eye/internal/api.BuildTime=$(BUILD_TIME)
 

@@ -40,3 +40,46 @@ scripts/.ssh_env
 
 # Output of scripts/scan_emoji.py (generated report, never commit)
 emoji_report.txt
+
+keys/
+_pentest_backup_*/
+*.prepatch-*
+*.fimtest-bak
+*.swp
+*.swo
+*~
+scripts/patch_*.py
+scripts/new_*.tpl
+scripts/attack_*.py
+scripts/ws_agent_attack.py
+scripts/d_poc_plugin.go
+_pentest_backup_*/
+
+# ---- merged 2026-10-04: restore broader secret/build/os patterns ----
+# secrets
+*.key
+*.pem
+.env
+.env.*
+*_config.json
+!*_config.example.json
+# logs / runtime data
+*.jsonl
+tmp/
+# build artifacts
+*.exe
+*.dll
+*.dylib
+kizuna-dashboard
+# os / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+# deps / archives
+node_modules/
+vendor/
+*.tar.gz
+*.zip
+# stray editor temp name (Windows 8.3 artifact)
+NDH6SA~M

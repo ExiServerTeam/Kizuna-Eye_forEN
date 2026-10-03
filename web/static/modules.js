@@ -173,7 +173,9 @@
 
     function setTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('kizuna-theme', theme);
+        // localStorage はプライベートモード等で例外を投げる。失敗しても
+        // 初期化 IIFE 全体を止めないよう握りつぶす。
+        try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
         if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
@@ -181,7 +183,8 @@
 
     // Phase 9-2: OS設定に基づく自動テーマ切り替え
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
-    const savedTheme = localStorage.getItem('kizuna-theme');
+    let savedTheme = null;
+    try { savedTheme = localStorage.getItem('kizuna-theme'); } catch (e) { /* ignore */ }
 
     // localStorageに保存がある場合はそれを使用
     // 保存がない場合はOS設定を使用
@@ -193,7 +196,9 @@
 
     // OS設定の変更を監視（localStorageに手動設定がない場合のみ）
     prefersDark.addEventListener('change', (e) => {
-        if (!localStorage.getItem('kizuna-theme')) {
+        let manual = null;
+        try { manual = localStorage.getItem('kizuna-theme'); } catch (err) { /* ignore */ }
+        if (!manual) {
             setTheme(e.matches ? 'dark' : 'light');
         }
     });
@@ -439,7 +444,12 @@
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
             showToast(t('toast.execution_accepted'), 'info');
-            const result = await waitForBackupResult(data.request_id, 180000);
+            // The server's run guard is released after 30 minutes
+            // (runGuardTimeout). Wait slightly longer than that, so that if a
+            // result never arrives the server-side guard has already expired
+            // and the plugin can be run again (otherwise the UI shows
+            // "not running" while the server answers 409).
+            const result = await waitForBackupResult(data.request_id, 1860000);
 
             if (result.status === 'success') {
                 showToast(t('toast.execution_success', formatBytes(result.size), result.duration_ms), 'success');
@@ -557,7 +567,9 @@
             // カード本文。セキュリティ等の監視プラグインは専用の項目を表示する。
             const cfg = mod.config || {};
             const watchFiles = cfg.watch_files || '--';
-            const notifyLevel = cfg.notify_min_level || '--';
+            const notifyLevel = cfg.notify_min_level
+                ? t('level.' + String(cfg.notify_min_level).toLowerCase())
+                : '--';
             const burstText = cfg.failed_burst
                 ? t('security.burst_value', cfg.failed_burst, cfg.burst_window_sec || '-')
                 : '--';
@@ -1155,6 +1167,7 @@
 
     // 言語変更時に再描画
     window.addEventListener('kizuna-lang-change', () => {
+        setTheme(getTheme());
         if (modules && modules.length > 0) renderModules();
     });
 

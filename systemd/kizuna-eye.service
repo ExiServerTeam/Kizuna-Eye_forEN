@@ -2,7 +2,10 @@
 # Kizuna-Eye systemd unit (system service)
 #
 # インストール（install.sh --systemd でも自動化される）:
-#   sudo sed "s/__USER__/$USER/g" systemd/kizuna-eye.service \
+#   __DIR__ / __USER__ はインストール先の実際の値に置換して使う。
+#   install.sh / migrate-to-systemd.sh が自動で両方を埋める。
+#   sudo sed -e "s|__DIR__|$PWD|g" -e "s|__USER__|$USER|g" \
+#     systemd/kizuna-eye.service \
 #     | sudo tee /etc/systemd/system/kizuna-eye.service >/dev/null
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now kizuna-eye
@@ -21,9 +24,9 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/samba/share/Kizuna-Eye
-ExecStart=/samba/share/Kizuna-Eye/start.sh
-ExecStop=/samba/share/Kizuna-Eye/stop.sh
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/start.sh
+ExecStop=__DIR__/stop.sh
 # agent がバックアッププラグイン実行中でも、途中で強制終了して
 # 中途半端なアーカイブを残さないよう、停止は十分待つ。
 TimeoutStopSec=60

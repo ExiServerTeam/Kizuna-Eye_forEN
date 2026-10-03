@@ -71,9 +71,16 @@ func checkDependencies(lg *logger.Logger) {
 
 var loadedPlugins = struct {
 	sync.Mutex
+	// names is keyed by the name a plugin actually registered under (its own
+	// Name()), which is what manager.Get/Unregister use.
 	names map[string]bool
+	// byCfg maps a modules.json entry name to the name the plugin registered
+	// under, so a hand-edited modules.json whose name differs from the
+	// plugin's Name() can still be disabled/reconfigured correctly.
+	byCfg map[string]string
 }{
 	names: make(map[string]bool),
+	byCfg: make(map[string]string),
 }
 
 // wsWriter serializes writes to a WebSocket connection.
@@ -108,9 +115,15 @@ func main() {
 		log.Fatalf("設定読み込み失敗: %v", err)
 	}
 
+	// Default to INFO so DEBUG noise is not emitted unless explicitly
+	// enabled via agent_config.json's log_level ("debug").
+	level := logger.INFO
+	if cfg.LogLevel != "" {
+		level = logger.ParseLevel(cfg.LogLevel)
+	}
 	lg := logger.NewLogger(&logger.Options{
 		LogFile: cfg.LogFile,
-		Level:   logger.DEBUG,
+		Level:   level,
 		Prefix:  "[AGENT]",
 		UseUTC:  false,
 	})
@@ -282,37 +295,59 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 	loadedPlugins.Lock()
 	defer loadedPlugins.Unlock()
 
+	// Track every plugin name still present in modules.json (enabled or not),
+	// so a plugin that was deleted from the file can be stopped below.
+	present := make(map[string]bool, len(configs))
+
 	for _, cfg := range configs {
 		if cfg.Type != "plugin" {
 			continue
 		}
+		present[cfg.Name] = true
 		if !cfg.Enabled {
 			// Stop a previously-loaded plugin when it is disabled, so it
-			// stops executing without an agent restart.
-			if loadedPlugins.names[cfg.Name] {
-				if err := manager.Unregister(cfg.Name); err != nil {
-					lg.Error("プラグイン '%s' の停止に失敗: %v", cfg.Name, err)
+			// stops executing without an agent restart. Resolve the name it
+			// was actually registered under, in case modules.json's name and
+			// the plugin's own Name() differ.
+			tracked := cfg.Name
+			if !loadedPlugins.names[tracked] {
+				if reg, ok := loadedPlugins.byCfg[cfg.Name]; ok {
+					tracked = reg
+				} else if mod, ok := manager.Get(cfg.Name); ok {
+					tracked = mod.Name()
+				}
+			}
+			if loadedPlugins.names[tracked] {
+				if err := manager.Unregister(tracked); err != nil {
+					lg.Error("プラグイン '%s' の停止に失敗: %v", tracked, err)
 				} else {
-					delete(loadedPlugins.names, cfg.Name)
-					lg.Info("プラグイン '%s' を無効化し停止しました", cfg.Name)
+					delete(loadedPlugins.names, tracked)
+					delete(loadedPlugins.byCfg, cfg.Name)
+					lg.Info("プラグイン '%s' を無効化し停止しました", tracked)
 				}
 			} else {
 				lg.Info("プラグイン '%s' は無効のためスキップ", cfg.Name)
 			}
 			continue
 		}
-		if loadedPlugins.names[cfg.Name] {
+		// Resolve the name this plugin actually registered under (its own
+		// Name()), which may differ from the modules.json entry name.
+		regName := cfg.Name
+		if reg, ok := loadedPlugins.byCfg[cfg.Name]; ok {
+			regName = reg
+		}
+		if loadedPlugins.names[regName] {
 			// Already loaded: apply the new config to the running plugin
 			// so changes like interval_sec take effect without a restart.
-			if existing, ok := manager.Get(cfg.Name); ok {
+			if existing, ok := manager.Get(regName); ok {
 				if configurable, ok := existing.(interface {
 					Configure(config interface{}) error
 				}); ok {
-					if err := configurable.Configure(cfg.Config); err != nil {
-						lg.Error("プラグイン '%s' の再設定失敗: %v", cfg.Name, err)
+					if err := configurePlugin(configurable, cfg.Config); err != nil {
+						lg.Error("プラグイン '%s' の再設定失敗: %v", regName, err)
 					} else {
-						manager.NotifyConfigChanged(cfg.Name)
-						lg.Info("プラグイン '%s' の設定を更新しました", cfg.Name)
+						manager.NotifyConfigChanged(regName)
+						lg.Info("プラグイン '%s' の設定を更新しました", regName)
 					}
 				}
 			}
@@ -331,56 +366,127 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 
-		if err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg); err != nil {
+		registeredName, err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg)
+		if err != nil {
 			lg.Error("プラグイン '%s' の読み込み失敗: %v", cfg.Name, err)
 			continue
 		}
+		if registeredName == "" {
+			registeredName = cfg.Name
+		}
+		// The module manager keys plugins by the plugin's own Name(), while
+		// modules.json is keyed by cfg.Name. If they differ (hand-edited
+		// modules.json), tracking cfg.Name would make manager.Get(cfg.Name)
+		// fail and silently drop the plugin's security events / backup
+		// status. Track the name it actually registered under, and remember
+		// both names as "present" so the removal sweep below does not stop it.
+		if registeredName != cfg.Name {
+			lg.Warn("プラグイン '%s' は自身を '%s' として登録しました（modules.json の name と不一致）。events/backup の欠落を防ぐため '%s' として追跡します", cfg.Name, registeredName, registeredName)
+			present[registeredName] = true
+			loadedPlugins.byCfg[cfg.Name] = registeredName
+		}
+		loadedPlugins.names[registeredName] = true
+		lg.Info("プラグイン '%s' を登録しました", registeredName)
+	}
 
-		loadedPlugins.names[cfg.Name] = true
-		lg.Info("プラグイン '%s' を登録しました", cfg.Name)
+	// Stop plugins that are still loaded but no longer present in modules.json
+	// (e.g. deleted from the dashboard). Without this a removed plugin keeps
+	// running until the agent is restarted, because the disabled branch only
+	// handles an entry that still exists with enabled=false.
+	for name := range loadedPlugins.names {
+		if present[name] {
+			continue
+		}
+		if err := manager.Unregister(name); err != nil {
+			lg.Error("プラグイン '%s' の停止に失敗: %v", name, err)
+			continue
+		}
+		delete(loadedPlugins.names, name)
+		for cfgName, reg := range loadedPlugins.byCfg {
+			if reg == name {
+				delete(loadedPlugins.byCfg, cfgName)
+			}
+		}
+		lg.Info("プラグイン '%s' を modules.json から削除されたため停止しました", name)
 	}
 
 	return nil
 }
 
-// loadAndRegisterPlugin は .so を読み込んで ModuleManager に登録する
+// loadAndRegisterPlugin loads and registers the plugin and returns the name it
+// was actually registered under (the plugin's own Name()), which may differ
+// from the modules.json entry name.
 func loadAndRegisterPlugin(
 	ctx context.Context,
 	path string,
 	config map[string]interface{},
 	manager module.ModuleManager,
 	lg *logger.Logger,
-) error {
+) (string, error) {
 	p, err := plugin.Open(path)
 	if err != nil {
-		return fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
+		return "", fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
 	}
 
 	sym, err := p.Lookup("NewPluginModule")
 	if err != nil {
-		return fmt.Errorf("NewPluginModule が見つかりません: %w", err)
+		return "", fmt.Errorf("NewPluginModule が見つかりません: %w", err)
 	}
 
 	newFunc, ok := sym.(func(module.Logger) module.PluginModule)
 	if !ok {
-		return fmt.Errorf("NewPluginModule のシグネチャが不正です")
+		return "", fmt.Errorf("NewPluginModule のシグネチャが不正です")
 	}
 
-	pluginMod := newFunc(lg)
+	pluginMod, err := constructPlugin(newFunc, lg)
+	if err != nil {
+		return "", err
+	}
 
 	if configurable, ok := pluginMod.(interface {
 		Configure(config interface{}) error
 	}); ok {
-		if err := configurable.Configure(config); err != nil {
-			return fmt.Errorf("プラグイン設定適用失敗: %w", err)
+		if err := configurePlugin(configurable, config); err != nil {
+			return "", fmt.Errorf("プラグイン設定適用失敗: %w", err)
 		}
 	}
 
 	if err := manager.Register(ctx, pluginMod); err != nil {
-		return fmt.Errorf("モジュール登録失敗: %w", err)
+		return "", fmt.Errorf("モジュール登録失敗: %w", err)
 	}
 
-	return nil
+	return pluginMod.Name(), nil
+}
+
+// constructPlugin runs the plugin's constructor with panic recovery, so a
+// panic in third-party plugin init code does not crash the agent.
+func constructPlugin(newFunc func(module.Logger) module.PluginModule, lg *logger.Logger) (mod module.PluginModule, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.Error("プラグインのコンストラクタがパニックしました: %v", r)
+			}
+			mod = nil
+			err = fmt.Errorf("plugin constructor panicked: %v", r)
+		}
+	}()
+	mod = newFunc(lg)
+	// A constructor that returns nil would make manager.Register call
+	// module.Name() on a nil interface and crash the agent; reject it here.
+	if mod == nil {
+		return nil, fmt.Errorf("plugin constructor returned nil")
+	}
+	return mod, nil
+}
+
+// configurePlugin applies plugin config with panic recovery.
+func configurePlugin(configurable interface{ Configure(interface{}) error }, config map[string]interface{}) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("plugin Configure panicked: %v", r)
+		}
+	}()
+	return configurable.Configure(config)
 }
 
 // watchModulesFile watches modules.json for changes and reloads.
@@ -515,10 +621,17 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 	}()
 
 	interval := time.Duration(cfg.Interval * float64(time.Second))
+	// Guard against a sub-nanosecond interval rounding to 0, which would make
+	// time.NewTicker panic ("non-positive interval"). validateAgentConfig only
+	// rejects interval <= 0, so a tiny positive value can still reach here.
+	if interval <= 0 {
+		interval = time.Second
+	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	if err := sendStatus(writer, manager, lg); err != nil {
+	lastSent, err := sendStatus(writer, manager, lg)
+	if err != nil {
 		return err
 	}
 
@@ -527,11 +640,23 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := sendStatus(writer, manager, lg); err != nil {
+			// Security events are flushed every tick so their delivery latency
+			// is not tied to the status collection interval.
+			sendSecurityEvents(writer, manager, lg)
+
+			// The send interval can be shorter than the collection interval
+			// (e.g. interval=0.2s while the system module samples every 1s).
+			// Re-sending an unchanged status costs a deep copy, a JSON encode
+			// and a broadcast to every client, so skip it.
+			if ts := statusTimestamp(manager); ts != 0 && ts == lastSent {
+				continue
+			}
+			ts, err := sendStatus(writer, manager, lg)
+			if err != nil {
 				lg.Error("送信失敗: %v", err)
 				return err
 			}
-			sendSecurityEvents(writer, manager, lg)
+			lastSent = ts
 		}
 	}
 }
@@ -558,7 +683,7 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 		if !ok {
 			continue
 		}
-		events := provider.DrainSecurityEvents()
+		events := drainSecurityEventsSafe(provider, lg)
 		for i, ev := range events {
 			payload := map[string]interface{}{
 				"event":     "security_alert",
@@ -595,22 +720,51 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 	}
 }
 
+// drainSecurityEventsSafe calls the plugin's DrainSecurityEvents with panic
+// recovery, so a buggy plugin cannot crash the agent.
+func drainSecurityEventsSafe(provider module.SecurityEventProvider, lg *logger.Logger) (events []module.SecurityEvent) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.Error("セキュリティイベント取得でパニック: %v", r)
+			}
+			events = nil
+		}
+	}()
+	return provider.DrainSecurityEvents()
+}
+
 // ============================================================
-// sendStatus はステータスを WebSocket で送信する
-// ============================================================
-func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) error {
+// statusTimestamp returns the system module's latest status timestamp without
+// copying it, so the send loop can cheaply detect an unchanged status.
+func statusTimestamp(manager module.ModuleManager) int64 {
 	sysMod, ok := manager.Get("system")
 	if !ok {
-		return nil
+		return 0
 	}
 	sysModule, ok := sysMod.(*module.SystemModule)
 	if !ok {
-		return nil
+		return 0
+	}
+	return sysModule.StatusTimestamp()
+}
+
+// sendStatus はステータスを WebSocket で送信し、送信したステータスの
+// タイムスタンプを返す（未送信なら 0）。
+// ============================================================
+func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) (int64, error) {
+	sysMod, ok := manager.Get("system")
+	if !ok {
+		return 0, nil
+	}
+	sysModule, ok := sysMod.(*module.SystemModule)
+	if !ok {
+		return 0, nil
 	}
 
 	s := sysModule.GetStatus()
 	if s == nil {
-		return nil
+		return 0, nil
 	}
 
 	if bs := collectBackupStatus(manager); bs != nil {
@@ -628,15 +782,15 @@ func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) er
 	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(s); err != nil {
-		return err
+		return 0, err
 	}
 
 	if err := w.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
-		return err
+		return s.Timestamp, err
 	}
 
 	lg.Debug("Status sent successfully")
-	return nil
+	return s.Timestamp, nil
 }
 
 // ============================================================
@@ -672,7 +826,7 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 			continue
 		}
 
-		status := provider.GetBackupStatus()
+		status := backupStatusSafe(provider)
 		if status == nil {
 			continue
 		}
@@ -699,6 +853,18 @@ func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 	}
 
 	return latest
+}
+
+// backupStatusSafe calls a plugin's GetBackupStatus with panic recovery.
+// collectBackupStatus runs on the agent's status-send path, so a plugin panic
+// here would crash the whole agent process.
+func backupStatusSafe(provider module.BackupStatusProvider) (st *module.BackupStatus) {
+	defer func() {
+		if r := recover(); r != nil {
+			st = nil
+		}
+	}()
+	return provider.GetBackupStatus()
 }
 
 // ============================================================
@@ -749,6 +915,16 @@ func handleDashboardCommand(
 	}
 
 	go func() {
+		// Recover a plugin panic so a crashing backup plugin does not take
+		// down the agent; report it as a normal error result instead.
+		defer func() {
+			if r := recover(); r != nil {
+				if lg != nil {
+					lg.Error("バックアップ実行でパニック: %v", r)
+				}
+				sendBackupResult(w, cmd.Plugin, cmd.RequestID, "error", 0, 0, fmt.Sprintf("plugin panic: %v", r), lg)
+			}
+		}()
 		start := time.Now()
 		err := runner.RunBackup(ctx)
 		duration := time.Since(start).Milliseconds()

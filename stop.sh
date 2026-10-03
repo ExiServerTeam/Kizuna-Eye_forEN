@@ -25,6 +25,8 @@ resolve_run_dir() {
 RUN_DIR="$(resolve_run_dir)"
 
 # stop_one <binary-name>
+# 停止した場合は何も出力しない（呼び出し側でまとめて表示する）。
+# 戻り値: 0 = 停止した, 1 = 起動していなかった。
 stop_one() {
     local name="$1"
     local pidfile="$RUN_DIR/$name.pid"
@@ -42,7 +44,6 @@ stop_one() {
                 sleep 0.2
             done
             kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-            echo "🛑 $name 停止 (PID: $pid)"
             stopped=1
         fi
         rm -f "$pidfile"
@@ -60,7 +61,12 @@ stop_one() {
         for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
             [ "$pid" = "$self" ] && continue
             [ "$pid" = "$ppid" ] && continue
-            exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+            exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+            # 起動中にバイナリが再ビルド（上書き）されると /proc/PID/exe は
+            # "/path/to/bin (deleted)" を指す。サフィックスを除去しないと
+            # target と一致せず停止できない（verify.sh と同じ修正）。
+            exe="${exe% (deleted)}"
+            [ -n "$exe" ] || continue
             [ "$exe" = "$target" ] || continue
             kill "$pid" 2>/dev/null
             local i
@@ -69,15 +75,22 @@ stop_one() {
                 sleep 0.2
             done
             kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
-            echo "🛑 $name 停止 (PID: $pid)"
             stopped=1
         done
     fi
 
-    [ "$stopped" -eq 0 ] && echo "ℹ️  $name は起動していません"
-    return 0
+    [ "$stopped" -eq 1 ] && return 0
+    return 1
 }
 
-stop_one dashboard_linux
-stop_one agent_linux
+# 個別の出力はせず、まとめて1行で表示する。
+any_stopped=0
+stop_one dashboard_linux && any_stopped=1
+stop_one agent_linux && any_stopped=1
+
+if [ "$any_stopped" -eq 1 ]; then
+    echo "🛑 Kizuna-Eyeを停止しました。"
+else
+    echo "ℹ️  Kizuna-Eyeは起動していません。"
+fi
 exit 0

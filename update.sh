@@ -150,7 +150,8 @@ if [ "$DO_GIT" -eq 1 ]; then
 fi
 
 # ---- 5. 再ビルド ----
-VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+# Prefer the repo VERSION file (single source of truth), then the git tag.
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
