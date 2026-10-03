@@ -13,6 +13,7 @@
 # ようにする。
 # ============================================================
 set -u
+umask 077  # New files/dirs: 0600/0700 (secrets, pid, logs)
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
