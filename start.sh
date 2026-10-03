@@ -27,6 +27,23 @@ resolve_run_dir() {
 }
 RUN_DIR="$(resolve_run_dir)"
 
+# 設定・秘密・鍵の置き場。共有上（./）から共有外（移行後）へ切り替える。
+#   SMB 共有は force user=user で uid 1000 になるため chmod 600 では守れない。
+#   よって users.json（bcrypt）/ sessions.json / agent_token / chain.key は
+#   共有の外へ出す。判定は次の順で自動:
+#     1. KIZUNA_DATA_DIR が指定されていればそれを使う
+#     2. 移行先に dashboard_config.json があればそこを使う
+#     3. どちらも無ければ従来どおり ./（共有上）
+#   ロールバックは共有へ設定を戻すだけでよい（自動で ./ に戻る）。
+DATA_DIR="${KIZUNA_DATA_DIR:-}"
+if [ -z "$DATA_DIR" ]; then
+    if [ -f "$HOME/.kizuna-eye/data/dashboard_config.json" ]; then
+        DATA_DIR="$HOME/.kizuna-eye/data"
+    else
+        DATA_DIR="$PWD"
+    fi
+fi
+
 for bin in dashboard_linux agent_linux; do
     if [ ! -x "$BIN_DIR/$bin" ]; then
         echo "❌ $BIN_DIR/$bin が見つかりません。./build.sh を実行してください。"
@@ -53,16 +70,17 @@ is_running() {
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
 }
 
-# start_one <binary-name> <config> <logfile>
+# start_one <binary-name> <config> <logfile> [extra args...]
 # 起動した場合は 0、既に起動中だった場合は 1 を返す。
 # 個別の出力はせず、呼び出し側でまとめて表示する。
 start_one() {
     local name="$1" cfg="$2" log="$3"
+    shift 3
     if is_running "$name"; then
         return 1
     fi
     # nohup: SSH セッション終了時の SIGHUP を無視。stdin を /dev/null に。
-    nohup "$BIN_DIR/$name" -config "$cfg" >> "$log" 2>&1 < /dev/null &
+    nohup "$BIN_DIR/$name" -config "$cfg" "$@" >> "$log" 2>&1 < /dev/null &
     local pid=$!
     echo "$pid" > "$RUN_DIR/$name.pid"
     disown 2>/dev/null || true
@@ -71,9 +89,9 @@ start_one() {
 
 new_started=0
 already_running=0
-start_one dashboard_linux dashboard_config.json logs/dashboard.log && new_started=1 || already_running=1
+start_one dashboard_linux "$DATA_DIR/dashboard_config.json" logs/dashboard.log && new_started=1 || already_running=1
 sleep 1
-start_one agent_linux agent_config.json logs/agent.log && new_started=1 || already_running=1
+start_one agent_linux "$DATA_DIR/agent_config.json" logs/agent.log -modules "$DATA_DIR/modules.json" && new_started=1 || already_running=1
 
 echo ""
 if [ "$new_started" -eq 1 ]; then
