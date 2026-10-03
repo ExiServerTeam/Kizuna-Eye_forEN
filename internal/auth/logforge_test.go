@@ -3,13 +3,16 @@ package auth
 import (
 	"strings"
 	"testing"
+
+	"Kizuna-Eye/pkg/logsafe"
 )
 
-// TestSanitizeLogFieldNeutralisesForging pins the log-forging defence: a
+// TestSharedLogsafeFieldNeutralisesForging pins the log-forging defence: a
 // username containing a newline / control character and a fake level tag must
 // not produce a line break or an unescaped "[INFO]"/"[WARN]" marker in the
-// log.
-func TestSanitizeLogFieldNeutralisesForging(t *testing.T) {
+// log. The helper moved to pkg/logsafe (L-11); this keeps the auth-side
+// regression test next to its call site.
+func TestSharedLogsafeFieldNeutralisesForging(t *testing.T) {
 	cases := []struct {
 		name string
 		in   string
@@ -22,7 +25,7 @@ func TestSanitizeLogFieldNeutralisesForging(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := sanitizeLogField(tc.in)
+			got := logsafe.Field(tc.in)
 
 			// 1) No raw CR/LF/tab/NUL/ESC may survive.
 			for _, bad := range []string{"\n", "\r", "\t", "\x00", "\x1b"} {
@@ -41,11 +44,11 @@ func TestSanitizeLogFieldNeutralisesForging(t *testing.T) {
 	}
 }
 
-func TestSanitizeLogFieldKeepsNormalText(t *testing.T) {
-	if got := sanitizeLogField("shige"); got != "shige" {
+func TestSharedLogsafeFieldKeepsNormalText(t *testing.T) {
+	if got := logsafe.Field("shige"); got != "shige" {
 		t.Errorf("got %q, want shige", got)
 	}
-	if got := sanitizeLogField(""); got != "" {
+	if got := logsafe.Field(""); got != "" {
 		t.Errorf("empty input should stay empty, got %q", got)
 	}
 }

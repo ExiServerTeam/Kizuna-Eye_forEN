@@ -24,6 +24,7 @@ import (
 	"Kizuna-Eye/pkg/alert"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/logger"
+	"Kizuna-Eye/pkg/logsafe"
 	"Kizuna-Eye/pkg/notify"
 	"Kizuna-Eye/pkg/status"
 )
@@ -78,28 +79,10 @@ func eligibleForHeuristicPromotion(agentToken string, isAgentRole bool, origin s
 	return agentToken == "" && isAgentRole && origin == ""
 }
 
-// sanitizeLogField strips control characters (CR, LF, tab and other C0/C1
-// controls) from an untrusted value before it is written to a log. Plugin
-// events carry attacker-influenced text (log lines parsed from auth.log);
-// without this a crafted value could inject forged log lines.
-func sanitizeLogField(s string) string {
-	if s == "" {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		switch {
-		case r == '\n' || r == '\r' || r == '\t':
-			b.WriteByte(' ')
-		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
-			// Drop other control characters (NUL, ESC, ANSI introducers, ...).
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+// Untrusted plugin text written to the log is neutralised with logsafe.Field
+// (shared with internal/auth). The local copy replaced tabs/newlines with a
+// space and left brackets alone, so a crafted event could still forge a
+// "[WARN]" marker in dashboard.log (audit L-11).
 
 // writeDashboardJSON writes JSON with a Content-Type header.
 // Cache-Control: no-store keeps sensitive API responses (log lines with
@@ -174,7 +157,7 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 	}, "agent", false) // agent-reported: derived from a forgeable log line
 
 	if lg != nil {
-		lg.Info("セキュリティアラート: [%s] %s", sanitizeLogField(env.Level), sanitizeLogField(env.Title))
+		lg.Info("セキュリティアラート: [%s] %s", logsafe.Field(env.Level), logsafe.Field(env.Title))
 	}
 }
 

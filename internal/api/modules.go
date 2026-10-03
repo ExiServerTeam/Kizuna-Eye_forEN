@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // ErrModuleNotFound is returned when a module name does not exist, so
@@ -99,29 +101,10 @@ func (s *ModulesStorage) saveLocked() error {
 		mode = info.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, s.path)
+	// fsutil.WriteFileAtomic: 一時ファイルに mode を適用し fsync してから
+	// rename する（L-12: 同じ処理が10箇所に重複していた）。上のディレクトリ
+	// 作成 (0700) はそのまま残している（fsutil も作成するが冪等）。
+	return fsutil.WriteFileAtomic(s.path, data, mode)
 }
 
 // GetAll returns all module configs.

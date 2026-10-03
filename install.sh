@@ -252,6 +252,49 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     fi
 fi
 
+# ---- 7b. cron 読み取りヘルパーの導入（Medium-9） ----
+# cron の変更検知は root しか読めない /var/spool/cron/crontabs を読む必要が
+# ある。プラグインは `sudo -n /usr/local/bin/kizuna-cron-read.sh` を実行し、
+# sudoers はその 1 コマンドだけに NOPASSWD を与える（引数なしのみ許可）。
+# 以前はこの導入が install.sh に無く、再構築すると手動配置に依存して静かに
+# cron 検知が縮退していた。
+CRON_HELPER_SRC="scripts/kizuna-cron-read.sh"
+CRON_HELPER_DST="/usr/local/bin/kizuna-cron-read.sh"
+if [ "$SETUP_SUDOERS" -eq 1 ]; then
+    log ""
+    log "▶ cron 読み取りヘルパーの導入"
+    CRON_USER="${SUDO_USER:-$(id -un)}"
+    CRON_SUDOERS="/etc/sudoers.d/kizuna-security-cron"
+    if [ -z "$SUDO" ]; then
+        warn "sudo が使えないため cron ヘルパーの導入をスキップします。手動で:"
+        warn "  sudo install -m 0755 -o root -g root $CRON_HELPER_SRC $CRON_HELPER_DST"
+        warn "  echo '$CRON_USER ALL=(root) NOPASSWD: $CRON_HELPER_DST \"\"' | sudo tee $CRON_SUDOERS"
+    elif [ ! -f "$CRON_HELPER_SRC" ]; then
+        warn "cron ヘルパーが見つかりません: $CRON_HELPER_SRC"
+    elif [ ! -d /etc/sudoers.d ]; then
+        warn "/etc/sudoers.d がありません。手動で cron 用 sudoers を設定してください。"
+    else
+        if $SUDO install -m 0755 -o root -g root "$CRON_HELPER_SRC" "$CRON_HELPER_DST"; then
+            ok "cron ヘルパー: $CRON_HELPER_DST"
+        else
+            warn "cron ヘルパーの設置に失敗しました: $CRON_HELPER_DST"
+        fi
+        CRON_TMP="$(mktemp)"
+        # 末尾の "" は「引数なしの実行だけを許可する」指定。引数付きの実行を
+        # 許すと、sudo 経由で任意パスの読み取りに使われ得る。
+        printf '%s ALL=(root) NOPASSWD: %s ""\n' "$CRON_USER" "$CRON_HELPER_DST" > "$CRON_TMP"
+        if $SUDO install -m 0440 -o root -g root "$CRON_TMP" "$CRON_SUDOERS" 2>/dev/null \
+           && $SUDO visudo -cf "$CRON_SUDOERS" >/dev/null 2>&1; then
+            ok "sudoers 設定: $CRON_SUDOERS (user=$CRON_USER, 引数なしのみ)"
+        else
+            warn "sudoers 設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:"
+            warn "  echo '$CRON_USER ALL=(root) NOPASSWD: $CRON_HELPER_DST \"\"' | sudo tee $CRON_SUDOERS"
+            warn "  sudo chmod 0440 $CRON_SUDOERS"
+        fi
+        rm -f "$CRON_TMP"
+    fi
+fi
+
 # ---- 8. systemd 組み込み（任意） ----
 # start.sh/stop.sh は PID ファイルでプロセスを管理する自己完結型なので、
 # systemd を使わなくても動作する。--systemd を付けたときだけ unit を導入。

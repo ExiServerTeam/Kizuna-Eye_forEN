@@ -10,6 +10,7 @@ import (
 
 	"Kizuna-Eye/pkg/alert"
 	"Kizuna-Eye/pkg/config"
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // AlertConfigProvider is implemented by the alert engine.
@@ -188,29 +189,9 @@ func (h *AlertConfigHandler) persistConfig() error {
 		mode = info.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(h.configPath)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, h.configPath)
+	// fsutil.WriteFileAtomic: シンボリックリンクを拒否し、mode を適用してから
+	// fsync + rename する（L-12: 同じ処理が12箇所に重複していた）。
+	return fsutil.WriteFileAtomic(h.configPath, data, mode)
 }
 
 func validatePct(name string, v float64) error {

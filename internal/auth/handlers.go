@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"Kizuna-Eye/pkg/logsafe"
 )
 
 // CookieName is the session cookie name.
@@ -19,48 +21,9 @@ type Logger interface {
 	Error(format string, args ...interface{})
 }
 
-// sanitizeLogField neutralises untrusted text before it is written to a log.
-//
-// Two classes of injection are handled:
-//
-//  1. Line breaking / control characters. CR, LF and other C0/C1 controls
-//     (NUL, ESC, ANSI introducers, ...) are DROPPED, not replaced with a
-//     space. Replacing them with a space still leaves a readable forged
-//     fragment such as "user=a [INFO] FORGED from=...", which a log parser
-//     can mistake for a real entry.
-//
-//  2. Log-parser metacharacters. Brackets are the marker a parser (and a
-//     human) uses to spot a level tag ([INFO], [WARN], ...). They are escaped
-//     with a backslash so an injected "[INFO] FORGED" can never look like a
-//     real log level.
-//
-// The value is only used for logging; authentication still uses the raw input.
-func sanitizeLogField(s string) string {
-	if s == "" {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 8)
-	for _, r := range s {
-		switch {
-		case r == '\n' || r == '\r' || r == '\t':
-			// Drop the character entirely: a space would still separate a
-			// forged "[INFO]" tag from the surrounding text.
-			continue
-		case r < 0x20 || (r >= 0x7f && r <= 0x9f):
-			// Drop other control characters (NUL, ESC, ANSI introducers, ...).
-			continue
-		case r == '[' || r == ']':
-			// Escape the bracket so an injected "[INFO]"/"[WARN]" tag cannot
-			// be read as a real log level by a parser or by a human.
-			b.WriteByte('\\')
-			b.WriteRune(r)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+// (sanitizeLogField moved to Kizuna-Eye/pkg/logsafe: the auth handler and the
+// dashboard kept two copies that had drifted apart, so a crafted plugin event
+// could still forge a level tag in dashboard.log. See logsafe.Field.)
 
 // Handler serves the auth API and login/setup pages.
 type Handler struct {
@@ -336,7 +299,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			h.limiter.RecordFailure(ip)
 		}
 		if h.logger != nil {
-			h.logger.Warn("ログイン失敗: user=%s from=%s", sanitizeLogField(body.Username), ip)
+			h.logger.Warn("ログイン失敗: user=%s from=%s", logsafe.Field(body.Username), ip)
 		}
 		writeError(w, http.StatusUnauthorized, "ユーザー名またはパスワードが違います")
 		return
@@ -358,7 +321,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.setCookie(w, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
-		h.logger.Info("ログイン成功: user=%s role=%s from=%s", sanitizeLogField(u.Username), u.Role, r.RemoteAddr)
+		h.logger.Info("ログイン成功: user=%s role=%s from=%s", logsafe.Field(u.Username), u.Role, r.RemoteAddr)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"username": u.Username,

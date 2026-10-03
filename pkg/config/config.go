@@ -252,6 +252,41 @@ func (c *DashboardConfig) EnsurePluginsDir() (string, error) {
 	return dir, nil
 }
 
+// absFromConfigDir resolves a relative path against the directory of the
+// config file it was read from (Medium-10). Absolute values are returned as-is
+// and empty values stay empty, so the documented defaults (users.json /
+// sessions.json next to the config, ./web/static, plugins/ next to the binary)
+// keep working.
+func absFromConfigDir(configDir, v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || configDir == "" || filepath.IsAbs(v) {
+		return v
+	}
+	return filepath.Join(configDir, v)
+}
+
+// resolvePaths anchors the agent's relative paths at the config directory.
+//
+// Before this, a relative "logs/agent.log" was resolved against the process
+// working directory: start.sh cd's into the repository so it worked, but
+// systemd, a cron job, or a -config path elsewhere silently wrote the log (and
+// looked for plugins) somewhere else.
+func (c *AgentConfig) resolvePaths(configDir string) {
+	c.LogFile = absFromConfigDir(configDir, c.LogFile)
+	c.PluginsDir = absFromConfigDir(configDir, c.PluginsDir)
+}
+
+// resolvePaths anchors the dashboard's relative data paths at the config
+// directory. Alert history and logs are data, so they must not depend on where
+// the process was started from (a restart from another cwd made the history
+// look empty). static_dir is intentionally NOT resolved here: the static UI is
+// shipped in the repository (./web/static), not next to the config file.
+func (c *DashboardConfig) resolvePaths(configDir string) {
+	c.LogFile = absFromConfigDir(configDir, c.LogFile)
+	c.AlertHistoryFile = absFromConfigDir(configDir, c.AlertHistoryFile)
+	c.PluginsDir = absFromConfigDir(configDir, c.PluginsDir)
+}
+
 // LoadAgentConfig reads the agent config file.
 func LoadAgentConfig(path string) (*AgentConfig, error) {
 	cfg := &AgentConfig{
@@ -280,6 +315,10 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	// load so a file created world-readable is not left exposed.
 	// Best-effort: ignore failure on filesystems that do not honour chmod.
 	_ = os.Chmod(path, 0600)
+
+	// Anchor relative paths (log_file, plugins_dir) at the config file's
+	// directory instead of the process working directory (Medium-10).
+	cfg.resolvePaths(filepath.Dir(path))
 
 	if err := validateAgentConfig(cfg); err != nil {
 		return nil, err
@@ -333,6 +372,12 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 	_ = os.Chmod(path, 0600)
 
 	applyNotificationDefaults(&cfg.Notifications)
+
+	// Anchor relative data paths (log_file, alert_history_file, plugins_dir) at
+	// the config file's directory instead of the process working directory
+	// (Medium-10). static_dir is intentionally left alone: the UI is shipped in
+	// the repository as ./web/static, not next to dashboard_config.json.
+	cfg.resolvePaths(filepath.Dir(path))
 
 	if err := validateDashboardConfig(cfg); err != nil {
 		return nil, err
