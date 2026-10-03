@@ -243,7 +243,47 @@ grep -c 'truncated or rolled back' logs/kizuna-security.log             # 0 が�
   `mv logs/kizuna-security-logstate.json logs/kizuna-security-logstate.json.legacy-<ts>`（推奨）または
   `rm logs/kizuna-security-logstate.json`（次回チェックで `{"lines":<現在行数>}` を再作成）。
 
-### 3-6 実施記録（移行後の再ローテーション）
+### 3-6 実施記録（移行後の再ローテーション: 2026-10-03 18:03）
+
+| 項目 | 値 |
+|---|---|
+| 旧鍵 sha256 | `21def4e5230c901f02b8c458b24dbaf3acecbe84526b1439d9bb8bfed3ecf8f7`（17:52 に共有上で生成した鍵） |
+| 新鍵 sha256 | `99977bba9997eeb64089bae6644fbbb8e1d75f4d25a7bdc0003511967d5e2f6f` |
+| 旧鍵の退避先 | `~/.kizuna-eye/keys/retired/chain.key.20261003_180305`（600・32B） |
+| 記録 | `~/.kizuna-eye/keys/OLD-key.sha256` / `NEW-key.sha256`（600） |
+| 旧チェーン | `logs/kizuna-security.log.legacy-20261003_180307`（10,625 B、17:56〜18:03 区間） |
+| 行数アンカー | `logs/kizuna-security-logstate.json.legacy-20261003_180307`（`{"lines":22}`、**修正版が自動退避**） |
+| FIM | 想定どおり critical 1 件（`FIM: ベースライン署名の検証に失敗`）→ 自動で再ベースライン |
+| 誤検知 | `truncated or rolled back` **0 件**（§3-5 の修正が本番で有効なことを実証） |
+| 配備 | 修正版 `kizuna_security.so`（9,122,856 B, 18:03）を `/opt/kizuna-eye/bin/plugins/` へ配備 |
+| 退避前の .so | `/tmp/kizuna_security.so.prefix-20261003_180300`（9,117,576 B、切り戻し用） |
+
+手順（実際に使ったコマンド列）:
+
+```bash
+cd /samba/share/Kizuna-Eye
+cp -p /opt/kizuna-eye/bin/plugins/kizuna_security.so /tmp/kizuna_security.so.prefix-$(date +%Y%m%d_%H%M%S)
+./stop.sh
+(cd plugins/Kizuna-Security/plugin && bash build.sh)   # ビルド + /opt/.../plugins へ配備
+KEY="$HOME/.kizuna-eye/data/keys/chain.key"
+install -d -m 700 "$HOME/.kizuna-eye/keys/retired"
+cp -p "$KEY" "$HOME/.kizuna-eye/keys/retired/chain.key.$(date +%Y%m%d_%H%M%S)"
+sha256sum "$KEY" > "$HOME/.kizuna-eye/keys/OLD-key.sha256"
+umask 077; head -c 32 /dev/urandom > "$KEY"; chmod 600 "$KEY"
+sha256sum "$KEY" > "$HOME/.kizuna-eye/keys/NEW-key.sha256"
+./start.sh
+```
+
+---
+
+## 5. 既知の誤検知（未修正・頻度低）
+
+| 事象 | 条件 | 影響 | 推奨対応 |
+|---|---|---|---|
+| `アラート履歴 ... file modified in place (same line count, different hash)` の critical | ダッシュボードの履歴圧縮（`pkg/alert` `NewHistory(200)`）が同一 4 分窓で「追記 + 切り詰め」を行い、行数が変わらないとき | 誤 critical（実測: 2026-10-03 03:14〜18:03 の 14.5 時間で 1 件。アラート多発時は増える） | `checkAlertHistory` に最終行ハッシュを保存し、「最終行が変わっていれば追記 + 圧縮」と判断して warning へ落とす（中間行の書換のみ critical 維持） |
+
+`chain_quarantined`（退避）と FIM 署名不一致は**鍵ローテーション時の想定内**で、それぞれ 1 件ずつ出る
+（§3-3）。「line count decreased」の連発は §3-5 で修正済み。
 
 
 ---
