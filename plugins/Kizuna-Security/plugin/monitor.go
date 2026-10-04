@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -23,6 +24,15 @@ const (
 	maxLoginTrackers = 10000
 	maxWatchFileSize = 512 * 1024 * 1024
 	maxLinesPerScan  = 100000
+)
+
+const (
+	// failureDedupWindow is the grace period in which repeated auth lines for
+	// the same user@source (e.g. "Invalid user" followed by "Failed password")
+	// are treated as one attempt.
+	failureDedupWindow = 3 * time.Second
+	// maxUsernamesInMessage caps how many usernames an enumeration alert lists.
+	maxUsernamesInMessage = 5
 )
 
 var (
@@ -75,17 +85,36 @@ type Monitor struct {
 }
 
 type failTracker struct {
-	count            int
 	first            time.Time
 	notifiedCritical bool
 	lastKey          string
 	lastSeen         time.Time
+
+	// recent / sustained hold failure timestamps. The first implementation
+	// compared only against tr.first ("within BurstWindow of the first
+	// failure"), so a rapid burst that followed a stale probe was discarded
+	// when the window reset, and even a steady ~1 attempt per 12s pace (5 per
+	// 60s average) never escalated. Counting the last BurstWindow / the longer
+	// sustained window fixes both (docs/session_hardening_a1_a4_20261003.md,
+	// attack A-4 "SSH 失敗連続").
+	recent    []time.Time
+	sustained []time.Time
+	// users remembers when each username was first seen from this source.
+	// Rotating usernames keeps the per-attempt rate below FailedBurst, so the
+	// number of distinct names is a separate signal (username enumeration).
+	users map[string]time.Time
 }
 
 type loginTracker struct {
-	first    time.Time
-	count    int
-	notified bool
+	first time.Time
+	count int
+	// lastNotifiedAt / lastNotifiedCount rate limit the "success burst" alert
+	// per source (audit finding F-6): the operator's own SSH sessions (one per
+	// tool call) reach the threshold every window and re-fired the same
+	// critical, drowning the failure signal. A repeat is only sent after the
+	// cool-down AND when the count at least doubles.
+	lastNotifiedAt    time.Time
+	lastNotifiedCount int
 }
 
 type loginState struct {
@@ -387,20 +416,36 @@ func (m *Monitor) checkLoginAnomaly(user, ip string, now time.Time) {
 		m.loginKnownIPs[ip] = true
 	}
 
+	window := time.Duration(m.cfg.SSHLoginWindow) * time.Second
+	burst := m.cfg.SSHLoginBurst
+	if burst < 1 {
+		burst = 10
+	}
 	tr, ok := m.loginCounts[ip]
-	if !ok || now.Sub(tr.first) > time.Duration(m.cfg.SSHLoginWindow)*time.Second {
+	if !ok {
 		tr = &loginTracker{first: now}
 		if len(m.loginCounts) >= maxLoginTrackers {
 			m.evictOldestLoginTrackerLocked(now)
 		}
 		m.loginCounts[ip] = tr
+	} else if window > 0 && now.Sub(tr.first) > window {
+		// 窓をまたいだら回数だけリセットする。通知履歴（lastNotified*）は
+		// 冷却・倍増判定のために残す。
+		tr.first = now
+		tr.count = 0
 	}
 	tr.count++
 	count := tr.count
+
 	notifyBurst := false
-	if count >= m.cfg.SSHLoginBurst && !tr.notified {
-		notifyBurst = true
-		tr.notified = true
+	if count >= burst && count > tr.lastNotifiedCount {
+		cooled := tr.lastNotifiedAt.IsZero() || window <= 0 || now.Sub(tr.lastNotifiedAt) >= window
+		doubled := tr.lastNotifiedCount == 0 || count >= 2*tr.lastNotifiedCount
+		if cooled && doubled {
+			notifyBurst = true
+			tr.lastNotifiedAt = now
+			tr.lastNotifiedCount = count
+		}
 	}
 	m.mu.Unlock()
 
@@ -416,11 +461,17 @@ func (m *Monitor) checkLoginAnomaly(user, ip string, now time.Time) {
 		})
 	}
 	if notifyBurst {
+		body := m.tr("ssh_login.burst.msg", ip, count)
+		if !isNew {
+			// 既知 IP（運用端末・監視ツール）からの反復接続でも同じ急増が起きる
+			// ことを伝え、本物の失敗と取り違えられないようにする。
+			body += m.tr("ssh_login.burst.known.note")
+		}
 		m.emit(module.SecurityEvent{
 			Category:  "ssh_login",
 			Level:     "critical",
 			Title:     m.tr("ssh_login.burst.title"),
-			Message:   m.tr("ssh_login.burst.msg", ip, count),
+			Message:   body,
 			Actor:     user,
 			IP:        ip,
 			Timestamp: now,
@@ -496,33 +547,98 @@ func (m *Monitor) saveLoginState() {
 	_ = fsutil.WriteFileAtomic(m.loginBaselinePath, data, 0600)
 }
 
+// emitSSHFailure records one failed login attempt and escalates to critical when
+// the source crosses one of three thresholds:
+//
+//  1. burst      : FailedBurst attempts within BurstWindow (sliding),
+//  2. sustained  : SSHFailedSustainedBurst attempts within the longer
+//     SSHFailedSustainedWindow (low-and-slow brute force),
+//  3. enumeration: SSHEnumDistinctUsers distinct usernames within SSHEnumWindow
+//     (a rotating username list keeps the per-attempt rate low).
+//
+// Before 2026-10-04 the count was kept against the first attempt only, so a
+// pacing that put the 5th attempt after BurstWindow (e.g. attack A-4's ~20-80s
+// intervals) never escalated. At most one escalation is sent per source until
+// it has been quiet for the sustained window, so a long campaign cannot spam.
 func (m *Monitor) emitSSHFailure(path, user, ip string, now time.Time) {
 	key := user + "@" + ip
 
+	burst := m.cfg.FailedBurst
+	if burst < 1 {
+		burst = 5
+	}
+	burstWindow := time.Duration(m.cfg.BurstWindow) * time.Second
+	if burstWindow <= 0 {
+		burstWindow = 60 * time.Second
+	}
+	sustainedLimit := m.cfg.SSHFailedSustainedBurst
+	if sustainedLimit < 1 {
+		sustainedLimit = 15
+	}
+	sustainedWindow := time.Duration(m.cfg.SSHFailedSustainedWindow) * time.Second
+	if sustainedWindow < burstWindow {
+		sustainedWindow = burstWindow
+	}
+	enumLimit := m.cfg.SSHEnumDistinctUsers
+	if enumLimit < 2 {
+		enumLimit = 5
+	}
+	enumWindow := time.Duration(m.cfg.SSHEnumWindow) * time.Second
+	if enumWindow <= 0 {
+		enumWindow = 300 * time.Second
+	}
+
 	m.mu.Lock()
 	tr, ok := m.failCounts[ip]
-	if !ok || now.Sub(tr.first) > time.Duration(m.cfg.BurstWindow)*time.Second {
-		tr = &failTracker{first: now}
+	if !ok {
+		tr = &failTracker{first: now, users: make(map[string]time.Time)}
 		if len(m.failCounts) >= maxFailTrackers {
 			m.evictOldestFailTrackerLocked(now)
 		}
 		m.failCounts[ip] = tr
 	}
 
-	if tr.lastKey == key && now.Sub(tr.lastSeen) <= 3*time.Second {
+	// 1回の試行が複数行（"Invalid user" と "Failed password" など）を残しても
+	// 二重に数えない。
+	if tr.lastKey == key && now.Sub(tr.lastSeen) <= failureDedupWindow {
 		m.mu.Unlock()
 		return
 	}
+	// 静穏期間の後の失敗は新しい攻撃とみなし、エスカレーションを再武装する。
+	if !tr.lastSeen.IsZero() && now.Sub(tr.lastSeen) > sustainedWindow {
+		tr.notifiedCritical = false
+	}
 	tr.lastKey = key
 	tr.lastSeen = now
-	tr.count++
-	count := tr.count
 
-	notifyCritical := false
-	if count >= m.cfg.FailedBurst && !tr.notifiedCritical {
-		notifyCritical = true
+	tr.recent = appendFailureTime(tr.recent, now, burstWindow, burst)
+	tr.sustained = appendFailureTime(tr.sustained, now, sustainedWindow, sustainedLimit)
+	if _, seen := tr.users[user]; !seen {
+		if len(tr.users) >= enumLimit {
+			evictOldestUser(tr.users)
+		}
+		tr.users[user] = now
+	}
+	pruneUsers(tr.users, now, enumWindow)
+
+	shortCount := len(tr.recent)
+	sustainedCount := len(tr.sustained)
+	distinct := len(tr.users)
+
+	notifyCritical, rule, count := false, "", 0
+	switch {
+	case shortCount >= burst && !tr.notifiedCritical:
+		notifyCritical, rule, count = true, "burst", shortCount
+	case !tr.notifiedCritical && sustainedCount >= sustainedLimit:
+		notifyCritical, rule, count = true, "sustained", sustainedCount
+	case !tr.notifiedCritical && distinct >= enumLimit:
+		notifyCritical, rule, count = true, "enum", distinct
+	}
+	if notifyCritical {
 		tr.notifiedCritical = true
 	}
+	names := sortedUserNames(tr.users, maxUsernamesInMessage)
+	loopback := isLoopbackIP(ip)
 	m.mu.Unlock()
 
 	if notifyCritical && m.onBlockCandidate != nil {
@@ -531,11 +647,25 @@ func (m *Monitor) emitSSHFailure(path, user, ip string, now time.Time) {
 
 	level := "warning"
 	title := m.tr("ssh_failed.title")
-	body := m.tr("ssh_failed.msg", user)
+	body := m.tr("ssh_failed.msg", safeLogValue(user, 64))
 	if notifyCritical {
 		level = "critical"
-		title = m.tr("ssh_failed.burst.title")
-		body = m.tr("ssh_failed.burst.msg", ip, count)
+		switch rule {
+		case "sustained":
+			title = m.tr("ssh_failed.sustained.title")
+			body = m.tr("ssh_failed.sustained.msg", ip, int(sustainedWindow.Seconds()), count)
+		case "enum":
+			title = m.tr("ssh_failed.enum.title")
+			body = m.tr("ssh_failed.enum.msg", ip, count, strings.Join(names, ", "))
+		default:
+			title = m.tr("ssh_failed.burst.title")
+			body = m.tr("ssh_failed.burst.msg", ip, count)
+		}
+	}
+	if loopback {
+		// ループバック経由の失敗は「ホスト上の誰か」または「127.0.0.1 への
+		// トンネル」であり、接続元 IP では攻撃元を特定できない。
+		body += m.tr("ssh_failed.loopback.note")
 	}
 
 	m.emit(module.SecurityEvent{
@@ -573,6 +703,93 @@ func (m *Monitor) evictOldestFailTrackerLocked(now time.Time) {
 	if oldestIP != "" {
 		delete(m.failCounts, oldestIP)
 	}
+}
+
+// appendFailureTime appends now to ts, drops entries outside window and keeps at
+// most keep entries. keep can be the threshold itself: once the threshold is
+// reached the decision is made, so counting further adds nothing. That bounds
+// the memory per source even if maxFailTrackers sources are hostile.
+func appendFailureTime(ts []time.Time, now time.Time, window time.Duration, keep int) []time.Time {
+	if keep < 1 {
+		keep = 1
+	}
+	cut := now.Add(-window)
+	drop := 0
+	for drop < len(ts) && !ts[drop].After(cut) {
+		drop++
+	}
+	if drop > 0 {
+		ts = append(ts[:0], ts[drop:]...)
+	}
+	ts = append(ts, now)
+	if len(ts) > keep {
+		ts = append(ts[:0], ts[len(ts)-keep:]...)
+	}
+	return ts
+}
+
+// pruneUsers drops usernames whose first sighting fell outside window.
+func pruneUsers(users map[string]time.Time, now time.Time, window time.Duration) {
+	cut := now.Add(-window)
+	for name, at := range users {
+		if !at.After(cut) {
+			delete(users, name)
+		}
+	}
+}
+
+// evictOldestUser drops the least recently seen username (memory bound).
+func evictOldestUser(users map[string]time.Time) {
+	var oldestName string
+	var oldest time.Time
+	first := true
+	for name, at := range users {
+		if first || at.Before(oldest) {
+			oldest, oldestName, first = at, name, false
+		}
+	}
+	if oldestName != "" {
+		delete(users, oldestName)
+	}
+}
+
+// sortedUserNames returns up to max usernames for a notification, sorted so the
+// message is stable between runs.
+func sortedUserNames(users map[string]time.Time, max int) []string {
+	names := make([]string, 0, len(users))
+	for name := range users {
+		names = append(names, safeLogValue(name, 64))
+	}
+	sort.Strings(names)
+	if len(names) > max {
+		names = names[:max]
+	}
+	return names
+}
+
+// safeLogValue strips control characters and truncates a value taken from the
+// log before it is put into a notification. Usernames are attacker-chosen, so
+// this keeps a crafted name from forging or bloating the alert.
+func safeLogValue(s string, max int) string {
+	clean := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			continue
+		}
+		clean = append(clean, r)
+	}
+	if max > 0 && len(clean) > max {
+		clean = append(clean[:max], '…')
+	}
+	return string(clean)
+}
+
+// isLoopbackIP reports whether ip is a loopback address. Failures from
+// 127.0.0.1 come from the host itself (or a tunnel to it), so the recorded
+// source IP cannot identify the attacker.
+func isLoopbackIP(ip string) bool {
+	parsed := net.ParseIP(ip)
+	return parsed != nil && parsed.IsLoopback()
 }
 
 func levelRank(level string) int {

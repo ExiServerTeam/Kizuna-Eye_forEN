@@ -76,12 +76,21 @@ type fimState struct {
 	Sig string `json:"sig,omitempty"`
 }
 
-// signFimState は Sig を除いた状態の署名を返す。json.Marshal はキーを
-// ソートするため正規形は決定的である。鍵があれば HMAC-SHA256、無ければ
-// SHA-256（チェーンの chainHashKeyed と同じ規則）。
+// signFimState は Sig を除いた状態の署名を返す（規則は signJSON と同じ）。
 func signFimState(key []byte, st fimState) string {
 	st.Sig = ""
-	b, err := json.Marshal(st)
+	return signJSON(key, st)
+}
+
+// signJSON は v を JSON へ直列化して署名する。json.Marshal はキーを
+// ソートするため正規形は決定的である。鍵があれば HMAC-SHA256、無ければ
+// SHA-256（チェーンの chainHashKeyed と同じ規則）。
+//
+// FIM 本体のベースラインとディレクトリ監視のベースラインが同じ規則で署名
+// するために共通化している。呼び出し側は Sig フィールドを空にしてから渡す
+// こと（自分自身の署名を対象に含めない）。
+func signJSON(key []byte, v interface{}) string {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return ""
 	}

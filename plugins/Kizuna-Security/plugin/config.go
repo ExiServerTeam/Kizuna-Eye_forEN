@@ -25,9 +25,43 @@ type SecurityConfig struct {
 	SSHLoginWindow       int    // 成功回数を数える時間枠（秒）
 	SSHLoginBaselinePath string // 既知IPの保存先（未知IP判定用）
 
+	// SSH ログイン失敗の検知強化（2026-10-04。攻撃 A-4「SSH 失敗連続」の回帰）。
+	//
+	// 失敗回数は「最初の失敗から BurstWindow 以内」ではなくスライディング窓で
+	// 数える。これだけでは 1〜2 分に1回の低頻度攻撃を捉えられないため、
+	// 長窓の総数（SSHFailedSustainedBurst / Window）と、ユーザー名を回しながら
+	// の列挙（SSHEnumDistinctUsers / Window）を別ルールの critical とする。
+	SSHFailedSustainedBurst  int // 長窓内の失敗回数がこれに達したら critical
+	SSHFailedSustainedWindow int // 失敗を数える長窓（秒）
+	SSHEnumDistinctUsers     int // 同一送信元が試した異なるユーザー名がこれに達したら critical
+	SSHEnumWindow            int // ユーザー名の種類を数える窓（秒）
+
 	// ファイル完全性監視 (FIM)
 	IntegrityFiles        []string // 改ざんを監視する重要ファイル
 	IntegrityBaselinePath string   // ベースラインの保存先
+
+	// FIM ディレクトリ監視（inotify。2026-10-04 の攻撃 A-5 の回帰）。
+	//
+	// IntegrityFiles は「絶対パスを列挙してハッシュ比較する」方式なので、
+	// 攻撃者が任意の名前でファイルを作る置き場（/tmp 等）は監視できない。
+	// 実機テストでは /tmp/kizuna-fim-test/watched.txt の作成→変更→削除が、
+	// FIM の走査が 2 回入っていたにもかかわらず 1 件も検知されなかった。
+	//
+	// FIMWatch を有効にすると FIMWatchPaths 配下を inotify で監視し、
+	// 作成・変更・削除（および走査前に消えた短命なファイル）を検知する。
+	// 検知の主経路はイベント駆動で、FIMWatchInterval は inotify が使えない
+	// 環境・通知を取りこぼした場合の再走査間隔。
+	//
+	// 既定は無効。ビジーな /tmp を丸ごと監視すると正規の一時ファイルでも
+	// critical が出るため、監視対象を絞って（または FIMWatchIgnore と併用して）
+	// 有効化する運用を想定している。
+	FIMWatch             bool
+	FIMWatchPaths        []string // 監視するディレクトリ
+	FIMWatchBaselinePath string   // ディレクトリ監視のベースライン
+	FIMWatchInterval     int      // フォールバック走査の間隔（秒）
+	FIMWatchMaxFiles     int      // 1回の走査でハッシュする最大ファイル数
+	FIMWatchMaxSizeKB    int      // これより大きいファイルはハッシュしない（KB）
+	FIMWatchIgnore       []string // 除外する glob（例: *.swp）
 
 	// 新規リッスンポート検知
 	ListenPortCheck        bool
@@ -41,6 +75,31 @@ type SecurityConfig struct {
 	// SUIDScanHour restricts the scan to a single hour of the day (0-23) so a
 	// low-power host is not loaded during business hours. -1 disables the window.
 	SUIDScanHour int
+
+	// SUIDFastCheck は「攻撃者が実際に置く場所」を短い間隔で走査する第二の
+	// SUID 監視を有効にする。
+	//
+	// 既定の SUIDPaths は /usr 以下のみで、しかも SUIDScanHour（既定3時）に
+	// 1時間間隔でしか動かない。そのため /tmp や /home に SUID バイナリを
+	// 置かれても、時間帯とパスの両方の条件で一度も検知できなかった。
+	// SUIDFastPaths は時間帯制限なし（scanHour=-1）で走査する。走査は
+	// エージェントのポーリング間隔（既定15秒）に縛られない専用ループで回す。
+	// ただし周期走査だけでは「走査と走査の間に作成〜削除が完結したファイル」を
+	// 原理的に見られないため、動きの速い置き場は SUIDWatch（inotify）で
+	// ディレクトリの変化を契機に即時走査する。SUIDFastScanInterval はその
+	// イベント駆動が使えないときのフォールバック周期でもある。
+	SUIDFastCheck        bool
+	SUIDFastPaths        []string
+	SUIDFastBaselinePath string
+	SUIDFastScanInterval int // 秒
+
+	// SUIDWatch は inotify によるイベント駆動の検知を有効にする。
+	// SUIDWatchPaths は「動きが速く、攻撃者が実際に SUID を置く」置き場だけを
+	// 指定する（/tmp 等）。/home のような巨大なツリーを丸ごと監視すると
+	// fs.inotify.max_user_watches（ホスト全体の予算）を食い潰すため、
+	// 監視はここに挙げたパスに限定し、それ以外は周期走査でカバーする。
+	SUIDWatch      bool
+	SUIDWatchPaths []string
 
 	// cron 変更検知
 	CronCheck        bool
@@ -83,6 +142,13 @@ func DefaultConfig() *SecurityConfig {
 		SSHLoginWindow:       300,
 		SSHLoginBaselinePath: "./logs/kizuna-security-logins.json",
 
+		// 短窓の burst を避けるために間隔を空けた低頻度攻撃（1〜2分に1回）は、
+		// 5/60秒では永久に検知できない。長窓の総数とユーザー名の種類で補う。
+		SSHFailedSustainedBurst:  15,
+		SSHFailedSustainedWindow: 600,
+		SSHEnumDistinctUsers:     5,
+		SSHEnumWindow:            300,
+
 		IntegrityFiles: []string{
 			"/etc/passwd",
 			"/etc/shadow",
@@ -96,6 +162,18 @@ func DefaultConfig() *SecurityConfig {
 		},
 		IntegrityBaselinePath: "./logs/kizuna-security-fim.json",
 
+		// ディレクトリ監視は既定で無効（FIMWatch=false）。有効化したときに
+		// 使う既定の対象は「攻撃者がものを置く置き場」だが、/tmp 全体は
+		// 正規の一時ファイルでも通知が出るため、運用では対象を絞るか
+		// fim_watch_ignore で除外することを想定している。
+		FIMWatch:             false,
+		FIMWatchPaths:        []string{"/tmp", "/var/tmp", "/dev/shm"},
+		FIMWatchBaselinePath: "./logs/kizuna-security-fim-dirs.json",
+		FIMWatchInterval:     10,
+		FIMWatchMaxFiles:     4096,
+		FIMWatchMaxSizeKB:    4096,
+		FIMWatchIgnore:       nil,
+
 		ListenPortCheck:        true,
 		ListenPortBaselinePath: "./logs/kizuna-security-ports.json",
 
@@ -104,6 +182,16 @@ func DefaultConfig() *SecurityConfig {
 		SUIDBaselinePath: "./logs/kizuna-security-suid.json",
 		SUIDScanInterval: 3600,
 		SUIDScanHour:     3,
+
+		// 攻撃者が実際に SUID/SGID バイナリを置く場所（書き込み可能・noexec で
+		// ない場所）を短い間隔で走査する。走査は nice/ionice で低優先度、
+		// 深さ制限つきなので数千ファイル程度なら 1 秒未満で終わる。
+		SUIDFastCheck:        true,
+		SUIDFastPaths:        []string{"/tmp", "/var/tmp", "/dev/shm", "/run", "/home", "/opt", "/srv"},
+		SUIDFastBaselinePath: "./logs/kizuna-security-suid-fast.json",
+		SUIDFastScanInterval: 10,
+		SUIDWatch:            true,
+		SUIDWatchPaths:       []string{"/tmp", "/var/tmp", "/dev/shm", "/run"},
 
 		CronCheck:        true,
 		CronPaths:        []string{"/etc/crontab", "/etc/cron.d", "/etc/cron.daily", "/etc/cron.hourly", "/etc/cron.weekly", "/etc/cron.monthly", "/var/spool/cron", "/var/spool/cron/crontabs"},
@@ -164,6 +252,18 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	if v, ok := raw["ssh_login_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
 		c.SSHLoginBaselinePath = v
 	}
+	if v, ok := raw["failed_sustained_burst"].(float64); ok {
+		c.SSHFailedSustainedBurst = int(v)
+	}
+	if v, ok := raw["failed_sustained_window_sec"].(float64); ok {
+		c.SSHFailedSustainedWindow = int(v)
+	}
+	if v, ok := raw["ssh_enum_distinct_users"].(float64); ok {
+		c.SSHEnumDistinctUsers = int(v)
+	}
+	if v, ok := raw["ssh_enum_window_sec"].(float64); ok {
+		c.SSHEnumWindow = int(v)
+	}
 
 	if v, ok := raw["integrity_files"].(string); ok {
 		c.IntegrityFiles = splitList(v)
@@ -173,6 +273,33 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	}
 	if v, ok := raw["integrity_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
 		c.IntegrityBaselinePath = v
+	}
+	if v, ok := toBool(raw["fim_watch"]); ok {
+		c.FIMWatch = v
+	}
+	if v, ok := raw["fim_watch_paths"].(string); ok {
+		c.FIMWatchPaths = splitList(v)
+	}
+	if v, ok := raw["fim_watch_paths"].([]interface{}); ok {
+		c.FIMWatchPaths = toStringList(v)
+	}
+	if v, ok := raw["fim_watch_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
+		c.FIMWatchBaselinePath = v
+	}
+	if v, ok := raw["fim_watch_interval_sec"].(float64); ok {
+		c.FIMWatchInterval = int(v)
+	}
+	if v, ok := raw["fim_watch_max_files"].(float64); ok {
+		c.FIMWatchMaxFiles = int(v)
+	}
+	if v, ok := raw["fim_watch_max_size_kb"].(float64); ok {
+		c.FIMWatchMaxSizeKB = int(v)
+	}
+	if v, ok := raw["fim_watch_ignore"].(string); ok {
+		c.FIMWatchIgnore = splitList(v)
+	}
+	if v, ok := raw["fim_watch_ignore"].([]interface{}); ok {
+		c.FIMWatchIgnore = toStringList(v)
 	}
 
 	if v, ok := toBool(raw["listen_port_check"]); ok {
@@ -199,6 +326,30 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	}
 	if v, ok := raw["suid_scan_hour"].(float64); ok {
 		c.SUIDScanHour = int(v)
+	}
+	if v, ok := toBool(raw["suid_fast_check"]); ok {
+		c.SUIDFastCheck = v
+	}
+	if v, ok := raw["suid_fast_paths"].(string); ok {
+		c.SUIDFastPaths = splitList(v)
+	}
+	if v, ok := raw["suid_fast_paths"].([]interface{}); ok {
+		c.SUIDFastPaths = toStringList(v)
+	}
+	if v, ok := raw["suid_fast_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
+		c.SUIDFastBaselinePath = v
+	}
+	if v, ok := raw["suid_fast_interval_sec"].(float64); ok {
+		c.SUIDFastScanInterval = int(v)
+	}
+	if v, ok := toBool(raw["suid_watch"]); ok {
+		c.SUIDWatch = v
+	}
+	if v, ok := raw["suid_watch_paths"].(string); ok {
+		c.SUIDWatchPaths = splitList(v)
+	}
+	if v, ok := raw["suid_watch_paths"].([]interface{}); ok {
+		c.SUIDWatchPaths = toStringList(v)
 	}
 
 	if v, ok := toBool(raw["cron_check"]); ok {
@@ -327,6 +478,32 @@ func (c *SecurityConfig) Validate() error {
 		c.SSHLoginWindow = 86400
 	}
 
+	if c.SSHFailedSustainedBurst < 1 {
+		c.SSHFailedSustainedBurst = 15
+	}
+	if c.SSHFailedSustainedBurst > 100000 {
+		c.SSHFailedSustainedBurst = 100000
+	}
+	// 短窓より狭い長窓は意味がないので、短窓以上へ持ち上げる。
+	if c.SSHFailedSustainedWindow < c.BurstWindow {
+		c.SSHFailedSustainedWindow = c.BurstWindow
+	}
+	if c.SSHFailedSustainedWindow > 86400 {
+		c.SSHFailedSustainedWindow = 86400
+	}
+	if c.SSHEnumDistinctUsers < 2 {
+		c.SSHEnumDistinctUsers = 5
+	}
+	if c.SSHEnumDistinctUsers > 100000 {
+		c.SSHEnumDistinctUsers = 100000
+	}
+	if c.SSHEnumWindow < 5 {
+		c.SSHEnumWindow = 300
+	}
+	if c.SSHEnumWindow > 86400 {
+		c.SSHEnumWindow = 86400
+	}
+
 	// 監視対象は絶対パスの .log ファイル（または RHEL 系の secure / messages）のみ許可する。
 	for i, wf := range c.WatchFiles {
 		if err := validateWatchPath(wf); err != nil {
@@ -355,6 +532,53 @@ func (c *SecurityConfig) Validate() error {
 		}
 	}
 
+	// FIM ディレクトリ監視。監視対象は絶対パスのディレクトリのみ許可する。
+	if len(c.FIMWatchPaths) == 0 {
+		c.FIMWatchPaths = []string{"/tmp", "/var/tmp", "/dev/shm"}
+	}
+	if len(c.FIMWatchPaths) > 64 {
+		return fmt.Errorf("fim_watch_paths は64件以内で指定してください: %d", len(c.FIMWatchPaths))
+	}
+	for i, p := range c.FIMWatchPaths {
+		if err := sanitizePath(p); err != nil {
+			return fmt.Errorf("fim_watch_paths[%d]: %w", i, err)
+		}
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("fim_watch_paths[%d]: 絶対パスで指定してください: %s", i, p)
+		}
+	}
+	if c.FIMWatchBaselinePath != "" {
+		if err := sanitizePath(c.FIMWatchBaselinePath); err != nil {
+			return fmt.Errorf("fim_watch_baseline_path: %w", err)
+		}
+	}
+	if c.FIMWatchInterval < 5 {
+		c.FIMWatchInterval = 10
+	}
+	if c.FIMWatchInterval > 3600 {
+		c.FIMWatchInterval = 3600
+	}
+	if c.FIMWatchMaxFiles < 16 {
+		c.FIMWatchMaxFiles = 4096
+	}
+	if c.FIMWatchMaxFiles > 1000000 {
+		c.FIMWatchMaxFiles = 1000000
+	}
+	if c.FIMWatchMaxSizeKB < 1 {
+		c.FIMWatchMaxSizeKB = 4096
+	}
+	if c.FIMWatchMaxSizeKB > 1048576 {
+		c.FIMWatchMaxSizeKB = 1048576
+	}
+	if len(c.FIMWatchIgnore) > 64 {
+		return fmt.Errorf("fim_watch_ignore は64件以内で指定してください: %d", len(c.FIMWatchIgnore))
+	}
+	for i, pat := range c.FIMWatchIgnore {
+		if err := sanitizePath(pat); err != nil {
+			return fmt.Errorf("fim_watch_ignore[%d]: %w", i, err)
+		}
+	}
+
 	if len(c.SUIDPaths) > 64 {
 		return fmt.Errorf("suid_paths は64件以内で指定してください: %d", len(c.SUIDPaths))
 	}
@@ -368,6 +592,32 @@ func (c *SecurityConfig) Validate() error {
 	}
 	if c.SUIDScanInterval > 86400 {
 		c.SUIDScanInterval = 86400
+	}
+	if len(c.SUIDFastPaths) > 64 {
+		return fmt.Errorf("suid_fast_paths は64件以内で指定してください: %d", len(c.SUIDFastPaths))
+	}
+	for i, p := range c.SUIDFastPaths {
+		if err := sanitizePath(p); err != nil {
+			return fmt.Errorf("suid_fast_paths[%d]: %w", i, err)
+		}
+	}
+	if c.SUIDFastScanInterval < 5 {
+		c.SUIDFastScanInterval = 10
+	}
+	if c.SUIDFastScanInterval > 3600 {
+		c.SUIDFastScanInterval = 3600
+	}
+	// inotify の監視対象。空なら既定（動きの速い置き場）へ戻す。
+	if len(c.SUIDWatchPaths) == 0 {
+		c.SUIDWatchPaths = []string{"/tmp", "/var/tmp", "/dev/shm", "/run"}
+	}
+	if len(c.SUIDWatchPaths) > 64 {
+		return fmt.Errorf("suid_watch_paths は64件以内で指定してください: %d", len(c.SUIDWatchPaths))
+	}
+	for i, p := range c.SUIDWatchPaths {
+		if err := sanitizePath(p); err != nil {
+			return fmt.Errorf("suid_watch_paths[%d]: %w", i, err)
+		}
 	}
 	if c.IntegrityCheckInterval < 30 {
 		c.IntegrityCheckInterval = 300

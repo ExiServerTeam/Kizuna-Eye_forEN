@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,6 +14,26 @@ import (
 )
 
 // ---- i18n ----
+
+// ja/en のキー集合が一致すること。片方だけ追加すると、もう片方の言語で
+// 日本語へフォールバックして気付きにくい（今回の ssh_failed.* 追加で実際に
+// 起こり得た）。
+func TestMessageCatalogParity(t *testing.T) {
+	ja, en := catalog["ja"], catalog["en"]
+	if len(ja) == 0 || len(en) == 0 {
+		t.Fatal("message catalog is empty")
+	}
+	for k := range ja {
+		if _, ok := en[k]; !ok {
+			t.Errorf("key %q exists in ja but not in en", k)
+		}
+	}
+	for k := range en {
+		if _, ok := ja[k]; !ok {
+			t.Errorf("key %q exists in en but not in ja", k)
+		}
+	}
+}
 
 func TestMessagesLocalized(t *testing.T) {
 	if got := msg("ja", "ssh_failed.burst.title"); got != "SSH ログイン失敗の多発" {
@@ -103,6 +125,275 @@ func TestSUIDDetectsNewFile(t *testing.T) {
 	if !found {
 		t.Fatalf("new SUID file should be critical: %+v", events)
 	}
+}
+
+// ---- SUID fast (high-risk directories) scan ----
+
+// TestDefaultConfigCoversHighRiskSUIDPaths is the regression test for the
+// detection gap found by attack 3 of the live test cycle: a SUID binary
+// dropped in /tmp/kizuna-suid-test/ was never reported because the default
+// SUIDPaths only contained /usr/* and the scan was gated to a single hour.
+func TestDefaultConfigCoversHighRiskSUIDPaths(t *testing.T) {
+	c := DefaultConfig()
+	if !c.SUIDFastCheck {
+		t.Fatal("suid_fast_check は既定で有効であるべき")
+	}
+	want := map[string]bool{"/tmp": true, "/var/tmp": true, "/dev/shm": true}
+	for _, p := range c.SUIDFastPaths {
+		delete(want, p)
+	}
+	if len(want) != 0 {
+		t.Fatalf("高リスクパスが既定に含まれていません: 欠落=%v 実際=%v", want, c.SUIDFastPaths)
+	}
+	if c.SUIDFastScanInterval != 10 {
+		t.Fatalf("suid_fast_interval_sec の既定 = %d, want 10", c.SUIDFastScanInterval)
+	}
+	if c.SUIDFastBaselinePath == "" || c.SUIDFastBaselinePath == c.SUIDBaselinePath {
+		t.Fatalf("高速走査は専用のベースラインを使う必要があります: %q", c.SUIDFastBaselinePath)
+	}
+	if len(c.SUIDPaths) == 0 {
+		t.Fatal("通常の SUIDPaths も維持されるべき")
+	}
+}
+
+// TestParseConfigSUIDFast verifies the new keys, including the clamping of a
+// too-small interval (a 1-second full walk would be a self-inflicted DoS).
+func TestParseConfigSUIDFast(t *testing.T) {
+	c, err := ParseConfig(map[string]interface{}{
+		"suid_fast_check":         false,
+		"suid_fast_paths":         "/tmp , /home\n/opt",
+		"suid_fast_interval_sec":  float64(5),
+		"suid_fast_baseline_path": "./logs/suid-fast.json",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	// Intervals are clamped in Validate (called from SecurityPlugin.Configure),
+	// not in ParseConfig.
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if c.SUIDFastCheck {
+		t.Error("suid_fast_check=false が反映されていません")
+	}
+	if strings.Join(c.SUIDFastPaths, ",") != "/tmp,/home,/opt" {
+		t.Errorf("suid_fast_paths = %v", c.SUIDFastPaths)
+	}
+	if c.SUIDFastScanInterval != 5 {
+		t.Errorf("5秒は下限なのでそのまま残るべき: %d", c.SUIDFastScanInterval)
+	}
+	if c.SUIDFastBaselinePath != "./logs/suid-fast.json" {
+		t.Errorf("suid_fast_baseline_path = %q", c.SUIDFastBaselinePath)
+	}
+
+	// A sane value is kept as-is.
+	c2, err := ParseConfig(map[string]interface{}{"suid_fast_interval_sec": float64(45)})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if err := c2.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if c2.SUIDFastScanInterval != 45 {
+		t.Errorf("suid_fast_interval_sec = %d, want 45", c2.SUIDFastScanInterval)
+	}
+
+	// A list is accepted too (the dashboard sends arrays).
+	c3, err := ParseConfig(map[string]interface{}{"suid_fast_paths": []interface{}{"/tmp", "/srv"}})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if err := c3.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if strings.Join(c3.SUIDFastPaths, ",") != "/tmp,/srv" {
+		t.Errorf("suid_fast_paths(list) = %v", c3.SUIDFastPaths)
+	}
+
+	// 下限未満は既定 10 秒へ戻す（1 秒ごとの全走査は自己 DoS になる）。
+	c4, err := ParseConfig(map[string]interface{}{"suid_fast_interval_sec": float64(3)})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if err := c4.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if c4.SUIDFastScanInterval != 10 {
+		t.Errorf("3秒は既定の10秒へ丸めるべき: %d", c4.SUIDFastScanInterval)
+	}
+
+	// inotify 監視は既定で有効、対象は動きの速い置き場。
+	if !c4.SUIDWatch {
+		t.Error("suid_watch は既定で有効であるべき")
+	}
+	if strings.Join(c4.SUIDWatchPaths, ",") != "/tmp,/var/tmp,/dev/shm,/run" {
+		t.Errorf("suid_watch_paths の既定 = %v", c4.SUIDWatchPaths)
+	}
+
+	// 明示指定は反映され、空指定は既定へ戻る（誤って即時監視を失わない）。
+	c5, err := ParseConfig(map[string]interface{}{
+		"suid_watch":       false,
+		"suid_watch_paths": "/tmp\n/var/tmp",
+	})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if err := c5.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if c5.SUIDWatch {
+		t.Error("suid_watch=false が反映されていません")
+	}
+	if strings.Join(c5.SUIDWatchPaths, ",") != "/tmp,/var/tmp" {
+		t.Errorf("suid_watch_paths = %v", c5.SUIDWatchPaths)
+	}
+	c6, err := ParseConfig(map[string]interface{}{"suid_watch_paths": ""})
+	if err != nil {
+		t.Fatalf("ParseConfig: %v", err)
+	}
+	if err := c6.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if len(c6.SUIDWatchPaths) != 4 {
+		t.Errorf("空の suid_watch_paths は既定へ戻すべき: %v", c6.SUIDWatchPaths)
+	}
+}
+
+// TestSUIDFastMonitorDetectsWithinInterval reproduces attack 3 without waiting
+// for the hourly, hour-gated scan: a freshly written SUID file in a high-risk
+// directory is reported critical on the very next check.
+func TestSUIDFastMonitorDetectsWithinInterval(t *testing.T) {
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "suid-fast.json")
+	var events []module.SecurityEvent
+	emit := func(ev module.SecurityEvent) { events = append(events, ev) }
+
+	// scanHour = -1 (no hour gate) and the configured 30s interval.
+	sm := NewSUIDMonitor([]string{dir}, baseline, 30*time.Second, -1, "ja", nil, emit)
+	sm.Check() // record the baseline (nothing there yet)
+	if len(events) != 0 {
+		t.Fatalf("baseline should be silent: %+v", events)
+	}
+
+	bin := filepath.Join(dir, "pwned")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o755|os.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+
+	// The next poll happens less than 30s later, so emulate the elapsed window.
+	sm.lastScan = time.Now().Add(-31 * time.Second)
+	sm.Check()
+
+	found := false
+	for _, ev := range events {
+		if ev.Category == "suid" && ev.Level == "critical" && ev.Source == bin {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("高リスクディレクトリの新規 SUID ファイルを検知できませんでした: %+v", events)
+	}
+}
+
+// TestSUIDCheckForceIgnoresInterval covers the event-driven entry point: an
+// inotify event proves the tree changed, so the scan must not wait for the
+// interval that throttles the periodic polling.
+func TestSUIDCheckForceIgnoresInterval(t *testing.T) {
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "suid-force.json")
+	var events []module.SecurityEvent
+	emit := func(ev module.SecurityEvent) { events = append(events, ev) }
+
+	sm := NewSUIDMonitor([]string{dir}, baseline, time.Hour, -1, "ja", nil, emit)
+	sm.Check() // ベースライン記録（空）
+
+	bin := filepath.Join(dir, "pwned")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o755|os.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1時間の間隔が設定されているので、通常の Check はまだ走査しない。
+	sm.Check()
+	if len(events) != 0 {
+		t.Fatalf("間隔内の Check は走査してはいけません: %+v", events)
+	}
+
+	// イベント駆動の CheckForce は間隔を無視して即座に検知する。
+	sm.CheckForce()
+	found := false
+	for _, ev := range events {
+		if ev.Category == "suid" && ev.Level == "critical" && ev.Source == bin {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("CheckForce が新規 SUID を検知できませんでした: %+v", events)
+	}
+}
+
+// TestSUIDWatcherTriggersImmediateScan is the regression test for the remaining
+// attack 3 gap: a SUID file that is created and deleted between two scans is
+// invisible to polling (measured: 2 misses in 7 with a 15s poll and a 10s
+// window). The inotify watch must turn the creation into a scan right away.
+func TestSUIDWatcherTriggersImmediateScan(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("inotify は linux のみ")
+	}
+	dir := t.TempDir()
+	baseline := filepath.Join(dir, "suid-watch.json")
+
+	var mu sync.Mutex
+	var events []module.SecurityEvent
+	emit := func(ev module.SecurityEvent) {
+		mu.Lock()
+		events = append(events, ev)
+		mu.Unlock()
+	}
+
+	sm := NewSUIDMonitor([]string{dir}, baseline, time.Hour, -1, "ja", nil, emit)
+	sm.Check() // ベースライン記録（空）
+
+	w := newSUIDWatcher([]string{dir}, nil, sm.CheckForce)
+	if err := w.start(); err != nil {
+		t.Skipf("inotify を開始できません（この環境では定期走査のみ）: %v", err)
+	}
+	defer w.stop()
+	if !w.Running() {
+		t.Fatal("inotify 監視が動作していません")
+	}
+
+	// 攻撃 3 と同じ手順: ファイルを作って chmod u+s。
+	bin := filepath.Join(dir, "pwned")
+	if err := os.WriteFile(bin, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(bin, 0o755|os.ModeSetuid); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1時間間隔の走査設定でも、イベント駆動なら数秒以内に出る。
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		found := false
+		for _, ev := range events {
+			if ev.Category == "suid" && ev.Level == "critical" && ev.Source == bin {
+				found = true
+			}
+		}
+		mu.Unlock()
+		if found {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("inotify 経由で即時検知できませんでした: %+v", events)
 }
 
 // ---- Block state persistence ----
