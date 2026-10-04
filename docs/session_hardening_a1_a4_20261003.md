@@ -226,6 +226,41 @@
 7. 確認: `systemctl status kizuna-agent` / `GET /api/status` / FIM の権限 INFO が消えること /
    ダッシュボードと Discord にアラートが届くこと / backup プラグインが `/samba/share/CD` へ書けること
 
+### 3.5 実装（2026-10-04 追記）: 自動化と運用コマンド
+
+§3 の手順は `systemd/migrate-agent-user.sh`（冪等・要 sudo・非対話）に実装済み。
+実行順は次のとおり。
+
+    bash tmp/_a4_prep.sh phase1     # ビルド → /opt/kizuna-eye/bin 差し替え
+    bash tmp/_a4_prep.sh phase2     # 署名鍵（既存があれば維持）
+    bash tmp/_a4_prep.sh phase3     # 配置済み .so へ署名
+    bash tmp/_a4_prep.sh phase4     # require_signature=true + public_key_file
+    python3 tmp/_a4_state.py        # 移行前スナップショット
+    sudo systemd/migrate-agent-user.sh user
+    python3 tmp/_a4_state.py        # 移行後の確認
+
+- phase4 は「署名必須 + 公開鍵 `/etc/kizuna-eye/plugin_signing.pub`」を設定へ書く。
+  公開鍵を配置するのは移行スクリプト（root）なので、**phase4 の後は再起動せず
+  そのまま移行まで進める**。中途で再起動すると鍵が無いため fail-closed で
+  プラグインが読み込まれない（旧 agent が動いたままだと気付きにくい）。
+- 移行後、agent は systemd 管理になる。`start.sh` / `stop.sh` は agent が
+  systemd 管理下（`active` または `enabled`）のとき agent を操作しない
+  （二重起動防止）。対象を引数で指定できる。
+
+      ./stop.sh dashboard && ./start.sh dashboard   # ダッシュボードのみ再起動
+      sudo systemctl restart kizuna-agent           # agent の再起動
+
+- 移行スクリプトは §5 で旧 agent の停止後に `/proc/*/exe` を走査し、手動 agent が
+  残っていれば root 権限で停止、それでも残れば中止する（二重起動の防止）。
+- §4 のロールバックで手動起動へ戻すときは `KIZUNA_FORCE_MANUAL=1 ./start.sh` を使う
+  （unit が enabled のままだと agent を起動しないため）。
+- ダッシュボードが書く `logs/alert_history.jsonl` は agent が V2-B の整合性検証で読む。
+  移行は §3.7 で 0640 を与えるが、ダッシュボード側も起動時（`SetPersistence`）・追記
+  （`O_CREATE`）・圧縮（`WriteFileAtomic`）で 0600 へ戻さないよう `fsutil.SharedFileMode`
+  を使う（共有ディレクトリで `Clear` 後に再作成された場合も 0640）。これが無いと移行後の
+  再起動で agent が「open failed: permission denied」をチェック間隔ごとに警告する
+  （誤報の `alert_history_tamper`）。
+
 ### 4. ロールバック手順
 
 1. `sudo systemctl disable --now kizuna-agent`
@@ -420,3 +455,125 @@ fatal: unable to access 'https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git/'
 | 7 | `scripts/sigsegv_report.sh` によるクラッシュ相関分析 | 完了（sudo 不要で実行可） |
 
 sudo が必要な具体コマンドは本ドキュメント「### 3. 残作業（要 sudo / 対話）」を参照。
+
+## 追記（2026-10-04）: 攻撃 3（SUID ドロップ＆ゴー）の取りこぼし修正
+
+### 1. 症状（再現テストの実測）
+
+`/tmp` に SUID ファイルを作成 → 10 秒保持 → 削除、を繰り返す再現テストで
+**7 回中 2 回（iter 4 / 6）が未検知**だった（検知できた回も作成から 1〜6 秒）。
+
+原因は 2 つ:
+
+1. `SUIDMonitor.Check()` がエージェントのポーリング間隔（既定 15 秒）に量子化されていた。
+   `suid_fast_interval_sec=10` を設定しても実効 15 秒になり、存在窓 10 秒のファイルは
+   走査の合間に消える（周期 15 秒・窓 10 秒なら原理的に約 1/3 を取りこぼす）。
+2. 周期走査は「走査と走査の間に作成〜削除が完結したファイル」を構造上見られない。
+
+### 2. 修正
+
+- `suid.go`: `CheckForce()`（間隔を無視）と `Interval()` を追加。走査の多重実行は
+  `scanning` フラグでスキップ（イベントは失われない: 走査は常に最新のツリー全体を
+  見るため、実行中の変化は次の走査で拾える）。
+- `suid_watch.go` / `suid_watch_linux.go` / `suid_watch_other.go`（新規）: inotify 監視。
+  対象は `suid_watch_paths`（既定 `/tmp,/var/tmp,/dev/shm,/run`）のみ。深さ 3 階層・
+  最大 2048 本（`fs.inotify.max_user_watches` はホスト全体の予算のため）、ディレクトリ
+  追加に動的追従、300ms のデバウンスで 1 攻撃 = 1 通知、`IN_Q_OVERFLOW` では全走査。
+- `plugin.go`: 走査をエージェントのポーリング間隔から切り離した専用ループ
+  （`suid_fast_interval_sec` を毎周期読み直す）と inotify のライフサイクル管理
+  （`Configure` で作成 / `Run` で起動 / `Stop` で解放 / 落ちたら張り直し）。
+- `config.go`: `suid_watch`（既定 true）/ `suid_watch_paths` を追加。
+  `suid_fast_interval_sec` の下限を 5 秒へ（5 未満は既定 10 秒）。
+- テスト: `TestSUIDCheckForceIgnoresInterval` / `TestSUIDWatcherTriggersImmediateScan`
+  （実 inotify） / `TestParseConfigSUIDFast` の追加ケース。`go test -race ./...` 全通過。
+
+### 3. 検証結果（2026-10-04 実機）
+
+| 項目 | 修正前 | 修正後 |
+|---|---|---|
+| 検知率（作成 → 10 秒保持 → 削除 × 6） | 5/7（iter 4 / 6 が未検知） | **6/6** |
+| 作成 → 検知のレイテンシ | 1〜6 秒 | **0.67〜0.87 秒** |
+| 通知の重複 | — | 1 攻撃 = 1 通知（6/6） |
+| inotify の実体 | — | 628 ディレクトリ / 1 インスタンス（上限 36611 / 128） |
+
+```
+iter 1: ✅ 0.80s   iter 2: ✅ 0.67s   iter 3: ✅ 0.85s
+iter 4: ✅ 0.70s   iter 5: ✅ 0.87s   iter 6: ✅ 0.72s
+```
+
+再現・確認用: `tmp/_a4_suid_race.sh`（攻撃再現）/ `tmp/_a4_verify_inotify.sh`
+（fd 本数・上限・静穏時の周期）/ `tmp/_a4_suid_cadence.sh`（走査周期）。
+
+設定変更は不要（既定で有効）。ダッシュボードのプラグイン設定には
+`suid_watch` / `suid_watch_paths` が自動で表示される。
+
+## 追記（2026-10-04）: 攻撃 4（SSH 失敗ログイン）の検知強化
+
+### 1. 症状（実機の攻撃ログ）
+
+攻撃は「ループバック (127.0.0.1) 経由・存在しないユーザー名を毎回変える・約 20〜80 秒間隔」で
+実施された（`/var/log/auth.log` の実測と `logs/kizuna-security.log` の対応）。
+
+| # | 実施時刻 (UTC) | ユーザー名 | 検知 |
+|---|---|---|---|
+| 1 | 05:03:09.846 | kizuna_nouser | warning（05:03:13 / +3.2s） |
+| 2 | 05:03:57.458 | kizuna_nouser_1791090237 | warning（05:03:59 / +1.5s） |
+| 3 | 05:04:19.678 | kizuna_nouser_1791090259 | warning（05:04:31 / +11.3s） |
+| 4 | 05:05:38.808 | kizuna_nouser_1791090338 | warning（05:05:48 / +9.2s） |
+| 5 | 05:07:23.529 | kizuna_nouser_1791090443 | warning |
+| 6 | 05:08:22.422 | kizuna_nouser_1791090502 | warning |
+| 7 | 05:10:14.714 | kizuna_nouser_1791090614 | warning |
+| 8 | 05:12:02.025 | kizuna_nouser_1791090721 | warning |
+| 9 | 05:12:31.762 | kizuna_nouser_1791090751 | warning |
+| 10 | 05:13:47.834 | kizuna_nouser_1791090827 | warning |
+
+攻撃は修正の配備後も続き、11 回目（05:14:35 `kizuna_nouser_1791090865`）・12 回目
+（05:15:06 `kizuna_nouser_1791090893`）も warning（ループバック注記付き）で検知した。
+
+- 検知自体は **10/10**（warning、レイテンシ 1.5〜11.3 秒 = ポーリング 15 秒以内）。
+- しかし **critical へのエスカレーションは 0 件**（ブロック候補 `onBlockCandidate` も未発火）。
+  原因は `emitSSHFailure` が失敗回数を `tr.first`（最初の失敗）から `burst_window_sec` 以内で
+  数えていたこと。20〜80 秒間隔では窓が毎回切り直され、`failed_burst=5` に永久に到達しない。
+  低頻度（sustained）と「名前を回す」形（列挙）を捉える規則が無かった。
+- 併せて、検証に使った運用端末 (192.168.0.139) 自身の SSH 接続が「ログイン成功の急増」
+  critical を窓ごとに再通知し、失敗の signal を埋めていた（監査 F-6）。
+
+### 2. 修正
+
+- `monitor.go`
+  - 失敗回数を **直近 `burst_window_sec` のスライディング窓**で数える（固定窓を廃止）。
+  - **低頻度・長時間**の総当たり（`failed_sustained_burst` / `failed_sustained_window_sec`、
+    既定 15 回 / 600 秒）を critical に追加。
+  - **ユーザー名の列挙**（`ssh_enum_distinct_users` / `ssh_enum_window_sec`、既定 5 種類 / 300 秒）
+    を critical に追加。攻撃 4 の「名前を回す」形はこれで捉える。
+  - 規則の適用順は 多発 → 持続 → 列挙。エスカレーションは **1 送信元につき 1 回**で、
+    長窓ぶん（`failed_sustained_window_sec`）静穏になると再武装する。
+  - ループバック由来の失敗には「送信元 IP では特定できない」旨の注記を付与。
+  - **ログイン成功の急増**は冷却（`ssh_login_window_sec`）内、または前回の 2 倍未満では
+    再通知しない（F-6 の通知レート制限）。既知 IP にはその旨を注記。
+  - 通知に載せるユーザー名は制御文字を除去し 64 文字で切詰め（`safeLogValue`）。
+  - 1 送信元あたりの保持はしきい値ぶんに制限（`appendFailureTime` / `evictOldestUser`）。
+    相手が `maxFailTrackers` 本ぶん攻撃しても 1 本あたりのメモリは増えない。
+- `config.go`: 上記 4 キーを追加し、`Validate` で長窓 ≥ 短窓・列挙 ≥ 2 種類・窓 ≥ 5 秒へクランプ。
+- `messages.go`: `ssh_failed.sustained.*` / `ssh_failed.enum.*` / `ssh_failed.loopback.note` /
+  `ssh_login.burst.known.note` を ja/en に追加（キー集合一致のテスト
+  `TestMessageCatalogParity` も追加）。
+- テスト: `TestSSHFailedSlidingWindowEscalates` / `TestSSHFailedSustainedLowAndSlowEscalates` /
+  `TestSSHFailedUsernameEnumerationEscalates` / `TestSSHFailedLoopbackNoteOnlyForLoopback` /
+  `TestSSHLoginBurstReAlertIsRateLimited` / `TestParseConfigSSHFailureTuning`。
+  `gofmt` / `go vet` / `go test -race ./...` すべて通過。
+
+### 3. 検証結果（2026-10-04 実機・配備後）
+
+| 検証 | 方法 | 結果 |
+|---|---|---|
+| 多発（スライディング窓） | 127.0.0.1 へ 5 種類の名前で 1 秒間隔（`tmp/_a4_enum_selftest.sh`） | 直近 60 秒で 5 回目に **critical（多発）**、ループバック注記も確認 |
+| 列挙（低頻度の名前ローテーション） | 192.168.0.233 へ 5 種類の名前で 25 秒間隔（`tmp/_a4_enum_lan_selftest.sh`） | 60 秒窓では 3 回までなので多発は不成立。5 種類目で **critical（列挙）**（1 回目 3.7 秒 / 再配備後の再検証 12.9 秒＝いずれもポーリング 15 秒以内）。本文に 5 種類の名前を列挙 |
+| 再エスカレーション抑止 | 上記の後、同じ送信元から同形の試行を継続 | critical は再発せず warning のみ（1 送信元 1 回の設計どおり） |
+| 回帰（同じ攻撃を新判定へ当てはめ） | 上表 1〜10 を新規則で再評価 | 5 種類目（05:07:23、攻撃開始から 4 分）で **列挙として critical** になっていた |
+
+`tmp/_a4_enum_slow_selftest.sh`（127.0.0.7 を宛先にした試行）は、ループバックでは送信元が
+常に 127.0.0.1 になる（`lo` のソースアドレスは 127.0.0.1）ため、既に critical 済みの
+127.0.0.1 のトラッカーに合流し、上の「再エスカレーション抑止」の確認に転用した。
+
+

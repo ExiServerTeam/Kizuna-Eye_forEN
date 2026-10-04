@@ -45,6 +45,36 @@
 
 ブラウザで `http://<サーバーのIP>:8080` を開く。
 
+一部だけを起動したい場合は `./start.sh dashboard` / `./start.sh agent` を使う
+（停止は `./stop.sh dashboard` / `./stop.sh agent`）。引数省略時は従来どおり両方を
+起動・停止する。
+
+#### agent を専用ユーザーで動かす場合（A-4）
+
+`systemd/migrate-agent-user.sh` で agent を専用ユーザー `kizuna-agent` へ移行すると、
+以降 agent は systemd（`kizuna-agent.service`）が管理する。このとき `start.sh` /
+`stop.sh` は **agent を操作しない**（agent は別ユーザー所有なので kill できず、
+systemd 管理下の agent と二重に動くと状態ファイルを奪い合うため）。agent の操作は
+systemctl を使う。
+
+    systemctl status kizuna-agent
+    sudo systemctl restart kizuna-agent
+    journalctl -u kizuna-agent -f
+
+dashboard は従来どおり手動管理なので、移行後は次で再起動する。
+
+    ./stop.sh dashboard
+    ./start.sh dashboard
+
+agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./start.sh` を使う
+（systemd 側は `systemctl disable --now kizuna-agent` で止めておくこと）。
+移行の設計と適用手順は `docs/session_hardening_a1_a4_20261003.md` を参照。
+
+移行後は agent がアラート履歴 `logs/alert_history.jsonl` を整合性検証（V2-B）で読む
+ため、ファイルにはグループ `kizuna-eye` の読み取り（0640）を与える。ダッシュボードは
+保存・追記・圧縮のどの経路でもこの group read を保つ（`fsutil.SharedFileMode`）ので、
+再起動しても agent は読み続けられる（0600 へ戻すと `alert_history_tamper` を誤報する）。
+
 ---
 
 ## 2. 設定
