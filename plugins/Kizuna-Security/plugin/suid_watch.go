@@ -68,6 +68,16 @@ type suidWatcher struct {
 	closing  bool
 	wdToPath map[int]string
 	capped   bool
+	// maxDepth is how deep below a root directory watches are installed
+	// (0 = the root directory only).
+	maxDepth int
+	// maxDirsPerRoot caps the watches installed per root. dirCapped records the
+	// roots that already reported the cap so the warning is emitted once.
+	maxDirsPerRoot int
+	dirCapped      map[string]bool
+	// dirCapFn runs once per root when the per-root cap is reached, so the FIM
+	// watch can turn a silently truncated watch set into an operator alert.
+	dirCapFn func(root string, limit int)
 	// pending accumulates the paths reported since the last debounce.
 	pending map[string]bool
 	// pendingDirs is the subset the kernel reported as directories (IN_ISDIR).
@@ -84,24 +94,74 @@ type suidWatcher struct {
 	done    chan struct{}
 }
 
+// inotifyOption customises the generic inotify watcher (watch depth, per-root
+// watch cap). Callers that pass none get the defaults used by the SUID watch.
+type inotifyOption func(*suidWatcher)
+
+// withMaxDepth limits how deep below a root directory watches are installed.
+// depth 0 watches the root directory only.
+func withMaxDepth(depth int) inotifyOption {
+	return func(w *suidWatcher) {
+		if depth >= 0 {
+			w.maxDepth = depth
+		}
+	}
+}
+
+// withMaxDirsPerRoot caps the watches installed per root. onCap runs once per
+// root after the cap is reached, so the caller can notify the operator that the
+// rest of the tree is only covered by the periodic scan.
+func withMaxDirsPerRoot(limit int, onCap func(root string, limit int)) inotifyOption {
+	return func(w *suidWatcher) {
+		if limit > 0 {
+			w.maxDirsPerRoot = limit
+		}
+		w.dirCapFn = onCap
+	}
+}
+
 // newInotifyWatcher builds the generic inotify watcher. onChange receives the
 // changed paths (files/dirs; nil files = unknown, rescan everything).
-func newInotifyWatcher(paths []string, label string, logger module.Logger, onChange func(files, dirs []string)) *suidWatcher {
+func newInotifyWatcher(paths []string, label string, logger module.Logger, onChange func(files, dirs []string), opts ...inotifyOption) *suidWatcher {
 	if label == "" {
 		label = "SUID"
 	}
-	return &suidWatcher{
-		paths:       paths,
-		label:       label,
-		logger:      logger,
-		onChange:    onChange,
-		fd:          -1,
-		wdToPath:    make(map[int]string),
-		pending:     make(map[string]bool),
-		pendingDirs: make(map[string]bool),
-		trigger:     make(chan struct{}, 1),
-		done:        make(chan struct{}),
+	w := &suidWatcher{
+		paths:          paths,
+		label:          label,
+		logger:         logger,
+		onChange:       onChange,
+		maxDepth:       suidWatchMaxDepth,
+		maxDirsPerRoot: suidWatchMaxWatches,
+		fd:             -1,
+		wdToPath:       make(map[int]string),
+		dirCapped:      make(map[string]bool),
+		pending:        make(map[string]bool),
+		pendingDirs:    make(map[string]bool),
+		trigger:        make(chan struct{}, 1),
+		done:           make(chan struct{}),
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(w)
+		}
+	}
+	return w
+}
+
+// countRootLocked returns how many watches are installed under root.
+// w.mu must be held.
+func (w *suidWatcher) countRootLocked(root string) int {
+	if root == "" {
+		return 0
+	}
+	n := 0
+	for _, p := range w.wdToPath {
+		if p == root || strings.HasPrefix(p, root+"/") {
+			n++
+		}
+	}
+	return n
 }
 
 func newSUIDWatcher(paths []string, logger module.Logger, onChange func()) *suidWatcher {

@@ -61,7 +61,14 @@ type SecurityConfig struct {
 	FIMWatchInterval     int      // フォールバック走査の間隔（秒）
 	FIMWatchMaxFiles     int      // 1回の走査でハッシュする最大ファイル数
 	FIMWatchMaxSizeKB    int      // これより大きいファイルはハッシュしない（KB）
-	FIMWatchIgnore       []string // 除外する glob（例: *.swp）
+	// FIMWatchMaxDepth is how deep below each root directory watches are
+	// installed. Files in a directory deeper than this stay outside the covered
+	// range, so the limit is reported to the operator instead of being silent.
+	FIMWatchMaxDepth int
+	// FIMWatchMaxDirs caps the inotify watches installed per root so a large
+	// tree cannot exhaust the host-wide inotify budget.
+	FIMWatchMaxDirs int
+	FIMWatchIgnore  []string // 除外する glob（例: *.swp）
 
 	// 新規リッスンポート検知
 	ListenPortCheck        bool
@@ -172,6 +179,8 @@ func DefaultConfig() *SecurityConfig {
 		FIMWatchInterval:     10,
 		FIMWatchMaxFiles:     4096,
 		FIMWatchMaxSizeKB:    4096,
+		FIMWatchMaxDepth:     3,
+		FIMWatchMaxDirs:      1024,
 		FIMWatchIgnore:       nil,
 
 		ListenPortCheck:        true,
@@ -294,6 +303,12 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	}
 	if v, ok := raw["fim_watch_max_size_kb"].(float64); ok {
 		c.FIMWatchMaxSizeKB = int(v)
+	}
+	if v, ok := raw["fim_watch_max_depth"].(float64); ok {
+		c.FIMWatchMaxDepth = int(v)
+	}
+	if v, ok := raw["fim_watch_max_dirs"].(float64); ok {
+		c.FIMWatchMaxDirs = int(v)
 	}
 	if v, ok := raw["fim_watch_ignore"].(string); ok {
 		c.FIMWatchIgnore = splitList(v)
@@ -569,6 +584,14 @@ func (c *SecurityConfig) Validate() error {
 	}
 	if c.FIMWatchMaxSizeKB > 1048576 {
 		c.FIMWatchMaxSizeKB = 1048576
+	}
+	// 深さ 0 は「ルート直下のみ」で有効。上限は inotify の watch 予算を
+	// 食い潰さないための安全弁。
+	if c.FIMWatchMaxDepth < 0 || c.FIMWatchMaxDepth > 16 {
+		c.FIMWatchMaxDepth = 3
+	}
+	if c.FIMWatchMaxDirs < 16 || c.FIMWatchMaxDirs > 200000 {
+		c.FIMWatchMaxDirs = 1024
 	}
 	if len(c.FIMWatchIgnore) > 64 {
 		return fmt.Errorf("fim_watch_ignore は64件以内で指定してください: %d", len(c.FIMWatchIgnore))
