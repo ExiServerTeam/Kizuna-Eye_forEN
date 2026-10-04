@@ -219,6 +219,55 @@
    `tar czf ~/kizuna-state-backup-$(date +%Y%m%d_%H%M).tgz /samba/share/Kizuna-Eye/logs/kizuna-security-* ~/.kizuna-eye/data`
 2. `sudo useradd --system --home /var/lib/kizuna-eye --create-home --shell /usr/sbin/nologin kizuna-agent`
 3. `sudo install -d -o kizuna-agent -g kizuna-agent -m 0700 /var/lib/kizuna-eye/{state,keys,logs}`
+
+---
+
+## 追加記録: リードの push（未完了・要ユーザー対応）
+
+`master` は `origin/master`（`4713e85`）から **63 コミット先行 / 0 遅れ**（fast-forward 可能）。
+ただし push は GitHub 側の権限で拒否された。
+
+```
+remote: Permission to ExiServerTeam/Kizuna-Eye_forEN.git denied to sy815twty-spec.
+fatal: unable to access 'https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git/':
+       The requested URL returned error: 403
+```
+
+- 読み取り（`git ls-remote` / fetch）は成功するため、認証情報自体（Git Credential Manager）は有効。
+- 認証済みアカウント `sy815twty-spec` が `ExiServerTeam/Kizuna-Eye_forEN` の Write 権限を持っていない。
+- SSH 経路も不可: `~/.ssh/id_ed25519` は存在するが GitHub に未登録
+  （`git@github.com: Permission denied (publickey)`）。
+- `sy815twty-spec/Kizuna-Eye_forEN` という fork は存在しない（`Repository not found`）。
+
+### 解消手順（いずれか）
+
+1. Org オーナーに `sy815twty-spec`（sy815twty@gmail.com）を Write 以上で招待してもらい、
+   その後に `git push origin master` を再実行する（他に変更は不要）。
+2. 当該リポジトリへの書き込み権限を持つアカウントのトークンで再認証してから `git push origin master`。
+3. 権限を持つ別リモートへ退避 push:
+   `git remote add backup <URL>; git push backup master`
+
+### 作業保全（push できない間の受け渡し用）
+
+- `tmp/lead_a3a4_63commits.bundle`（669,436 bytes / SHA256
+  `F80DFC47C02598AA47754AF0BAF1EB38B35A43FA75758DB8527D40DFE54FCF57`）
+  - `origin/master` = `4713e85` を基点とした 63 コミットを収録。受け手での取り込み:
+    `git pull <bundle> master`（基点を持たない場合は `git fetch <bundle> master:refs/heads/<branch>`）。
+- `tmp/` は `.gitignore` 対象なので push 内容には含まれない。
+
+## 残タスク（要 sudo / 判断）
+
+| # | 内容 | 状態 |
+|---|---|---|
+| 2 | SMB 共有の絞り込み（`valid users`、`sudo smbpasswd -a <user>`） | 手順記録済み・実機適用待ち |
+| 3 | 秘密（`*_config.json` / `chain.key` / `modules.json`）の共有外移設 | 同上 |
+| 4 | 署名鍵のローテーション（旧鍵は `~/.kizuna-eye/keys/retired/` へ退避） | 同上 |
+| 5 | プラグインリポジトリの取り込み方針（Kizuna-Security を同梱継続か別リポジトリ化か） | 未決 |
+| 6 | `.gitignore` の重複整理と `install.sh` の整合確認 | 完了（`plugins/**/*.so` 削除 + `go.work`/`go.work.sum` 追加） |
+| 7 | `scripts/sigsegv_report.sh` によるクラッシュ相関分析 | 完了（sudo 不要で実行可） |
+
+sudo が必要な具体コマンドは本ドキュメント「### 3. 残作業（要 sudo / 対話）」を参照。
+
 4. `sudo cp -a <現行の状態ファイルと chain.key> /var/lib/kizuna-eye/... && sudo chown -R kizuna-agent:kizuna-agent /var/lib/kizuna-eye`
 5. unit 設置 → `sudo systemctl daemon-reload && sudo systemctl enable --now kizuna-agent`
 6. 旧 agent（手動起動プロセス）を停止: `kill <PID>`
