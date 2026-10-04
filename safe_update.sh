@@ -71,7 +71,7 @@ fi
 
 echo "❌ ヘルスチェック失敗。ロールバックします..."
 if [ -n "$LATEST_BACKUP" ]; then
-    for f in agent_linux dashboard_linux plugin-inspect; do
+    for f in agent_linux dashboard_linux plugin-inspect plugin-sign; do
         [ -f "$LATEST_BACKUP/$f" ] && cp -a "$LATEST_BACKUP/$f" "$BIN_DIR/$f"
     done
     # Restore the plugins too. Go plugins must match the host binary's package

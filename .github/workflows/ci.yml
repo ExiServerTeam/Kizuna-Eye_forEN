@@ -30,6 +30,9 @@ jobs:
       - name: Build plugin-inspect
         run: CGO_ENABLED=1 go build -o /tmp/plugin-inspect ./cmd/plugin-inspect
 
+      - name: Build plugin-sign
+        run: CGO_ENABLED=0 go build -o /tmp/plugin-sign ./cmd/plugin-sign
+
       - name: Run go vet
         run: go vet ./...
 

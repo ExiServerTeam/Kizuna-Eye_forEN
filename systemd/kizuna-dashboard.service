@@ -1,0 +1,68 @@
+# ============================================================
+# Kizuna-Eye Dashboard systemd unit
+#
+# dashboard を「1プロセス = 1サービス」で直接管理する。
+# 既存の kizuna-eye.service (Type=oneshot + start.sh/stop.sh) は
+# start.sh が背景プロセスを起動して戻るため、子プロセスが SIGSEGV で
+# 落ちても systemd は「active」のままで再起動できない。
+# この unit は Type=simple で本体を直接 exec するので
+#   - クラッシュ (SIGSEGV/SIGABRT) = 失敗 → Restart=on-failure が発火
+#   - LimitCORE=infinity でコアダンプを取得
+#   - GOTRACEBACK=crash で各 goroutine のスタックを残す
+# が機能する。
+#
+# インストール（install-services.sh が __...__ を置換して導入する）:
+#   sudo systemd/install-services.sh user
+# 手動で入れる場合:
+#   sed -e "s|__USER__|$USER|g" -e "s|__DIR__|$PWD|g" \
+#       -e "s|__BIN__|/opt/kizuna-eye/bin|g" \
+#       -e "s|__DATA__|$HOME/.kizuna-eye/data|g" \
+#       systemd/kizuna-dashboard.service \
+#       | sudo tee /etc/systemd/system/kizuna-dashboard.service >/dev/null
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kizuna-dashboard
+# ============================================================
+[Unit]
+Description=Kizuna-Eye Dashboard
+Documentation=file://__DIR__/docs/PROCEDURE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__DIR__
+
+# Go ランタイムのメモリ調整（start.sh と同じ既定）。
+Environment=GOGC=50
+Environment=GOMEMLIMIT=64MiB
+# SIGSEGV/SIGABRT 時に全 goroutine のスタックを出力する。
+Environment=GOTRACEBACK=crash
+
+# コアダンプを確実に残す（kernel.core_pattern が apport のままでも
+# systemd 経由なら systemd-coredump が拾う。詳細は systemd/setup-coredump.sh）。
+LimitCORE=infinity
+
+# Dashboard は設定 (dashboard_config.json) を --config で受け取る。
+# 設定内の相対パスは設定ファイルのディレクトリ基準で解決される。
+# ログ (logs/dashboard.log) は WorkingDirectory 基準になる。
+ExecStart=__BIN__/dashboard_linux -config __DATA__/dashboard_config.json
+
+# クラッシュ時のみ自動再起動（正常終了や手動 stop では再起動しない）。
+Restart=on-failure
+RestartSec=5
+# 再起動の暴走（設定ミスで即死を繰り返す）を防ぐ。
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# 停止は SIGTERM を送って待つ。
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# journal に出す（アプリ自身のログファイルとは別に、クラッシュ痕跡を残す）。
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kizuna-dashboard
+
+[Install]
+WantedBy=multi-user.target

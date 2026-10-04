@@ -1,0 +1,16 @@
+# ============================================================
+# Kizuna-Eye 暫定 watch dog (user unit / sudo 不要)
+# インストール:
+#   install -d -m 700 ~/.config/systemd/user
+#   sed "s|__DIR__|$PWD|g" systemd/kizuna-watchdog.service \
+#     > ~/.config/systemd/user/kizuna-watchdog.service
+#   cp -p systemd/kizuna-watchdog.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now kizuna-watchdog.timer
+# ============================================================
+[Unit]
+Description=Kizuna-Eye watchdog (no-sudo interim)
+
+[Service]
+Type=oneshot
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/systemd/kizuna-watchdog.sh

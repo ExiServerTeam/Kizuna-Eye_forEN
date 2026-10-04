@@ -103,6 +103,7 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 - `agent_linux`
 - `dashboard_linux`
 - `plugin-inspect`
+- `plugin-sign`
 
 ### 4. 設定ファイルを準備
 
@@ -239,6 +240,8 @@ Kizuna-Eye のプラグインは、Go標準の `plugin` パッケージを使っ
     CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
 
 Webダッシュボードの「モジュール管理」タブから `.so` をアップロードしてください。組み込みの `plugin-inspect` ツールがプラグインを解析し、設定可能なフィールドを検査して、動的設定フォームを構築します。
+
+署名が必須（`plugins.require_signature: true`）の場合は、`plugin-sign -sign my_plugin.so -private-key <秘密鍵>` で `my_plugin.so.sig` を作成し、アップロード時に `.so` と同じ画面で一緒に選択してください。署名は `.so` を読み込む（＝`plugin-inspect` が `init()` を実行する）より**前**に検証されます。
 
 任意で `DisplayName()` を実装すると、UIのバッジにフレンドリーな名前を表示できます。未実装の場合はプラグイン名にフォールバックします。
 

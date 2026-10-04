@@ -1,0 +1,15 @@
+# ============================================================
+# Kizuna-Eye 暫定 watch dog timer (user unit / sudo 不要)
+# 1 分ごとに systemd/kizuna-watchdog.sh を実行する。
+# ============================================================
+[Unit]
+Description=Run Kizuna-Eye watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+Unit=kizuna-watchdog.service
+
+[Install]
+WantedBy=timers.target

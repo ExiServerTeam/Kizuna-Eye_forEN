@@ -4,6 +4,12 @@
     "static_dir": "./web/static",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",
     "plugins_upload_enabled": false,
+    "plugins": {
+        "require_signature": true,
+        "public_key_file": "/etc/kizuna-eye/plugin_signing.pub",
+        "inspect_isolation": "bwrap",
+        "bwrap_path": "/usr/bin/bwrap"
+    },
     "alert_history_file": "logs/alert_history.jsonl",
     "auth": {
         "enabled": false,

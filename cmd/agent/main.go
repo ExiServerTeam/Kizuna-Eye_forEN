@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -21,6 +22,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"Kizuna-Eye/internal/api"
+	"Kizuna-Eye/internal/pluginsig"
 	"Kizuna-Eye/internal/updater"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/logger"
@@ -198,13 +200,20 @@ func main() {
 	// so a tampered modules.json cannot load an arbitrary library.
 	pluginsDir := cfg.ResolvePluginsDir()
 	lg.Info("プラグインディレクトリ: %s", pluginsDir)
-	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg, pluginsDir); err != nil {
+	// A-3: log the plugin authentication policy at startup, so an operator can
+	// see immediately whether unsigned .so files are still accepted.
+	if cfg.Plugins.WantSignature() {
+		lg.Info("プラグイン署名検証: 有効（公開鍵: %s）— 未署名・署名不一致の .so は読み込みません", cfg.Plugins.PublicKeyFile)
+	} else {
+		lg.Warn("プラグイン署名検証: 無効 — 未署名の .so も読み込まれます（plugins.require_signature=true で有効化できます）")
+	}
+	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg, pluginsDir, cfg.Plugins); err != nil {
 		lg.Error("プラグイン読み込みエラー: %v", err)
 	}
 
 	manager.Start(ctx)
 
-	go watchModulesFile(ctx, *modulesPath, manager, lg, pluginsDir)
+	go watchModulesFile(ctx, *modulesPath, manager, lg, pluginsDir, cfg.Plugins)
 
 	go func() {
 		<-sigCh
@@ -271,7 +280,7 @@ func resolveAndCheckPluginPath(pluginPath, allowedDir string) (string, error) {
 }
 
 // loadPluginsFromConfig は modules.json を読み込んでプラグインを登録する
-func loadPluginsFromConfig(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string) error {
+func loadPluginsFromConfig(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string, policy config.PluginSecurityConfig) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -366,7 +375,7 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 
-		registeredName, err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg)
+		registeredName, err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg, policy)
 		if err != nil {
 			lg.Error("プラグイン '%s' の読み込み失敗: %v", cfg.Name, err)
 			continue
@@ -413,16 +422,52 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 	return nil
 }
 
+// verifyPluginSignature enforces the A-3 signature policy for a plugin .so.
+// It MUST run before plugin.Open: opening a Go plugin executes its init() and
+// package-level initializers, so an unauthenticated .so must never be opened.
+func verifyPluginSignature(soPath string, policy config.PluginSecurityConfig, lg *logger.Logger) error {
+	if !policy.WantSignature() {
+		return nil
+	}
+	if strings.TrimSpace(policy.PublicKeyFile) == "" {
+		return fmt.Errorf("plugins.require_signature=true ですが plugins.public_key_file が未設定です")
+	}
+	pub, err := pluginsig.LoadPublicKey(policy.PublicKeyFile)
+	if err != nil {
+		return fmt.Errorf("プラグイン公開鍵を読み込めません: %w", err)
+	}
+	sigPath := pluginsig.SigPath(soPath)
+	if err := pluginsig.VerifyFile(soPath, sigPath, pub); err != nil {
+		if errors.Is(err, pluginsig.ErrNoSignature) {
+			return fmt.Errorf("未署名のプラグインを拒否しました（%s がありません。plugin-sign で署名してください）: %w", sigPath, err)
+		}
+		return fmt.Errorf("プラグイン署名の検証に失敗しました（改ざんまたは鍵不一致の可能性）: %w", err)
+	}
+	if lg != nil {
+		lg.Info("プラグイン署名を検証しました: %s", soPath)
+	}
+	return nil
+}
+
 // loadAndRegisterPlugin loads and registers the plugin and returns the name it
 // was actually registered under (the plugin's own Name()), which may differ
 // from the modules.json entry name.
 func loadAndRegisterPlugin(
 	ctx context.Context,
 	path string,
-	config map[string]interface{},
+	pluginCfg map[string]interface{},
 	manager module.ModuleManager,
 	lg *logger.Logger,
+	policy config.PluginSecurityConfig,
 ) (string, error) {
+	// A-3: authenticate the .so before it is mapped into this process. This is
+	// the choke point for every load path (initial load and modules.json
+	// reload), so a plugin that never reached a verified state cannot execute
+	// even if the dashboard's upload checks were bypassed.
+	if err := verifyPluginSignature(path, policy, lg); err != nil {
+		return "", err
+	}
+
 	p, err := plugin.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
@@ -446,7 +491,7 @@ func loadAndRegisterPlugin(
 	if configurable, ok := pluginMod.(interface {
 		Configure(config interface{}) error
 	}); ok {
-		if err := configurePlugin(configurable, config); err != nil {
+		if err := configurePlugin(configurable, pluginCfg); err != nil {
 			return "", fmt.Errorf("プラグイン設定適用失敗: %w", err)
 		}
 	}
@@ -490,7 +535,7 @@ func configurePlugin(configurable interface{ Configure(interface{}) error }, con
 }
 
 // watchModulesFile watches modules.json for changes and reloads.
-func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string) {
+func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string, policy config.PluginSecurityConfig) {
 	var lastMod time.Time
 
 	if info, err := os.Stat(path); err == nil {
@@ -516,7 +561,7 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 			lastMod = info.ModTime()
 			lg.Info("modules.json の変更を検知、再読み込みします")
 
-			if err := loadPluginsFromConfig(ctx, path, manager, lg, pluginsDir); err != nil {
+			if err := loadPluginsFromConfig(ctx, path, manager, lg, pluginsDir, policy); err != nil {
 				lg.Error("プラグイン再読み込み失敗: %v", err)
 			}
 		}

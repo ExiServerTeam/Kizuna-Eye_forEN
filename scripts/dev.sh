@@ -27,7 +27,7 @@ case "$cmd" in
         exec go run ./cmd/dashboard -config dashboard_config.json
         ;;
     clean)
-        rm -f plugin-inspect dashboard_linux agent_linux
+        rm -f plugin-inspect dashboard_linux agent_linux plugin-sign
         echo "[dev] クリーン完了"
         ;;
     *)

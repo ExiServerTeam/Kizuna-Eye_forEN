@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"Kizuna-Eye/internal/pluginsig"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/module"
 )
@@ -24,6 +25,17 @@ import (
 // If a backup_result never arrives (Agent crash, network loss), the running
 // flag is released after this duration so the plugin is not blocked forever.
 const runGuardTimeout = 30 * time.Minute
+
+// maxSignatureBytes caps the detached signature part of an upload. An Ed25519
+// signature is 64 bytes; the generous cap leaves room for comments/hex, while
+// still refusing a hostile multi-megabyte "signature".
+const maxSignatureBytes = 8 << 10
+
+// quarantineDirName is the sub-directory of pluginsDir where an uploaded .so
+// waits while it is verified and inspected. It is inside pluginsDir so the
+// final rename onto the live path is same-filesystem (atomic), and it is
+// 0700/owner-only because it can contain an executable file.
+const quarantineDirName = ".quarantine"
 
 // ============================================================
 // AgentHub sends commands to the Agent.
@@ -42,6 +54,12 @@ type PluginManager struct {
 	inspectBin    string
 	hub           AgentHub
 	uploadEnabled bool
+
+	// A-3 policy: signature verification of an uploaded .so and isolated
+	// execution of plugin-inspect. bwrapBin is pre-resolved for the log
+	// message; the actual existence check happens when inspect runs.
+	policy   config.PluginSecurityConfig
+	bwrapBin string
 
 	// Server-side double-run guard. The frontend also disables the button,
 	// but that does not cover separate tabs/browsers, so the server refuses
@@ -113,9 +131,40 @@ func NewPluginManager(storage *ModulesStorage, cfg *config.DashboardConfig, logg
 		return nil, fmt.Errorf("plugins ディレクトリ作成失敗: %w", err)
 	}
 
+	// A-3: quarantine directory for pending uploads.
+	quarantineDir := filepath.Join(pluginsDir, quarantineDirName)
+	if err := os.MkdirAll(quarantineDir, 0o700); err != nil {
+		return nil, fmt.Errorf("検疫ディレクトリ作成失敗 (%s): %w", quarantineDir, err)
+	}
+
 	inspectBin := filepath.Join(baseDir, "plugin-inspect")
 	if _, err := os.Stat(inspectBin); err != nil {
 		return nil, fmt.Errorf("plugin-inspect が見つかりません: %s (%w)", inspectBin, err)
+	}
+
+	// A-3 policy. A signature requirement without a usable key is a config
+	// error that must be caught at startup, not at the first upload.
+	var policy config.PluginSecurityConfig
+	if cfg != nil {
+		policy = cfg.Plugins
+	}
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	if policy.WantSignature() {
+		if _, err := pluginsig.LoadPublicKey(policy.PublicKeyFile); err != nil {
+			return nil, fmt.Errorf("plugins.public_key_file を読み込めません: %w", err)
+		}
+	}
+	bwrapBin := ""
+	if policy.WantInspectIsolation() {
+		bwrapBin = policy.BwrapBinary()
+		if _, err := os.Stat(bwrapBin); err != nil && logger != nil {
+			// Not fatal here: the check is enforced fail-closed when an
+			// upload is actually inspected. Warn so the misconfiguration is
+			// visible at startup rather than only on the first upload.
+			logger.Error("プラグイン検査の隔離に必要な bwrap が見つかりません (%s)。アップロードは拒否されます（plugins.inspect_isolation=\"off\" で従来動作）: %v", bwrapBin, err)
+		}
 	}
 
 	return &PluginManager{
@@ -125,8 +174,21 @@ func NewPluginManager(storage *ModulesStorage, cfg *config.DashboardConfig, logg
 		inspectBin:    inspectBin,
 		hub:           hub,
 		uploadEnabled: uploadEnabled,
+		policy:        policy,
+		bwrapBin:      bwrapBin,
 		running:       make(map[string]runGuard),
 	}, nil
+}
+
+// ensureQuarantineDir returns the quarantine directory, creating it if needed.
+// The directory is created lazily as well because PluginManager values built
+// directly in tests do not pass through NewPluginManager.
+func (p *PluginManager) ensureQuarantineDir() (string, error) {
+	dir := filepath.Join(p.pluginsDir, quarantineDirName)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("%s: %w", dir, err)
+	}
+	return dir, nil
 }
 
 // RegisterRoutes registers the plugin routes.
@@ -408,7 +470,16 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// (or a stale .tmp left by a crash) cannot collide. The upload stays in
 	// the temp file until inspect + meta + modules.json all succeed, so a
 	// failure never leaves an orphan, potentially-runnable .so behind.
-	out, err := os.CreateTemp(p.pluginsDir, name+".so.tmp-*")
+	// A-3: the upload lands in the quarantine directory (0700, inside
+	// pluginsDir so the final rename is same-filesystem and atomic). Nothing
+	// in there is loaded by the agent: the file only becomes a plugin after
+	// signature verification and a successful inspect.
+	quarantineDir, err := p.ensureQuarantineDir()
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "検疫ディレクトリ作成失敗: "+err.Error())
+		return
+	}
+	out, err := os.CreateTemp(quarantineDir, name+".so.tmp-*")
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "一時ファイル作成失敗: "+err.Error())
 		return
@@ -432,6 +503,45 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	if p.logger != nil {
 		p.logger.Info("プラグインアップロード受信: %s (%d bytes) from %s", name, written, r.RemoteAddr)
+	}
+
+	// A-3: verify the detached Ed25519 signature BEFORE plugin-inspect.
+	// Inspecting a .so loads it (running its init()), so with
+	// plugins.require_signature=true an unauthenticated file must never reach
+	// that step. The signature is applied to the bytes that were just written.
+	sigBytes, err := readUploadedSignature(r)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if p.policy.WantSignature() {
+		if len(sigBytes) == 0 {
+			writeJSONError(w, http.StatusBadRequest,
+				"プラグイン署名が必要です（plugins.require_signature=true）。.so と同時に .sig ファイルを選択してください")
+			return
+		}
+		pub, kerr := pluginsig.LoadPublicKey(p.policy.PublicKeyFile)
+		if kerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "公開鍵の読み込みに失敗: "+kerr.Error())
+			return
+		}
+		data, rerr := os.ReadFile(tmpPath)
+		if rerr != nil {
+			writeJSONError(w, http.StatusInternalServerError, "検疫ファイルの読み込みに失敗: "+rerr.Error())
+			return
+		}
+		if verr := pluginsig.VerifyBytes(data, sigBytes, pub, name+".so"); verr != nil {
+			if p.logger != nil {
+				p.logger.Error("プラグイン署名検証に失敗したため拒否: %s: %v", name, verr)
+			}
+			p.reportAudit("plugin_upload_rejected",
+				"署名検証に失敗したプラグイン '"+name+"' を拒否しました (from "+r.RemoteAddr+")")
+			writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+verr.Error())
+			return
+		}
+		if p.logger != nil {
+			p.logger.Info("プラグイン署名を検証しました（検査前）: %s", name)
+		}
 	}
 
 	// Inspect the temp file BEFORE moving it into place. A plugin that cannot
@@ -517,10 +627,24 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	committed = true
 
+	// A-3: keep the detached signature next to the installed .so. The agent
+	// verifies <plugin>.so.sig before plugin.Open, so a signed upload stays
+	// loadable, and turning on require_signature later does not force every
+	// plugin to be re-uploaded.
+	sigPath := pluginsig.SigPath(soPath)
+	if len(sigBytes) > 0 {
+		if err := os.WriteFile(sigPath, sigBytes, 0o600); err != nil {
+			_ = os.Remove(soPath)
+			writeJSONError(w, http.StatusInternalServerError, "署名ファイルの書き込み失敗: "+err.Error())
+			return
+		}
+	}
+
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 	// meta.json includes the uploader IP; keep it owner-only.
 	if err := os.WriteFile(metaPath, metaBytes, 0o600); err != nil {
 		_ = os.Remove(soPath)
+		_ = os.Remove(sigPath)
 		writeJSONError(w, http.StatusInternalServerError, "meta.json 書き込み失敗: "+err.Error())
 		return
 	}
@@ -533,6 +657,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 			p.logger.Warn("モジュール登録失敗: %s: %v", name, err)
 		}
 		_ = os.Remove(soPath)
+		_ = os.Remove(sigPath)
 		_ = os.Remove(metaPath)
 		writeJSONError(w, http.StatusInternalServerError, "モジュール登録に失敗しました: "+err.Error())
 		return
@@ -623,6 +748,9 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = os.Remove(filepath.Join(p.pluginsDir, name+".meta.json"))
+	// A-3: drop the detached signature too, so a later upload of a different
+	// .so under the same name cannot inherit this plugin's signature.
+	_ = os.Remove(pluginsig.SigPath(filepath.Join(p.pluginsDir, name+".so")))
 	// Remove the plugin's bundled web UI directory, if any, so no stale
 	// assets remain after deletion.
 	_ = os.RemoveAll(filepath.Join(p.pluginsDir, name+".web"))
@@ -643,7 +771,10 @@ func (p *PluginManager) inspectPlugin(
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, p.inspectBin, "--so", soPath)
+	cmd, err := p.inspectCommand(ctx, soPath)
+	if err != nil {
+		return nil, err
+	}
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -689,4 +820,66 @@ func (p *PluginManager) inspectPlugin(
 		UploadedAt:  time.Now().Format(time.RFC3339),
 		UploaderIP:  remoteAddr,
 	}, nil
+}
+
+// inspectCommand builds the plugin-inspect invocation for a quarantined .so.
+//
+// With isolation enabled (the default) inspection runs inside bubblewrap: all
+// namespaces are unshared (network, pid, ipc, uts, user, cgroup), the
+// filesystem is bound read-only and /tmp is a fresh tmpfs. Loading a plugin
+// executes its init(), so a hostile .so being inspected gets no network reach
+// and no writable path. A missing bwrap is a hard error (fail-closed) rather
+// than a silent downgrade to unprotected execution.
+func (p *PluginManager) inspectCommand(ctx context.Context, soPath string) (*exec.Cmd, error) {
+	if !p.policy.WantInspectIsolation() {
+		return exec.CommandContext(ctx, p.inspectBin, "--so", soPath), nil
+	}
+	bin := p.bwrapBin
+	if bin == "" {
+		bin = p.policy.BwrapBinary()
+	}
+	if _, err := os.Stat(bin); err != nil {
+		return nil, fmt.Errorf("プラグイン検査の隔離に必要な bwrap が見つかりません (%s)。bubblewrap を導入するか、dashboard_config.json の plugins.inspect_isolation を \"off\" にしてください: %w", bin, err)
+	}
+	args := []string{
+		"--unshare-all",
+		"--die-with-parent",
+		"--ro-bind", "/", "/",
+		"--dev", "/dev",
+		"--proc", "/proc",
+		"--tmpfs", "/tmp",
+		"--",
+		p.inspectBin, "--so", soPath,
+	}
+	return exec.CommandContext(ctx, bin, args...), nil
+}
+
+// readUploadedSignature returns the optional detached signature sent with an
+// upload. Two forms are accepted so the existing upload form keeps working:
+//
+//	signature      - a .sig file selected next to the .so
+//	signature_text - the signature pasted as base64 or hex
+//
+// No signature at all returns (nil, nil); whether that is acceptable is
+// decided by the caller (plugins.require_signature).
+func readUploadedSignature(r *http.Request) ([]byte, error) {
+	f, _, err := r.FormFile("signature")
+	if err == nil {
+		defer f.Close()
+		data, rerr := io.ReadAll(io.LimitReader(f, maxSignatureBytes+1))
+		if rerr != nil {
+			return nil, fmt.Errorf("署名ファイルの読み込みに失敗: %w", rerr)
+		}
+		if len(data) > maxSignatureBytes {
+			return nil, fmt.Errorf("署名ファイルが大きすぎます（最大 %d バイト）", maxSignatureBytes)
+		}
+		return data, nil
+	}
+	if !errors.Is(err, http.ErrMissingFile) {
+		return nil, fmt.Errorf("署名ファイルの解析に失敗: %w", err)
+	}
+	if v := strings.TrimSpace(r.FormValue("signature_text")); v != "" {
+		return []byte(v), nil
+	}
+	return nil, nil
 }

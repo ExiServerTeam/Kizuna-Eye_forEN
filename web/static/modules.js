@@ -852,7 +852,24 @@
         pluginInput.addEventListener('change', async (e) => {
             if (e.target.files.length === 0) return;
 
-            const file = e.target.files[0];
+            // A-3: the .so and its detached signature can be selected
+            // together (the input accepts multiple files), so one dialog is
+            // enough. Any other file type is ignored.
+            const files = Array.from(e.target.files);
+            const soFiles = files.filter((f) => f.name.endsWith('.so'));
+            const sigFiles = files.filter((f) => f.name.endsWith('.sig'));
+            if (soFiles.length === 0) {
+                showToast(t('toast.plugin_select_so'), 'error');
+                e.target.value = '';
+                return;
+            }
+            if (soFiles.length > 1) {
+                showToast(t('toast.plugin_one_so'), 'error');
+                e.target.value = '';
+                return;
+            }
+            const file = soFiles[0];
+            const signature = sigFiles.length > 0 ? sigFiles[0] : null;
 
             const defaultName = file.name.replace(/\.so$/, '');
             const pluginName = prompt(t('toast.plugin_name_prompt'), defaultName);
@@ -869,6 +886,11 @@
             const formData = new FormData();
             formData.append('name', pluginName);
             formData.append('plugin', file);
+            if (signature) {
+                // A-3: the detached signature is verified before the .so is
+                // inspected and installed.
+                formData.append('signature', signature);
+            }
 
             try {
                 showToast(t('toast.plugin_uploading'), 'info');

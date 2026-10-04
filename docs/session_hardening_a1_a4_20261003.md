@@ -236,6 +236,75 @@
 
 - backup プラグインは agent 内で動作するため `kizuna-agent` に `/samba/share/CD` への書込権が必要
   （現状 `0777` + ACL のため可。Samba の ACL 正規化に注意）。
+
+---
+
+## 追記（2026-10-04）: A-3 実装完了と検証結果
+
+### 1. 実装（前回からの差分）
+
+- `internal/pluginsig/`（新規）: Ed25519 の鍵/署名の生成・読み書き・検証。
+  - `EncodePrivateKey` `EncodePublicKey` `LoadPrivateKey` `LoadPublicKey`
+  - `SignFile`（`.so` → `<x>.so.sig`、0600）、`VerifyFile`（`.sig` 不在は `ErrNoSignature`）、
+    `VerifyBytes`（アップロード時に multipart で届いた署名の検証）
+  - 署名は base64 / hex と `#` コメント行・空白を受理。公開鍵は PKIX PEM / hex / base64。
+- `cmd/plugin-sign/`（新規）: `-gen-key` `-sign` `-sign-all` `-verify` `-print-public-key` `-force`。
+- `internal/api/plugins.go`:
+  - `plugins_dir/.quarantine`（0700）へ `CreateTemp` → **署名検証 → bwrap 隔離検査 → 同一 FS 内 `rename`** の順に固定。
+  - `readUploadedSignature`（`signature` ファイル or `signature_text`、上限 8 KiB）。
+  - `inspectCommand`（bwrap。`plugins.inspect_isolation` が `bwrap` で未導入なら fail-closed）。
+  - 削除時に `.sig` を必ず削除。
+- `cmd/agent/main.go`: `plugin.Open` の**前**に署名検証（読み込み時に `init()` が走るため）。
+- `pkg/config/config.go`: `PluginSecurityConfig`（`require_signature` / `public_key_file` /
+  `inspect_isolation` / `bwrap_path`）。
+- フロント: `modules.html` のファイル入力に `accept=".so,.sig" multiple`、`modules.js` で
+  `.so` と `.sig` を分離し `signature` を FormData へ追加、i18n（日英）に選択ガイドを追加。
+- 配布系: `build.sh`・`install.sh`・`update.sh`・`safe_update.sh`・`scripts/build.sh`・
+  `scripts/dev.sh`・`scripts/verify.sh` に `plugin-sign` を組み込み、
+  `install.sh` の必須パッケージに `bubblewrap` を追加。`scripts/verify.sh --full` は
+  配置済み `.so` と `.sig` を公開鍵で検証する（`KIZUNA_PLUGIN_PUBKEY` でパス変更可）。
+- `go.work` / `go.work.sum` は開発者ローカルとして `.gitignore` へ追加
+  （プラグイン側 `go.mod` に `replace Kizuna-Eye => ../../..` があるため必須ではない。
+  コミットすると CI がプラグイン module まで評価対象に変わるため）。
+
+### 2. 検証結果（2026-10-04 実施）
+
+| 項目 | 結果 |
+|---|---|
+| `go build ./...`（Windows / go1.27.1） | 成功（exit 0） |
+| `go test ./internal/... ./pkg/...` | 全パッケージ ok（`internal/pluginsig` の 0600 アサートのみ Windows では表現不能なため `runtime.GOOS` ガードを追加。Linux 側で確認済み） |
+| `gofmt -l cmd pkg internal` | 出力なし（整形済み） |
+| `node --check web/static/modules.js` / `i18n.js` | 成功（exit 0） |
+| Linux（go1.26.0 + GOTOOLCHAIN=auto）`go test ./internal/pluginsig/ ./internal/api/ ./pkg/config/` | 全 ok |
+| プラグイン単体ビルド（`GOWORK=off go build -buildmode=plugin`） | 成功 |
+
+`cmd/plugin-sign` のラウンドトリップ（Linux 実機、`/tmp/a3rt`）:
+
+```
+GENKEY_OK  priv_mode=600 pub_mode=644
+SIGN_OK    sig_mode=600
+VERIFY_OK
+TAMPER_EXIT=1        # .so を 1 バイト追記 → 検証失敗（exit 1）
+NOSIG_EXIT=1         # .sig 削除 → ErrNoSignature（exit 1）
+WRONGKEY_EXIT=1      # 別の鍵で検証 → 失敗（exit 1）
+SIGNALL_OK sigs=2    # ディレクトリ直下の .so を一括署名
+SIGNALL_IDEMPOTENT=yes  # 既存署名は -force なしで上書きしない
+PRINTPUB_OK          # -print-public-key が生成時の公開鍵と一致
+```
+
+### 3. 残作業（要 sudo / 対話）
+
+以下は自動実行できないため、対話 sudo で実施する（コマンドは `systemd/` 配下のスクリプトに収録）。
+
+1. `sudo ./systemd/install-services.sh <run-user>` … unit 設置 + `daemon-reload` + enable
+2. `sudo ./systemd/migrate-agent-user.sh <run-user>` … 状態ファイル/鍵の `/var/lib/kizuna-eye` 移行
+3. `sudo ./systemd/setup-coredump.sh` … `core_pattern` 設定（`systemd/60-kizuna-core.conf`）
+4. 鍵の配布: `plugin-sign -gen-key -key-dir <オフホスト>` → 公開鍵を `/etc/kizuna-eye/plugin_signing.pub` へ
+   （秘密鍵は共有に置かない）
+5. 既存 `.so` への署名: `plugin-sign -sign-all /opt/kizuna-eye/bin/plugins -private-key <秘密鍵>`
+6. `bubblewrap` の導入（Ubuntu 24.04 では AppArmor の unprivileged userns 制限に注意。
+   必要なら `kernel.apparmor_restrict_unprivileged_userns=0`）
+7. クラッシュ相関の確認: `./scripts/sigsegv_report.sh`
 - ダッシュボードのログ閲覧は agent 側ログの読取権限に依存（グループ共有で解決）。
 - 鍵ローテーション手順・退避鍵ディレクトリ（`~/.kizuna-eye/keys/retired/`）のパス変更が必要。
 - `.so` 配置先 `/opt/kizuna-eye/bin/plugins` は root 所有・0755 が望ましい（現状 `user` 所有）。
