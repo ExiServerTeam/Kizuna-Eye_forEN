@@ -13,4 +13,10 @@ Description=Kizuna-Eye watchdog (no-sudo interim)
 [Service]
 Type=oneshot
 WorkingDirectory=__DIR__
+# start.sh は nohup で agent/dashboard を「デタッチ」して起動するが、systemd の
+# 既定 KillMode=control-group は oneshot service の終了時に cgroup 内の全プロセス
+# (nohup した agent を含む) へ SIGTERM を送る。これが「起動2秒後に
+# シャットダウンシグナル受信」の原因だった。KillMode=none で systemd に
+# これらのプロセスを殺させない（従来の手動運用と同じ挙動に戻す）。
+KillMode=none
 ExecStart=__DIR__/systemd/kizuna-watchdog.sh

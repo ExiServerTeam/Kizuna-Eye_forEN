@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# A-4: agent を専用ユーザー kizuna-agent へ移行する（要 sudo・対話実行）
+# A-4/H-1: agent を専用ユーザー kizuna-eye へ移行する（要 sudo・対話実行）
 #
 # 目的:
 #   agent を運用アカウント `user`(uid=1000) から切り離す。uid=1000 が
@@ -10,7 +10,7 @@
 #
 # 設計:
 #   1. 状態ファイル (FIM/ports/SUID/cron/logins/blocks/alertstate) と chain.key は
-#      /var/lib/kizuna-eye/{state,keys} (0700, kizuna-agent 所有) へ移設し、
+#      /var/lib/kizuna-eye/{state,keys} (0700, kizuna-eye 所有) へ移設し、
 #      modules.json の各パスを絶対パスへ書き換える。agent からは常に書き込め、
 #      運用ユーザーからは読み書きできない。
 #   2. 設定 (agent_config.json / modules.json) は $DATA のまま *共有* する。
@@ -19,7 +19,7 @@
 #      共有グループ kizuna-eye を作り 0640 (group read) を与える。agent 側の
 #      再 chmod 0600 は fsutil.TightenSharedConfigMode が group read を保つ。
 #   3. 検知ログ (kizuna-security.log) とその行数アンカー (logstate) は既定で
-#      /var/lib/kizuna-eye/logs (0750, kizuna-agent:kizuna-eye) へ移設する。
+#      /var/lib/kizuna-eye/logs (0750, kizuna-eye:kizuna-eye) へ移設する。
 #      アンカーはプラグインが log_path から導出するため、ログと必ず同じ場所に
 #      置く必要がある。UI のログ一覧 (logDir=repo/logs) に残したい場合は
 #      A4_SECURITY_LOG_DIR=$DIR/logs を付けて実行する（その場合アンカーを
@@ -33,13 +33,13 @@
 #   ログ方針を変えて再適用（冪等）:
 #   sudo A4_SECURITY_LOG_DIR=/samba/share/Kizuna-Eye/logs systemd/migrate-agent-user.sh user
 #
-# 前提: systemd/kizuna-agent-a4.service が本リポジトリにあること。
+# 前提: systemd/kizuna-eye-agent.service が本リポジトリにあること。
 #       設定変更の共有のため、実行前に tmp/_a4_prep.sh を phase1 → phase2 →
 #       phase3 → phase4 の順に済ませておく（phase4 で require_signature を
 #       立てた後は再起動せず、そのまま本スクリプトまで進める）。
 #
 # ロールバック:
-#   sudo systemctl disable --now kizuna-agent
+#   sudo systemctl disable --now kizuna-eye-agent
 #   sudo cp -a <backup>/... (下で表示する tar) を展開して chown user:user
 #   従来どおり ./start.sh で起動
 # ============================================================
@@ -60,7 +60,7 @@ OLD_HOME="$(getent passwd "$OLD_USER" | cut -d: -f6)"
 SRC_DATA="$OLD_HOME/.kizuna-eye/data"
 BIN_DIR="/opt/kizuna-eye/bin"
 
-NEW_USER="kizuna-agent"
+NEW_USER="kizuna-eye"
 NEW_HOME="/var/lib/kizuna-eye"
 SHARE_GROUP="kizuna-eye"
 STATE_DIR="$NEW_HOME/state"
@@ -199,8 +199,36 @@ else
     echo "   ⚠️ python3 が無いため modules.json を書き換えられません（手動確認が必要）"
 fi
 
+# agent_config.json の log_file を絶対パスへ書き換える。既定 "logs/agent.log" は
+# config ディレクトリ基準で解決され、A-4 後の agent (kizuna-eye) には data/logs が
+# 書けない（0700 user 所有 + ProtectSystem=strict + ReadWritePaths 外）。共有ログ
+# 置き場 (repo logs, kizuna-eye 所有) を絶対パスで指す。
+AGENT_CFG="$SRC_DATA/agent_config.json"
+if [ -f "$AGENT_CFG" ] && command -v python3 >/dev/null 2>&1; then
+    python3 - "$AGENT_CFG" "$REPO_LOGS/agent.log" <<'PY'
+import json, os, sys, tempfile
+path, log_path = sys.argv[1:3]
+with open(path, encoding="utf-8") as fh:
+    d = json.load(fh)
+d["log_file"] = log_path
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".agent_config.json-")
+os.close(fd)
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(d, fh, ensure_ascii=False, indent=2)
+    fh.write("\n")
+st = os.stat(path)
+os.chmod(tmp, st.st_mode & 0o7777)
+try:
+    os.chown(tmp, st.st_uid, st.st_gid)
+except PermissionError:
+    pass
+os.replace(tmp, path)
+print("   更新:", path, "log_file =", log_path)
+PY
+fi
+
 echo "▶ 3.5 プラグインを agent ユーザーから読めるようにする"
-# A-3/A-4: agent は kizuna-agent として動くため、dashboard(実行ユーザー) が
+# A-3/A-4: agent は kizuna-eye として動くため、dashboard(実行ユーザー) が
 # 0600 で配置した .so / .so.sig は署名検証も dlopen もできず、移行直後に
 # プラグインが全滅する（fail-closed なので静かに止まる）。ディレクトリは
 # 読み取り+通り抜け、本体も読み取り可へ緩める。書き込み（追加・削除）は
@@ -213,6 +241,17 @@ if [ -d "$PLUGINS_DIR" ]; then
     ls -1 "$PLUGINS_DIR" | sed 's/^/     /'
 else
     echo "   ℹ️ $PLUGINS_DIR が無いためスキップ"
+fi
+
+# A-4/H-1: agent 本体 (agent_linux) も kizuna-eye から実行できる必要がある。
+# dashboard (実行ユーザー) が 0700 でビルドしたバイナリは、agent が kizuna-eye に
+# なった瞬間に exec できず 203/EXEC で起動不能になる（実機で発生）。実行権を
+# グループ kizuna-eye に与える（所有者と書き込み権は変えない）。
+AGENT_BIN="$BIN_DIR/agent_linux"
+if [ -f "$AGENT_BIN" ]; then
+    chgrp "$SHARE_GROUP" "$AGENT_BIN"
+    chmod 0750 "$AGENT_BIN"
+    echo "   $(stat -c '%a %U:%G' "$AGENT_BIN") $AGENT_BIN"
 fi
 
 echo "▶ 3.6 共有グループと共有設定の権限"
@@ -244,6 +283,22 @@ for f in agent_config.json modules.json; do
     chmod 0640 "$SRC_DATA/$f"
     echo "   $(stat -c '%a %U:%G' "$SRC_DATA/$f")"
 done
+
+# H-1: alert_history 署名鍵 (alert_history.key) は dashboard (= 運用ユーザー) が
+# 書き続け、agent (kizuna-eye) が改ざん検証で読む。よって鍵は「運用ユーザー所有・
+# group read」にする。keys ディレクトリは setgid (2710) にして、dashboard が鍵を
+# 作り直してもグループ kizuna-eye を継承させる（group read が消えない）。
+# chain.key は agent 専用領域へ移設済み（上の §3）。
+if [ -d "$SRC_DATA/keys" ]; then
+    chgrp "$SHARE_GROUP" "$SRC_DATA/keys"
+    chmod 2710 "$SRC_DATA/keys"
+    echo "   $(stat -c '%a %U:%G' "$SRC_DATA/keys") $SRC_DATA/keys"
+fi
+if [ -f "$SRC_DATA/keys/alert_history.key" ]; then
+    chown "$OLD_USER:$SHARE_GROUP" "$SRC_DATA/keys/alert_history.key"
+    chmod 0640 "$SRC_DATA/keys/alert_history.key"
+    echo "   $(stat -c '%a %U:%G' "$SRC_DATA/keys/alert_history.key") $SRC_DATA/keys/alert_history.key"
+fi
 
 # 署名公開鍵: plugins.require_signature=true のとき agent が読む。$DATA 配下
 # (0700) にあると agent から読めないため、/etc/kizuna-eye に配る。
@@ -314,13 +369,13 @@ else
 fi
 
 
-echo "▶ 4. unit 導入 (kizuna-agent.service = A-4 版)"
-SRC_UNIT="$DIR/systemd/kizuna-agent-a4.service"
-DST_UNIT="/etc/systemd/system/kizuna-agent.service"
+echo "▶ 4. unit 導入 (kizuna-eye-agent.service = A-4 版)"
+SRC_UNIT="$DIR/systemd/kizuna-eye-agent.service"
+DST_UNIT="/etc/systemd/system/kizuna-eye-agent.service"
 [ -f "$SRC_UNIT" ] || { echo "❌ $SRC_UNIT が見つかりません"; exit 1; }
 if [ -f "$DST_UNIT" ]; then
-    cp -a "$DST_UNIT" "/tmp/kizuna-agent.service.bak-$TS"
-    echo "   既存を退避: /tmp/kizuna-agent.service.bak-$TS"
+    cp -a "$DST_UNIT" "/tmp/kizuna-eye-agent.service.bak-$TS"
+    echo "   既存を退避: /tmp/kizuna-eye-agent.service.bak-$TS"
 fi
 sed -e "s|__DIR__|$DIR|g" -e "s|__BIN__|$BIN_DIR|g" -e "s|__DATA__|$SRC_DATA|g" "$SRC_UNIT" > "$DST_UNIT"
 chmod 0644 "$DST_UNIT"
@@ -331,7 +386,7 @@ if grep -q '__[A-Z][A-Z_]*__' "$DST_UNIT"; then
 fi
 
 echo "▶ 5. 旧 agent を停止"
-systemctl disable --now kizuna-agent 2>/dev/null || true
+systemctl disable --now kizuna-eye-agent 2>/dev/null || true
 if [ -x "$DIR/stop.sh" ]; then
     sudo -u "$OLD_USER" "$DIR/stop.sh" || true
 fi
@@ -374,14 +429,14 @@ echo "   ✅ 旧 agent は残っていません"
 
 echo "▶ 6. 起動"
 systemctl daemon-reload
-systemctl enable --now kizuna-agent
+systemctl enable --now kizuna-eye-agent
 sleep 2
-systemctl --no-pager --full status kizuna-agent || true
+systemctl --no-pager --full status kizuna-eye-agent || true
 
 echo ""
 echo "✅ 移行完了。確認してください:"
-echo "   - systemctl status kizuna-agent"
-echo "   - journalctl -u kizuna-agent -n 50"
+echo "   - systemctl status kizuna-eye-agent"
+echo "   - journalctl -u kizuna-eye-agent -n 50"
 echo "   - *ダッシュボードを再起動*（kizuna-eye グループ所属を反映。UI のログ閲覧と"
 echo "     共有設定の読み書きに必要）。agent は systemd 管理なので start.sh / stop.sh は"
 echo "     agent を触らない（二重起動防止）。dashboard だけを指定する:"

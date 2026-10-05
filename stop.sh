@@ -126,6 +126,8 @@ systemd_manages_agent() {
     command -v systemctl >/dev/null 2>&1 || return 1
     systemctl is-active --quiet kizuna-agent 2>/dev/null && return 0
     systemctl is-enabled --quiet kizuna-agent 2>/dev/null && return 0
+    systemctl is-active --quiet kizuna-eye-agent 2>/dev/null && return 0
+    systemctl is-enabled --quiet kizuna-eye-agent 2>/dev/null && return 0
     return 1
 }
 
