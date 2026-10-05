@@ -23,8 +23,8 @@ import (
 //   - path is empty;
 //   - path is an existing symlink. The baselines, state files and configs of a
 //     hardened deployment live in directories that may be attacker-writable
-//     (see the SMB exposure in docs/session_security_audit_20261003.md), and
-//     writing through a symlink would let the writer pick the target.
+//     (see the SMB exposure notes), and writing through a symlink would let
+//     the writer pick the target.
 //
 // The parent directory is created with 0700 when it does not exist.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {

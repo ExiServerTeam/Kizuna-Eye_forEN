@@ -95,8 +95,7 @@ type failTracker struct {
 	// failure"), so a rapid burst that followed a stale probe was discarded
 	// when the window reset, and even a steady ~1 attempt per 12s pace (5 per
 	// 60s average) never escalated. Counting the last BurstWindow / the longer
-	// sustained window fixes both (docs/session_hardening_a1_a4_20261003.md,
-	// attack A-4 "SSH 失敗連続").
+	// sustained window fixes both (attack A-4 "SSH 失敗連続").
 	recent    []time.Time
 	sustained []time.Time
 	// users remembers when each username was first seen from this source.
