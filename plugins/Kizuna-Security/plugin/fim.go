@@ -234,28 +234,27 @@ func (f *FIM) Check() {
 			level = "warning"
 		}
 		if f.emitFn != nil {
-			ev := module.SecurityEvent{
-				Category:  "integrity",
-				Level:     level,
-				Title:     msg(f.lang(), "integrity.unreadable.title"),
-				Source:    strings.Join(pending, ","),
-				Timestamp: time.Now(),
-			}
+			// Both language renderings are stored (task 9). The message key
+			// depends on how many files are unreadable and why.
+			var key string
+			var args []interface{}
+			src := strings.Join(pending, ",")
 			if len(pending) == 1 {
-				key := "integrity.unreadable.perm.msg"
+				key = "integrity.unreadable.perm.msg"
 				if len(pendingOther) == 1 {
 					key = "integrity.unreadable.msg"
 				}
-				ev.Source = pending[0]
-				ev.Message = msg(f.lang(), key, pending[0], unreadErr[pending[0]])
+				src = pending[0]
+				args = []interface{}{pending[0], unreadErr[pending[0]]}
 			} else {
-				key := "integrity.unreadable.multi.perm.msg"
+				key = "integrity.unreadable.multi.perm.msg"
 				if len(pendingOther) > 0 {
 					key = "integrity.unreadable.multi.msg"
 				}
-				ev.Message = msg(f.lang(), key, len(pending), strings.Join(pending, ", "))
+				args = []interface{}{len(pending), strings.Join(pending, ", ")}
 			}
-			f.emitFn(ev)
+			f.emitFn(i18nEvent(f.lang(), "integrity", level, "integrity.unreadable.title", key,
+				module.SecurityEvent{Source: src, Timestamp: time.Now()}, args...))
 		}
 	}
 	// 読めるように戻ったら履歴を消し、次に読めなくなった時点で再通知する。
@@ -291,35 +290,17 @@ func (f *FIM) Check() {
 				// 必ず通知する。管理者が意図した追加なら確認できるようにし、
 				// 攻撃者が新しいファイルをベースラインへ紛れ込ませる抜け道を
 				// 塞ぐ（気付けるようにする）。
-				f.emitFn(module.SecurityEvent{
-					Category:  "integrity",
-					Level:     "warning",
-					Title:     msg(f.lang(), "integrity.baseline.title"),
-					Message:   msg(f.lang(), "integrity.baseline.msg", p),
-					Source:    p,
-					Timestamp: now,
-				})
+				f.emitFn(i18nEvent(f.lang(), "integrity", "warning", "integrity.baseline.title", "integrity.baseline.msg",
+					module.SecurityEvent{Source: p, Timestamp: now}, p))
 				continue
 			}
-			f.emitFn(module.SecurityEvent{
-				Category:  "integrity",
-				Level:     "critical",
-				Title:     msg(f.lang(), "integrity.create.title"),
-				Message:   msg(f.lang(), "integrity.create.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			f.emitFn(i18nEvent(f.lang(), "integrity", "critical", "integrity.create.title", "integrity.create.msg",
+				module.SecurityEvent{Source: p, Timestamp: now}, p))
 			continue
 		}
 		if old != h {
-			f.emitFn(module.SecurityEvent{
-				Category:  "integrity",
-				Level:     "critical",
-				Title:     msg(f.lang(), "integrity.change.title"),
-				Message:   msg(f.lang(), "integrity.change.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			f.emitFn(i18nEvent(f.lang(), "integrity", "critical", "integrity.change.title", "integrity.change.msg",
+				module.SecurityEvent{Source: p, Timestamp: now}, p))
 		}
 	}
 
@@ -333,14 +314,8 @@ func (f *FIM) Check() {
 			continue
 		}
 		if _, ok := current[p]; !ok {
-			f.emitFn(module.SecurityEvent{
-				Category:  "integrity",
-				Level:     "warning",
-				Title:     msg(f.lang(), "integrity.delete.title"),
-				Message:   msg(f.lang(), "integrity.delete.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			f.emitFn(i18nEvent(f.lang(), "integrity", "warning", "integrity.delete.title", "integrity.delete.msg",
+				module.SecurityEvent{Source: p, Timestamp: now}, p))
 		}
 	}
 
@@ -374,6 +349,66 @@ func (f *FIM) SetLang(lang string) {
 	f.langMu.Lock()
 	f.language = lang
 	f.langMu.Unlock()
+}
+
+// hashFileHead reads the first n bytes of a regular file and returns
+// (hex SHA-256, kind). kind is a best-effort magic-byte classification:
+// "ELF" / "PE" / "script" / "archive", or "" when unknown. n<=0 returns
+// ("", "", nil) so callers can treat head tracking as disabled.
+func hashFileHead(path string, n int) (string, string, error) {
+	if n <= 0 {
+		return "", "", nil
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		return "", "", err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", "", os.ErrInvalid
+	}
+
+	buf := make([]byte, n)
+	read, err := io.ReadFull(f, buf)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return "", "", err
+	}
+	buf = buf[:read]
+
+	sum := sha256.Sum256(buf)
+	return hex.EncodeToString(sum[:]), classifyMagic(buf), nil
+}
+
+// classifyMagic names a file kind from its leading bytes.
+func classifyMagic(b []byte) string {
+	if len(b) >= 4 && b[0] == 0x7f && b[1] == 'E' && b[2] == 'L' && b[3] == 'F' {
+		return "ELF"
+	}
+	if len(b) >= 2 && b[0] == 'M' && b[1] == 'Z' {
+		return "PE"
+	}
+	if len(b) >= 2 && b[0] == '#' && b[1] == '!' {
+		return "script"
+	}
+	// zip (PK\x03\x04) / gzip (\x1f\x8b) / bzip2 (BZh) / xz (\xfd7zXZ)
+	if len(b) >= 4 && b[0] == 'P' && b[1] == 'K' && b[2] == 0x03 && b[3] == 0x04 {
+		return "archive"
+	}
+	if len(b) >= 2 && b[0] == 0x1f && b[1] == 0x8b {
+		return "archive"
+	}
+	if len(b) >= 3 && b[0] == 'B' && b[1] == 'Z' && b[2] == 'h' {
+		return "archive"
+	}
+	if len(b) >= 6 && b[0] == 0xfd && b[1] == '7' && b[2] == 'z' && b[3] == 'X' && b[4] == 'Z' && b[5] == 0x00 {
+		return "archive"
+	}
+	return ""
 }
 
 // hashFile returns the hex SHA-256 of a regular file.
@@ -482,14 +517,8 @@ func (f *FIM) verifyBaselineSignature(st fimState) bool {
 // warnBaselineTamper はベースライン改ざん（署名不一致）を通知する（F-4）。
 func (f *FIM) warnBaselineTamper(reason string) {
 	if f.emitFn != nil {
-		f.emitFn(module.SecurityEvent{
-			Category:  "integrity",
-			Level:     "critical",
-			Title:     msg(f.lang(), "integrity.baseline.tamper.title"),
-			Message:   msg(f.lang(), "integrity.baseline.tamper.msg", f.baselinePath, reason),
-			Source:    f.baselinePath,
-			Timestamp: time.Now(),
-		})
+		f.emitFn(i18nEvent(f.lang(), "integrity", "critical", "integrity.baseline.tamper.title", "integrity.baseline.tamper.msg",
+			module.SecurityEvent{Source: f.baselinePath, Timestamp: time.Now()}, f.baselinePath, reason))
 	}
 	if f.logger != nil {
 		f.logger.Error("Kizuna-Security FIM: ベースライン署名の検証に失敗: %s", reason)

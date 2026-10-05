@@ -1,6 +1,32 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"Kizuna-Eye/pkg/module"
+)
+
+// i18nEvent builds a SecurityEvent carrying BOTH language renderings. lang
+// selects which one Title/Message hold (for notifications); TitleEN/MessageEN
+// always hold English. Used by plugin types other than Monitor (task 9).
+func i18nEvent(lang, category, level, titleKey, msgKey string, fields module.SecurityEvent, args ...interface{}) module.SecurityEvent {
+	titleJa := msg("ja", titleKey)
+	msgJa := msg("ja", msgKey, args...)
+	titleEn := msg("en", titleKey)
+	msgEn := msg("en", msgKey, args...)
+	ev := fields
+	ev.Category = category
+	ev.Level = level
+	ev.Title = titleJa
+	ev.Message = msgJa
+	if lang == "en" {
+		ev.Title = titleEn
+		ev.Message = msgEn
+	}
+	ev.TitleEN = titleEn
+	ev.MessageEN = msgEn
+	return ev
+}
 
 // msg returns the localized string for key in lang, falling back to Japanese.
 // Kizuna-Security emits notifications from the Agent (server side), where no
@@ -56,6 +82,7 @@ var catalog = map[string]map[string]string{
 		"install.verb.upgrade":  "アップグレード",
 		"install.verb.remove":   "削除",
 		"apt.title":             "APT %s",
+		"apt.msg":               "%s: %s",
 
 		"integrity.create.title":     "重要ファイルの作成を検知",
 		"integrity.create.msg":       "%s が新規に作成されました（バックドアの可能性）。",
@@ -83,12 +110,19 @@ var catalog = map[string]map[string]string{
 		"fimwatch.change.msg":           "%s が変更されました。至急確認してください。",
 		"fimwatch.delete.title":         "監視ディレクトリでファイル削除を検知",
 		"fimwatch.delete.msg":           "%s が削除されました。",
+		"fimwatch.ignored.title":        "監視ディレクトリで除外パターンに一致するファイルを検知",
+		"fimwatch.ignored.new.msg":      "%s は除外パターンに一致するため改ざん監視の対象外です（新規作成）。攻撃者がこのパターンを悪用する可能性があるため記録しました。",
+		"fimwatch.ignored.changed.msg":  "%s は除外パターンに一致するため改ざん監視の対象外です（変更）。攻撃者がこのパターンを悪用する可能性があるため記録しました。",
+		"fimwatch.ignored.cap.title":    "除外パスが上限に達しました",
+		"fimwatch.ignored.cap.msg":      "1 回の走査で除外パターンに一致したファイルが %d 件あり、上限 %d 件まで個別記録しました。残りは記録していません。",
 		"fimwatch.transient.title":      "監視ディレクトリで短命なファイルを検知",
 		"fimwatch.transient.msg":        "%s が作成され、走査する前に削除されました（内容を確認できないまま消えています）。",
 		"fimwatch.large.create.title":   "監視ディレクトリで大容量ファイル作成を検知",
 		"fimwatch.large.create.msg":     "%s が作成されました（サイズ上限超過のため内容は未取得。サイズ・更新時刻・inode のメタ情報で監視します）。",
 		"fimwatch.large.change.title":   "監視ディレクトリで大容量ファイルの変更を検知",
 		"fimwatch.large.change.msg":     "%s のサイズ・更新時刻・inode が変わりました（サイズ上限超過のため内容比較はしていません）。",
+		"fimwatch.large.head.title":     "監視ディレクトリで大容量ファイルの先頭改ざんを検知",
+		"fimwatch.large.head.msg":       "%s の先頭部分が書き換えられました（種別: %s）。サイズ上限超過のファイルでも先頭バイトのハッシュで内容変更を検知しています。",
 		"fimwatch.symlink.new.title":    "監視ディレクトリでシンボリックリンク作成を検知",
 		"fimwatch.symlink.new.msg":      "%s が作成されました（リンク先: %s）。",
 		"fimwatch.symlink.swap.title":   "監視ディレクトリでファイルのシンボリックリンク化を検知",
@@ -104,34 +138,45 @@ var catalog = map[string]map[string]string{
 		"fimwatch.degraded.title":       "監視ディレクトリの一部を走査できません",
 		"fimwatch.degraded.msg":         "監視ディレクトリ %s の一部を走査できません（上限到達=%v / 大きすぎて除外=%d 件 / 読み取り不能=%d 件 / 深さ上限超過=%d 件）。これらは改ざん検知の対象外です。fim_watch_max_files / fim_watch_max_size_kb / fim_watch_max_depth / fim_watch_ignore を見直してください。",
 		"fimwatch.many.title":           "監視ディレクトリで多数の変更を検知",
-		"fimwatch.many.msg":             "監視ディレクトリで %d 件の変更を検知しました。個別通知は %d 件までとし、残り %d 件は要約のみにしました。",
+		"fimwatch.many.msg":             "監視ディレクトリで %d 件の変更を検知しました。個別通知は %d 件までとし、残り %d 件は要約のみにしました（各パスは同ログに info で記録しています）。",
+		"fimwatch.detail.title":         "要約に含まれる変更パス（通知なし・追跡用）",
+		"fimwatch.detail.msg":           "%s",
+		"fimwatch.detail.cap.title":     "要約の追跡記録が上限に達しました",
+		"fimwatch.detail.cap.msg":       "1 回の走査で要約に含まれる変更パスが上限 %d 件に達しました。残りのパスは記録していません。",
 
-		"listen_port.title": "新規リッスンポートを検知",
-		"listen_port.msg":   "%s ポート %d が新たに待ち受けを開始しました（%s）。",
+		"listen_port.title":          "新規リッスンポートを検知",
+		"listen_port.msg":            "%s ポート %d が新たに待ち受けを開始しました（%s）。",
+		"listen_port.redetect.msg":   "%s ポート %d が新たに待ち受けを開始しました（%s）。（クールダウン経過後の再検知）",
+		"listen_port.stop.title":     "新規リッスンポートの検知が停止しています",
+		"listen_port.stop.msg":       "ss の実行に失敗しました（%v）。ss のパスと実行権限を確認してください。",
+		"listen_port.suppress.title": "新規リッスンポートの再通知を抑制",
+		"listen_port.suppress.msg":   "%s ポート %d の再待受を検知しましたが、クールダウン中（%s 以内）のため再通知しません。",
 
 		"suid.new.title":  "新規 %s ファイルを検知",
 		"suid.new.msg":    "%s に %s ビット付きのファイルが出現しました（モード %s）。",
 		"suid.mode.title": "SUID/SGID のモード変更を検知",
 		"suid.mode.msg":   "%s のモードが %s から %s に変わりました。",
 
-		"cron.add.title":            "cron ジョブの追加を検知",
-		"cron.add.msg":              "%s が新規に作成されました（永続化の可能性）。",
-		"cron.change.title":         "cron ジョブの変更を検知",
-		"cron.change.msg":           "%s が変更されました。至急確認してください。",
-		"cron.delete.title":         "cron ジョブの削除を検知",
-		"cron.delete.msg":           "%s が削除されました。",
-		"cron.unreadable.title":     "cron 監視が機能していません",
-		"cron.unreadable.msg":       "cron監視が機能していません: %s が読めません（権限不足）。",
-		"spoofed.title":             "偽装されたログを検知",
-		"spoofed.msg":               "auth.log に偽装された可能性のある行があります（journald の送信元が sshd 以外）: %s",
-		"integrity.chain.title":     "セキュリティログの改ざんを検知",
-		"integrity.chain.msg":       "セキュリティログ %s のハッシュチェーンが壊れています: %s",
-		"integrity.alerthist.title": "アラート履歴の改ざんを検知",
-		"integrity.alerthist.msg":   "アラート履歴 %s が不正です: %s",
-		"integrity.logtrunc.title":  "セキュリティログの削除を検知",
-		"integrity.logtrunc.msg":    "セキュリティログ %s が改ざんされました: %s",
-		"integrity.keyperm.title":   "チェーン鍵の権限が緩すぎます",
-		"integrity.keyperm.msg":     "チェーン鍵 %s が他ユーザーから読める権限（%s）です。ログを再署名して検証を回避できるため 0600 にしてください。",
+		"cron.add.title":               "cron ジョブの追加を検知",
+		"cron.add.msg":                 "%s が新規に作成されました（永続化の可能性）。",
+		"cron.change.title":            "cron ジョブの変更を検知",
+		"cron.change.msg":              "%s が変更されました。至急確認してください。",
+		"cron.delete.title":            "cron ジョブの削除を検知",
+		"cron.delete.msg":              "%s が削除されました。",
+		"cron.unreadable.title":        "cron 監視が機能していません",
+		"cron.unreadable.msg":          "cron監視が機能していません: %s が読めません（権限不足）。",
+		"spoofed.title":                "偽装されたログを検知",
+		"spoofed.msg":                  "auth.log に偽装された可能性のある行があります（journald の送信元が sshd 以外）: %s",
+		"integrity.chain.title":        "セキュリティログの改ざんを検知",
+		"integrity.chain.msg":          "セキュリティログ %s のハッシュチェーンが壊れています: %s",
+		"integrity.alerthist.title":    "アラート履歴の縮小を検知",
+		"integrity.alerthist.msg":      "アラート履歴 %s が縮小しました（正規の圧縮(compaction)と切り詰め(truncation)を区別できません）: %s",
+		"integrity.alerthistsig.title": "アラート履歴の署名不一致を検知",
+		"integrity.alerthistsig.msg":   "アラート履歴 %s の %d 行目のHMAC署名が一致しません（鍵を知らない改ざんの可能性）: %s",
+		"integrity.logtrunc.title":     "セキュリティログの削除を検知",
+		"integrity.logtrunc.msg":       "セキュリティログ %s が改ざんされました: %s",
+		"integrity.keyperm.title":      "チェーン鍵の権限が緩すぎます",
+		"integrity.keyperm.msg":        "チェーン鍵 %s が他ユーザーから読める権限（%s）です。ログを再署名して検証を回避できるため 0600 にしてください。",
 		// High-5: 既存ログの検証に失敗して退避したことを黙らずに通知する。
 		"integrity.quarantine.title": "セキュリティログの検証失敗（退避して新規開始）",
 		"integrity.quarantine.msg":   "セキュリティログ %s のハッシュチェーンを検証できなかったため %s へ退避し、新しいチェーンを開始しました。原因: %s。改ざん、またはチェーン鍵の入れ替えを確認してください。",
@@ -182,6 +227,7 @@ var catalog = map[string]map[string]string{
 		"install.verb.upgrade":  "upgraded",
 		"install.verb.remove":   "removed",
 		"apt.title":             "APT %s",
+		"apt.msg":               "%s: %s",
 
 		"integrity.create.title":        "Critical file created",
 		"integrity.create.msg":          "%s was newly created (possible backdoor).",
@@ -205,6 +251,11 @@ var catalog = map[string]map[string]string{
 		"fimwatch.create.msg":           "%s was newly created inside a monitored directory (possible backdoor).",
 		"fimwatch.change.title":         "File tampering in a monitored directory",
 		"fimwatch.change.msg":           "%s was modified. Investigate immediately.",
+		"fimwatch.ignored.title":        "Ignored-pattern file detected in a monitored directory",
+		"fimwatch.ignored.new.msg":      "%s matches an ignore pattern and is outside tamper detection (newly created). Recorded because an attacker could abuse such a pattern.",
+		"fimwatch.ignored.changed.msg":  "%s matches an ignore pattern and is outside tamper detection (modified). Recorded because an attacker could abuse such a pattern.",
+		"fimwatch.ignored.cap.title":    "Ignore-pattern files hit the report cap",
+		"fimwatch.ignored.cap.msg":      "One scan found %d ignore-pattern files; reported up to %d individually. The rest were not recorded.",
 		"fimwatch.delete.title":         "File deleted in a monitored directory",
 		"fimwatch.delete.msg":           "%s was deleted.",
 		"fimwatch.transient.title":      "Short-lived file in a monitored directory",
@@ -213,6 +264,8 @@ var catalog = map[string]map[string]string{
 		"fimwatch.large.create.msg":     "%s was created (too large to hash; it is tracked by size/mtime/inode metadata).",
 		"fimwatch.large.change.title":   "Oversized file changed in a monitored directory",
 		"fimwatch.large.change.msg":     "The size/mtime/inode of %s changed (its content is not compared because of the size cap).",
+		"fimwatch.large.head.title":     "Oversized file head tampering in a monitored directory",
+		"fimwatch.large.head.msg":       "The leading bytes of %s were rewritten (kind: %s). Even above the size cap, a change in the head hash is detected.",
 		"fimwatch.symlink.new.title":    "Symbolic link created in a monitored directory",
 		"fimwatch.symlink.new.msg":      "%s was created (target: %s).",
 		"fimwatch.symlink.swap.title":   "File replaced by a symbolic link in a monitored directory",
@@ -228,34 +281,45 @@ var catalog = map[string]map[string]string{
 		"fimwatch.degraded.title":       "Part of a monitored directory cannot be scanned",
 		"fimwatch.degraded.msg":         "Part of the monitored directory %s could not be scanned (cap reached=%v / oversized=%d / unreadable=%d / deeper than the limit=%d). Those files are not covered by tamper detection; review fim_watch_max_files / fim_watch_max_size_kb / fim_watch_max_depth / fim_watch_ignore.",
 		"fimwatch.many.title":           "Many changes in a monitored directory",
-		"fimwatch.many.msg":             "Detected %d changes in a monitored directory; per-file notifications are capped at %d, so %d were summarised only.",
+		"fimwatch.many.msg":             "Detected %d changes in a monitored directory; per-file notifications are capped at %d, so %d were summarised only (each path is logged at info level in the same log).",
+		"fimwatch.detail.title":         "Summarised change path (no notification; for traceability)",
+		"fimwatch.detail.msg":           "%s",
+		"fimwatch.detail.cap.title":     "Summary detail log hit the cap",
+		"fimwatch.detail.cap.msg":       "One scan reached the cap of %d summarised change paths; the rest were not recorded.",
 
-		"listen_port.title": "New listening port detected",
-		"listen_port.msg":   "%s port %d started listening (%s).",
+		"listen_port.title":          "New listening port detected",
+		"listen_port.msg":            "%s port %d started listening (%s).",
+		"listen_port.redetect.msg":   "%s port %d started listening (%s). (re-detected after the cooldown)",
+		"listen_port.stop.title":     "Listening-port detection is stopped",
+		"listen_port.stop.msg":       "Failed to run ss (%v). Check the ss path and its execute permission.",
+		"listen_port.suppress.title": "Re-notification of a listening port suppressed",
+		"listen_port.suppress.msg":   "%s port %d started listening again, but it is within the cooldown (%s) so no re-notification was sent.",
 
 		"suid.new.title":  "New %s file detected",
 		"suid.new.msg":    "A file with the %s bit appeared at %s (mode %s).",
 		"suid.mode.title": "SUID/SGID mode change detected",
 		"suid.mode.msg":   "Mode of %s changed from %s to %s.",
 
-		"cron.add.title":            "cron job added",
-		"cron.add.msg":              "%s was newly created (possible persistence).",
-		"cron.change.title":         "cron job modified",
-		"cron.change.msg":           "%s was modified. Investigate immediately.",
-		"cron.delete.title":         "cron job deleted",
-		"cron.delete.msg":           "%s was deleted.",
-		"cron.unreadable.title":     "cron monitoring is not working",
-		"cron.unreadable.msg":       "cron monitoring is not working: %s cannot be read (insufficient permissions).",
-		"spoofed.title":             "Forged log entry detected",
-		"spoofed.msg":               "auth.log contains a likely forged line (journald origin is not sshd): %s",
-		"integrity.chain.title":     "Security log tampering detected",
-		"integrity.chain.msg":       "Hash chain of security log %s is broken: %s",
-		"integrity.alerthist.title": "Alert history tampering detected",
-		"integrity.alerthist.msg":   "Alert history %s is invalid: %s",
-		"integrity.logtrunc.title":  "Security log deletion detected",
-		"integrity.logtrunc.msg":    "Security log %s was tampered with: %s",
-		"integrity.keyperm.title":   "Chain key permissions are too permissive",
-		"integrity.keyperm.msg":     "Chain key %s is readable by other users (mode %s); an attacker could re-sign the log and defeat verification. Set it to 0600.",
+		"cron.add.title":               "cron job added",
+		"cron.add.msg":                 "%s was newly created (possible persistence).",
+		"cron.change.title":            "cron job modified",
+		"cron.change.msg":              "%s was modified. Investigate immediately.",
+		"cron.delete.title":            "cron job deleted",
+		"cron.delete.msg":              "%s was deleted.",
+		"cron.unreadable.title":        "cron monitoring is not working",
+		"cron.unreadable.msg":          "cron monitoring is not working: %s cannot be read (insufficient permissions).",
+		"spoofed.title":                "Forged log entry detected",
+		"spoofed.msg":                  "auth.log contains a likely forged line (journald origin is not sshd): %s",
+		"integrity.chain.title":        "Security log tampering detected",
+		"integrity.chain.msg":          "Hash chain of security log %s is broken: %s",
+		"integrity.alerthist.title":    "Alert history shrink detected",
+		"integrity.alerthist.msg":      "Alert history %s shrank (cannot distinguish legitimate compaction from truncation): %s",
+		"integrity.alerthistsig.title": "Alert history signature mismatch detected",
+		"integrity.alerthistsig.msg":   "HMAC signature mismatch at line %d of alert history %s (possible tampering without the key): %s",
+		"integrity.logtrunc.title":     "Security log deletion detected",
+		"integrity.logtrunc.msg":       "Security log %s was tampered with: %s",
+		"integrity.keyperm.title":      "Chain key permissions are too permissive",
+		"integrity.keyperm.msg":        "Chain key %s is readable by other users (mode %s); an attacker could re-sign the log and defeat verification. Set it to 0600.",
 		// High-5: report the quarantine instead of silently starting a new chain.
 		"integrity.quarantine.title": "Security log failed verification (archived, new chain started)",
 		"integrity.quarantine.msg":   "The hash chain of security log %s could not be verified, so it was moved to %s and a new chain was started. Reason: %s. Check for tampering or a rotated chain key.",

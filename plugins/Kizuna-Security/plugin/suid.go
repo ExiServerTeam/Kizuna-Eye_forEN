@@ -149,23 +149,28 @@ func (s *SUIDMonitor) check(force bool) {
 			if strings.HasPrefix(mode, "2") || strings.HasPrefix(mode, "6") {
 				label = "SGID"
 			}
-			events = append(events, module.SecurityEvent{
-				Category:  "suid",
-				Level:     "critical",
-				Title:     msg(s.lang, "suid.new.title", label),
-				Message:   msg(s.lang, "suid.new.msg", path, label, mode),
-				Source:    path,
-				Timestamp: now,
-			})
+			ev := i18nEvent(s.lang, "suid", "critical", "suid.new.title", "suid.new.msg",
+				module.SecurityEvent{
+					Source:      path,
+					Timestamp:   now,
+					Command:     fmt.Sprintf("chmod %s %s", mode, path),
+					DetectFile:  "suid.go",
+					DetectLine:  152,
+					Remediation: fmt.Sprintf("%s ビット付きファイル %s は権限昇格に悪用されます。心当たりが無ければ即削除し、設置者・設置時刻 (ls -l --time-style=full-iso %s) と親プロセスを調査してください。正規のソフトでも SUID は最小限に絞るべきです。", label, path, path),
+					RelatedLog:  fmt.Sprintf("%s mode=%s", path, mode),
+				}, label)
+			events = append(events, ev)
 		} else if old != mode {
-			events = append(events, module.SecurityEvent{
-				Category:  "suid",
-				Level:     "warning",
-				Title:     msg(s.lang, "suid.mode.title"),
-				Message:   msg(s.lang, "suid.mode.msg", path, old, mode),
-				Source:    path,
-				Timestamp: now,
-			})
+			ev := i18nEvent(s.lang, "suid", "warning", "suid.mode.title", "suid.mode.msg",
+				module.SecurityEvent{
+					Source:      path,
+					Timestamp:   now,
+					DetectFile:  "suid.go",
+					DetectLine:  161,
+					Remediation: fmt.Sprintf("既存ファイルのモードが %s から %s に変化しました。意図した変更か確認し、心当たりが無ければ元のモードへ戻してください。", old, mode),
+					RelatedLog:  fmt.Sprintf("%s mode %s -> %s", path, old, mode),
+				}, path, old, mode)
+			events = append(events, ev)
 		}
 	}
 

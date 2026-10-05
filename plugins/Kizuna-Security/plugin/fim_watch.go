@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -37,6 +38,18 @@ const (
 	// fimDirDefaultMaxDirs caps the inotify watches the directory watch
 	// installs per root when the configuration does not say otherwise.
 	fimDirDefaultMaxDirs = 1024
+	// fimSummaryDetailCap bounds how many suppressed change paths one scan
+	// records to security.log (info level, not notified). Without it a burst
+	// of tens of thousands of files would itself become a log flood.
+	fimSummaryDetailCap = 2000
+	// defaultFIMHeadBytes is how many leading bytes of an oversized file are
+	// hashed by default. 64 KiB covers an ELF/PE header, section names and a
+	// script shebang line, so a rewritten binary is detected without reading
+	// the whole file.
+	defaultFIMHeadBytes = 64 * 1024
+	// maxFIMHeadBytes caps the configurable value so one file cannot be read
+	// excessively on every scan.
+	maxFIMHeadBytes = 1024 * 1024
 	// kindLarge / kindSymlink mark baseline entries whose content is not
 	// hashed: an oversized file (metadata only) and a symbolic link.
 	kindLarge   = "large"
@@ -56,6 +69,12 @@ type fimDirEntry struct {
 	// (通常ファイル→symlink / リンク先の差し替え) is visible in the baseline.
 	Kind   string `json:"kind,omitempty"`
 	Target string `json:"target,omitempty"`
+	// HeadHash / HeadKind are recorded for an oversized file (kind=large) so a
+	// change to its first fim_watch_head_bytes is still detected even though
+	// the whole content is not hashed (task 5). HeadKind is a best-effort
+	// magic-byte classification (ELF / PE / script / archive).
+	HeadHash string `json:"head_hash,omitempty"`
+	HeadKind string `json:"head_kind,omitempty"`
 }
 
 // fimDirState is the persisted baseline of the directory watch. It is signed
@@ -78,7 +97,10 @@ type FIMDirWatcher struct {
 	interval     time.Duration
 	maxFiles     int
 	maxSize      int64
-	maxDepth     int
+	// headBytes is how many leading bytes of an oversized file are hashed
+	// (task 5). 0 disables it; a sane cap is applied by the constructor.
+	headBytes int
+	maxDepth  int
 	// maxDirs caps the inotify watches installed per root; dirCapFn runs once
 	// per root when the cap is reached (see WithFIMDirMaxDirs).
 	maxDirs  int
@@ -102,10 +124,27 @@ type FIMDirWatcher struct {
 	// maxDepth", so a deep tree warns once per path instead of every scan.
 	depthWarned map[string]bool
 
+	// --- ignore されたパスの可視化 (タスク3) ---
+	// ignoredKnown remembers each ignored path's signature (size:mtime), so
+	// a *new* ignored file and a *modified* existing one are both reported
+	// once (via ignoredPending -> flushIgnored), while an unchanged file is
+	// not. Without this, an attacker who drops /tmp/evil.tmp (matching
+	// "*.tmp") would be skipped silently.
+	ignoredMu      sync.Mutex
+	ignoredKnown   map[string]string
+	ignoredPending []ignoredHit
+
 	// langMu guards language only, for the same reason as FIM.langMu: scan()
 	// holds mu while building messages.
 	langMu   sync.RWMutex
 	language string
+}
+
+// ignoredHit is one ignored path detected during a scan. isNew distinguishes
+// a first-seen ignored path from a change to one already known.
+type ignoredHit struct {
+	path  string
+	isNew bool
 }
 
 // NewFIMDirWatcher builds the directory watch.
@@ -125,6 +164,20 @@ func WithFIMDirMaxDepth(depth int) fimDirOption {
 		if depth >= 0 {
 			f.maxDepth = depth
 		}
+	}
+}
+
+// WithFIMHeadBytes sets how many leading bytes of an oversized file are
+// hashed (0 disables; values above maxFIMHeadBytes are clamped).
+func WithFIMHeadBytes(n int) fimDirOption {
+	return func(f *FIMDirWatcher) {
+		if n < 0 {
+			n = 0
+		}
+		if n > maxFIMHeadBytes {
+			n = maxFIMHeadBytes
+		}
+		f.headBytes = n
 	}
 }
 
@@ -157,6 +210,7 @@ func NewFIMDirWatcher(roots []string, ignore []string, baselinePath string, inte
 		interval:     time.Duration(intervalSec) * time.Second,
 		maxFiles:     maxFiles,
 		maxSize:      int64(maxSizeKB) * 1024,
+		headBytes:    defaultFIMHeadBytes,
 		logger:       logger,
 		emitFn:       emitFn,
 		key:          key,
@@ -164,6 +218,7 @@ func NewFIMDirWatcher(roots []string, ignore []string, baselinePath string, inte
 		maxDirs:      fimDirDefaultMaxDirs,
 		baseline:     make(map[string]fimDirEntry),
 		depthWarned:  make(map[string]bool),
+		ignoredKnown: make(map[string]string),
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -307,6 +362,9 @@ func (f *FIMDirWatcher) scan(paths []string) {
 			f.emitFn(ev)
 		}
 	}
+	// ignore パターンで読み飛ばしたパスの可視化（タスク3）。走査中に
+	// noteIgnored が収集した分を、この走査のイベントとしてまとめて出す。
+	f.flushIgnored()
 }
 
 func (f *FIMDirWatcher) scanLocked(paths []string) []module.SecurityEvent {
@@ -364,10 +422,18 @@ func (f *FIMDirWatcher) scanLocked(paths []string) []module.SecurityEvent {
 			Inode: inodeOf(st),
 		}
 		if f.maxSize > 0 && st.Size() > f.maxSize {
-			// サイズ上限を超えるファイルは内容をハッシュしないが、存在と
+			// サイズ上限を超えるファイルは全体をハッシュしないが、存在と
 			// メタ情報は記録する（「存在すら通知しない」を避ける）。
+			// さらに先頭 headBytes バイトのハッシュと種別を記録し、先頭を
+			// 書き換える改ざんも検知できるようにする（タスク5）。
 			oversized++
 			meta.Kind = kindLarge
+			if f.headBytes > 0 {
+				if hh, hk, herr := hashFileHead(p, f.headBytes); herr == nil {
+					meta.HeadHash = hh
+					meta.HeadKind = hk
+				}
+			}
 			if scanned < f.maxFiles {
 				scanned++
 				current[p] = meta
@@ -454,9 +520,24 @@ func (f *FIMDirWatcher) scanLocked(paths []string) []module.SecurityEvent {
 func (f *FIMDirWatcher) diffLocked(full, capped bool, oversized, unreadable, depthSkipped int, current map[string]fimDirEntry, requested []string, depthDropped []string) []module.SecurityEvent {
 	var events []module.SecurityEvent
 	suppressed := 0
+	// detailPaths collects the source paths of change events that did not fit
+	// in the per-scan individual cap. They are recorded to security.log as
+	// info-level entries (not notified) so the full set stays traceable even
+	// when a burst is summarised for the operator (task 4).
+	var detailPaths []string
+	detailCapped := false
 	emit := func(level, titleKey, msgKey, source string, args ...interface{}) {
 		if len(events) >= fimDirEventCap {
 			suppressed++
+			// Only creation/change/deletion carry a meaningful path; skip
+			// notifications without one (degraded warnings etc.).
+			if source != "" {
+				if len(detailPaths) < fimSummaryDetailCap {
+					detailPaths = append(detailPaths, source)
+				} else {
+					detailCapped = true
+				}
+			}
 			return
 		}
 		events = append(events, f.event(level, titleKey, msgKey, source, args...))
@@ -500,8 +581,11 @@ func (f *FIMDirWatcher) diffLocked(full, capped bool, oversized, unreadable, dep
 				emit("critical", "fimwatch.symlink.target.title", "fimwatch.symlink.target.msg", p, p, old.Target, entry.Target)
 			}
 		case kindLarge:
-			// 内容を持たないのでメタ情報（サイズ・mtime・inode）で比較する。
-			if old.Size != entry.Size || old.MTime != entry.MTime || old.Inode != entry.Inode {
+			// 先頭 headBytes のハッシュが変われば内容改ざんの可能性が高いので
+			// critical。サイズ・mtime・inode のみの変化は warning に留める。
+			if old.HeadHash != "" && entry.HeadHash != "" && old.HeadHash != entry.HeadHash {
+				emit("critical", "fimwatch.large.head.title", "fimwatch.large.head.msg", p, p, entry.HeadKind)
+			} else if old.Size != entry.Size || old.MTime != entry.MTime || old.Inode != entry.Inode {
 				emit("warning", "fimwatch.large.change.title", "fimwatch.large.change.msg", p, p)
 			}
 		default:
@@ -582,6 +666,18 @@ func (f *FIMDirWatcher) diffLocked(full, capped bool, oversized, unreadable, dep
 		events = append(events, f.event("warning", "fimwatch.many.title", "fimwatch.many.msg",
 			roots, len(events)+suppressed, fimDirEventCap, suppressed))
 	}
+	// 打ち切り分のパスを info で security.log に残す（通知はしない）。
+	// emitFn 経由なので、Monitor.emit が fileLog に書き、通知閾値未満の
+	// ため queue には入らない＝Discord/UI は 20 件＋要約のままになる。
+	if f.emitFn != nil {
+		for _, p := range detailPaths {
+			f.emitFn(f.event("info", "fimwatch.detail.title", "fimwatch.detail.msg", p, p))
+		}
+		if detailCapped {
+			f.emitFn(f.event("warning", "fimwatch.detail.cap.title", "fimwatch.detail.cap.msg",
+				roots, fimSummaryDetailCap))
+		}
+	}
 	if len(events) > 0 {
 		f.saveLocked()
 	}
@@ -590,13 +686,38 @@ func (f *FIMDirWatcher) diffLocked(full, capped bool, oversized, unreadable, dep
 
 // event builds one notification.
 func (f *FIMDirWatcher) event(level, titleKey, msgKey, source string, args ...interface{}) module.SecurityEvent {
+	remediation := ""
+	switch msgKey {
+	case "fimwatch.new.msg":
+		remediation = fmt.Sprintf("監視ディレクトリ内に %s が新規作成されました。心当たりが無ければ内容を確認し、不正なら削除してください。バックドアの可能性があります。", source)
+	case "fimwatch.mod.msg":
+		remediation = fmt.Sprintf("%s が変更されました。内容を確認し、改ざんがあれば正規版に復元してください。", source)
+	case "fimwatch.del.msg":
+		remediation = fmt.Sprintf("%s が削除されました。意図的な削除か、攻撃者が痕跡を消したかを確認してください。", source)
+	}
+	titleJa := msg("ja", titleKey)
+	msgJa := msg("ja", msgKey, args...)
+	titleEn := msg("en", titleKey)
+	msgEn := msg("en", msgKey, args...)
+	localTitle, localMsg := titleJa, msgJa
+	if f.lang() == "en" {
+		localTitle, localMsg = titleEn, msgEn
+	}
 	return module.SecurityEvent{
 		Category:  "integrity",
 		Level:     level,
-		Title:     msg(f.lang(), titleKey),
-		Message:   msg(f.lang(), msgKey, args...),
+		Title:     localTitle,
+		Message:   localMsg,
+		TitleEN:   titleEn,
+		MessageEN: msgEn,
 		Source:    source,
 		Timestamp: time.Now(),
+		// タスク1: 詳細表示用
+		Command:     fmt.Sprintf("touch/write/rm %s", source),
+		DetectFile:  "fim_watch.go",
+		DetectLine:  593,
+		Remediation: remediation,
+		RelatedLog:  fmt.Sprintf("FIM: %s [%s]", source, level),
 	}
 }
 
@@ -635,6 +756,22 @@ func (f *FIMDirWatcher) ignored(p string) bool {
 	if len(f.ignore) == 0 {
 		return false
 	}
+	if f.matchIgnore(p) {
+		f.noteIgnored(p)
+		return true
+	}
+	// ディレクトリ名のパターン（例: systemd-private-*）は、その中のファイル
+	// にも効かせる。効かないと /tmp の監視が自分の一時ファイルで埋まる。
+	if f.ignoredByAncestor(p) {
+		f.noteIgnored(p)
+		return true
+	}
+	return false
+}
+
+// matchIgnore reports whether the base name or the full path matches one of
+// the configured glob patterns.
+func (f *FIMDirWatcher) matchIgnore(p string) bool {
 	base := filepath.Base(p)
 	for _, pat := range f.ignore {
 		if ok, err := filepath.Match(pat, base); err == nil && ok {
@@ -644,9 +781,7 @@ func (f *FIMDirWatcher) ignored(p string) bool {
 			return true
 		}
 	}
-	// ディレクトリ名のパターン（例: systemd-private-*）は、その中のファイル
-	// にも効かせる。効かないと /tmp の監視が自分の一時ファイルで埋まる。
-	return f.ignoredByAncestor(p)
+	return false
 }
 
 // ignoredByAncestor reports whether a directory between the watch root and p
@@ -669,6 +804,76 @@ func (f *FIMDirWatcher) ignoredByAncestor(p string) bool {
 			return false
 		}
 		dir = parent
+	}
+}
+
+// fimIgnoredReportCap bounds how many ignored paths one scan reports, so a
+// flood of ignored files cannot itself become the notification storm the
+// ignore list was meant to prevent.
+const fimIgnoredReportCap = 500
+
+// noteIgnored records an ignored path for later reporting. A path that is
+// already known and unchanged is skipped; a first-seen path or a change to a
+// known one is queued. Directories are not reported (their contents are
+// covered by the file-level entries). The actual emit happens in
+// flushIgnored at the end of the scan, so events stay grouped with the scan
+// that produced them.
+func (f *FIMDirWatcher) noteIgnored(p string) {
+	if f.emitFn == nil {
+		return
+	}
+	info, err := os.Lstat(p)
+	if err != nil {
+		return // deleted before we could stat it; nothing to report
+	}
+	if info.IsDir() {
+		return // directory-level skips are noise; report files only
+	}
+	sig := fmt.Sprintf("%d:%d", info.Size(), info.ModTime().Unix())
+
+	f.ignoredMu.Lock()
+	defer f.ignoredMu.Unlock()
+	prev, known := f.ignoredKnown[p]
+	if known && prev == sig {
+		return // unchanged: already reported once
+	}
+	f.ignoredKnown[p] = sig
+	f.ignoredPending = append(f.ignoredPending, ignoredHit{path: p, isNew: !known})
+}
+
+// flushIgnored emits one INFO event per ignored path collected since the last
+// flush, and a warning when the per-scan report cap is reached.
+func (f *FIMDirWatcher) flushIgnored() {
+	if f.emitFn == nil {
+		return
+	}
+	f.ignoredMu.Lock()
+	hits := f.ignoredPending
+	f.ignoredPending = nil
+	f.ignoredMu.Unlock()
+	if len(hits) == 0 {
+		return
+	}
+
+	total := len(hits)
+	shown := hits
+	capped := false
+	if len(shown) > fimIgnoredReportCap {
+		shown = shown[:fimIgnoredReportCap]
+		capped = true
+	}
+	for _, h := range shown {
+		// Use a distinct message key per kind so the ja/en rendering is
+		// chosen inside event() (which builds both languages). Passing a
+		// pre-translated label as an arg leaked Japanese into message_en.
+		msgKey := "fimwatch.ignored.new.msg"
+		if !h.isNew {
+			msgKey = "fimwatch.ignored.changed.msg"
+		}
+		f.emitFn(f.event("info", "fimwatch.ignored.title", msgKey, h.path, h.path))
+	}
+	if capped {
+		f.emitFn(f.event("warning", "fimwatch.ignored.cap.title", "fimwatch.ignored.cap.msg", "", total, fimIgnoredReportCap))
 	}
 }
 
@@ -723,14 +928,8 @@ func (f *FIMDirWatcher) verifyStateSignature(st fimDirState) bool {
 // warnTamper notifies that the directory baseline could not be trusted.
 func (f *FIMDirWatcher) warnTamper(reason string) {
 	if f.emitFn != nil {
-		f.emitFn(module.SecurityEvent{
-			Category:  "integrity",
-			Level:     "critical",
-			Title:     msg(f.lang(), "integrity.baseline.tamper.title"),
-			Message:   msg(f.lang(), "integrity.baseline.tamper.msg", f.baselinePath, reason),
-			Source:    f.baselinePath,
-			Timestamp: time.Now(),
-		})
+		f.emitFn(i18nEvent(f.lang(), "integrity", "critical", "integrity.baseline.tamper.title", "integrity.baseline.tamper.msg",
+			module.SecurityEvent{Source: f.baselinePath, Timestamp: time.Now()}, f.baselinePath, reason))
 	}
 	if f.logger != nil {
 		f.logger.Error("Kizuna-Security FIM(ディレクトリ): ベースライン署名の検証に失敗: %s", reason)

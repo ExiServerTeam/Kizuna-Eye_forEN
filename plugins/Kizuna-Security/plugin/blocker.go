@@ -239,14 +239,8 @@ func (b *blocker) restoreState() {
 			b.logger.Info("Kizuna-Security: ブロック状態を復元: %s (残り %ds)", ip, int(until.Sub(now).Seconds()))
 		}
 		if b.emitFn != nil {
-			b.emitFn(module.SecurityEvent{
-				Category:  "block",
-				Level:     "warning",
-				Title:     msg(b.lang, "block.restored.title"),
-				Message:   msg(b.lang, "block.restored.msg", ip, int(until.Sub(now).Seconds())),
-				IP:        ip,
-				Timestamp: now,
-			})
+			b.emitFn(i18nEvent(b.lang, "block", "warning", "block.restored.title", "block.restored.msg",
+				module.SecurityEvent{IP: ip, Timestamp: now}, ip, int(until.Sub(now).Seconds())))
 		}
 	}
 }
@@ -303,14 +297,8 @@ func (b *blocker) HandleBlockCandidate(ip string, count int) {
 	}
 
 	if b.mode == "dry-run" {
-		b.emitFn(module.SecurityEvent{
-			Category:  "block",
-			Level:     "warning",
-			Title:     msg(b.lang, "block.dryrun.title"),
-			Message:   msg(b.lang, "block.dryrun.msg", ip, count),
-			IP:        ip,
-			Timestamp: time.Now(),
-		})
+		b.emitFn(i18nEvent(b.lang, "block", "warning", "block.dryrun.title", "block.dryrun.msg",
+			module.SecurityEvent{IP: ip, Timestamp: time.Now()}, ip, count))
 		return
 	}
 
@@ -325,14 +313,8 @@ func (b *blocker) HandleBlockCandidate(ip string, count int) {
 		if b.logger != nil {
 			b.logger.Warn("Kizuna-Security: %s のブロックに失敗しました (%s): %v", ip, b.fw.Name(), err)
 		}
-		b.emitFn(module.SecurityEvent{
-			Category:  "block",
-			Level:     "warning",
-			Title:     msg(b.lang, "block.fail.title"),
-			Message:   msg(b.lang, "block.fail.msg", ip, b.fw.Name()),
-			IP:        ip,
-			Timestamp: time.Now(),
-		})
+		b.emitFn(i18nEvent(b.lang, "block", "warning", "block.fail.title", "block.fail.msg",
+			module.SecurityEvent{IP: ip, Timestamp: time.Now()}, ip, b.fw.Name()))
 		return
 	}
 
@@ -344,14 +326,8 @@ func (b *blocker) HandleBlockCandidate(ip string, count int) {
 	b.mu.Unlock()
 	b.saveState()
 
-	b.emitFn(module.SecurityEvent{
-		Category:  "block",
-		Level:     "critical",
-		Title:     msg(b.lang, "block.done.title"),
-		Message:   msg(b.lang, "block.done.msg", ip, int(b.duration.Seconds()), b.fw.Name(), count),
-		IP:        ip,
-		Timestamp: time.Now(),
-	})
+	b.emitFn(i18nEvent(b.lang, "block", "critical", "block.done.title", "block.done.msg",
+		module.SecurityEvent{IP: ip, Timestamp: time.Now()}, ip, int(b.duration.Seconds()), b.fw.Name(), count))
 }
 
 func (b *blocker) UnblockExpired() {

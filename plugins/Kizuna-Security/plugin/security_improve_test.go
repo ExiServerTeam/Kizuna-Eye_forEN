@@ -56,6 +56,8 @@ func TestMonitorEmitsEnglish(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Language = "en"
 	cfg.NotifyMinimal = "warning"
+	// 共有の ./logs ログインベースラインに書き込まない（テスト順序依存の防止）。
+	cfg.SSHLoginBaselinePath = ""
 	m := NewMonitor(cfg, nil, nil)
 	m.classify("/var/log/auth.log",
 		"Sep 27 08:00:42 server1 sshd[1]: Failed password for bob from 5.6.7.8 port 50000 ssh2",

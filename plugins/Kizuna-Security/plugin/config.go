@@ -24,6 +24,11 @@ type SecurityConfig struct {
 	SSHLoginBurst        int    // 同一IPからのログイン成功がこの回数に達したら急増とみなす
 	SSHLoginWindow       int    // 成功回数を数える時間枠（秒）
 	SSHLoginBaselinePath string // 既知IPの保存先（未知IP判定用）
+	// SSHLoginAllowlist lists IPs whose ssh_login events are suppressed
+	// entirely (task 7). A monitoring host or the operator's workstation
+	// reconnects often and would otherwise fire the "login burst" critical
+	// and pollute the login counters. Empty by default.
+	SSHLoginAllowlist []string
 
 	// SSH ログイン失敗の検知強化（2026-10-04。攻撃 A-4「SSH 失敗連続」の回帰）。
 	//
@@ -68,11 +73,20 @@ type SecurityConfig struct {
 	// FIMWatchMaxDirs caps the inotify watches installed per root so a large
 	// tree cannot exhaust the host-wide inotify budget.
 	FIMWatchMaxDirs int
-	FIMWatchIgnore  []string // 除外する glob（例: *.swp）
+	// FIMWatchHeadBytes is how many leading bytes of an oversized file are
+	// hashed (0 = disabled, max 1 MiB). A rewritten head is then detectable
+	// even when the whole file is too large to hash (task 5).
+	FIMWatchHeadBytes int
+	FIMWatchIgnore    []string // 除外する glob（例: *.swp）
 
 	// 新規リッスンポート検知
 	ListenPortCheck        bool
 	ListenPortBaselinePath string
+	// ListenPortRenotifyCooldownSec suppresses re-notifying the same port
+	// that is closed and reopened within this many seconds (task 8). An
+	// attacker (or a restarting service) that flaps one port would otherwise
+	// produce a notification per flap. 0 disables it (old behaviour).
+	ListenPortRenotifyCooldownSec int
 
 	// SUID/SGID 検知
 	SUIDCheck        bool
@@ -133,6 +147,11 @@ type SecurityConfig struct {
 	// V2-B: alert_history.jsonl consistency (written by the dashboard).
 	AlertHistoryPath      string
 	AlertHistoryStatePath string
+	// V2-C: dedicated HMAC key used by the dashboard to sign each alert
+	// history line. It must be a separate key from ChainKeyPath (one key per
+	// use). Empty disables per-line signature verification (legacy lines and
+	// unsigned history are skipped, so this is backward compatible).
+	AlertHistoryKeyPath string
 }
 
 func DefaultConfig() *SecurityConfig {
@@ -148,6 +167,7 @@ func DefaultConfig() *SecurityConfig {
 		SSHLoginBurst:        10,
 		SSHLoginWindow:       300,
 		SSHLoginBaselinePath: "./logs/kizuna-security-logins.json",
+		SSHLoginAllowlist:    nil,
 
 		// 短窓の burst を避けるために間隔を空けた低頻度攻撃（1〜2分に1回）は、
 		// 5/60秒では永久に検知できない。長窓の総数とユーザー名の種類で補う。
@@ -181,10 +201,32 @@ func DefaultConfig() *SecurityConfig {
 		FIMWatchMaxSizeKB:    4096,
 		FIMWatchMaxDepth:     3,
 		FIMWatchMaxDirs:      1024,
-		FIMWatchIgnore:       nil,
+		// FIMWatchHeadBytes is how many leading bytes of an oversized file are
+		// hashed (0 = disabled, max 1 MiB). Default 64 KiB.
+		FIMWatchHeadBytes: 64 * 1024,
+		// 既定の除外パターン。エディタのバックアップ・ロックファイル、
+		// systemd/snap の一時ディレクトリなど、正常な動作でも頻繁に
+		// 作成/変更されるものを除外し、本当に見るべき改ざんが履歴と
+		// 通知のノイズに埋もれるのを防ぐ。運用で追加したい場合は
+		// modules.json の fim_watch_ignore で上書きする（既定を置換、
+		// マージではない）。
+		FIMWatchIgnore: []string{
+			"#*", "*.swp", "*.swo", "*.swx", // エディタの作業ファイル
+			"*.tmp", "*.temp", "*.bak", "*.old", // 一般的な一時/バックアップ
+			".~lock.*",              // LibreOffice のロック
+			"systemd-private-*",     // systemd の PrivateTmp
+			"snap-private-tmp",      // snap の PrivateTmp
+			".X*-lock", ".X11-unix", // X11 ソケット
+			// データベース/ミドルウェアの正規の共有メモリ・セマフォ。
+			// /dev/shm を監視するとこれらが短命ファイルとして毎秒通知され、
+			// 本当の改ざんが埋もれる（実測: PostgreSQL.* が多発）。
+			"PostgreSQL.*", "sem.*", "dbus-*", "snap.*",
+			"*systemd-*", "gnome-*", "pulse-*", "X11-unix",
+		},
 
-		ListenPortCheck:        true,
-		ListenPortBaselinePath: "./logs/kizuna-security-ports.json",
+		ListenPortCheck:               true,
+		ListenPortBaselinePath:        "./logs/kizuna-security-ports.json",
+		ListenPortRenotifyCooldownSec: 600,
 
 		SUIDCheck:        true,
 		SUIDPaths:        []string{"/usr/bin", "/usr/sbin", "/bin", "/sbin", "/usr/local/bin", "/usr/local/sbin"},
@@ -219,6 +261,7 @@ func DefaultConfig() *SecurityConfig {
 		IntegrityCheckInterval: 300,
 		AlertHistoryPath:       "/samba/share/Kizuna-Eye/logs/alert_history.jsonl",
 		AlertHistoryStatePath:  "./logs/kizuna-security-alertstate.json",
+		AlertHistoryKeyPath:    "/samba/share/Kizuna-Eye/keys/alert_history.key",
 	}
 }
 
@@ -260,6 +303,12 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	}
 	if v, ok := raw["ssh_login_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
 		c.SSHLoginBaselinePath = v
+	}
+	if v, ok := raw["ssh_login_allowlist"].(string); ok {
+		c.SSHLoginAllowlist = splitList(v)
+	}
+	if v, ok := raw["ssh_login_allowlist"].([]interface{}); ok {
+		c.SSHLoginAllowlist = toStringList(v)
 	}
 	if v, ok := raw["failed_sustained_burst"].(float64); ok {
 		c.SSHFailedSustainedBurst = int(v)
@@ -310,6 +359,9 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	if v, ok := raw["fim_watch_max_dirs"].(float64); ok {
 		c.FIMWatchMaxDirs = int(v)
 	}
+	if v, ok := raw["fim_watch_head_bytes"].(float64); ok {
+		c.FIMWatchHeadBytes = int(v)
+	}
 	if v, ok := raw["fim_watch_ignore"].(string); ok {
 		c.FIMWatchIgnore = splitList(v)
 	}
@@ -322,6 +374,9 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	}
 	if v, ok := raw["listen_port_baseline_path"].(string); ok && strings.TrimSpace(v) != "" {
 		c.ListenPortBaselinePath = v
+	}
+	if v, ok := raw["listen_port_renotify_cooldown_sec"].(float64); ok {
+		c.ListenPortRenotifyCooldownSec = int(v)
 	}
 
 	if v, ok := toBool(raw["suid_check"]); ok {
@@ -410,6 +465,9 @@ func ParseConfig(raw map[string]interface{}) (*SecurityConfig, error) {
 	if v, ok := raw["integrity_check_interval_sec"].(float64); ok {
 		c.IntegrityCheckInterval = int(v)
 	}
+	if v, ok := raw["alert_history_key_path"].(string); ok {
+		c.AlertHistoryKeyPath = v
+	}
 	if v, ok := raw["alert_history_path"].(string); ok && strings.TrimSpace(v) != "" {
 		c.AlertHistoryPath = v
 	}
@@ -491,6 +549,9 @@ func (c *SecurityConfig) Validate() error {
 	}
 	if c.SSHLoginWindow > 86400 {
 		c.SSHLoginWindow = 86400
+	}
+	if len(c.SSHLoginAllowlist) > 64 {
+		return fmt.Errorf("ssh_login_allowlist は64件以内で指定してください: %d", len(c.SSHLoginAllowlist))
 	}
 
 	if c.SSHFailedSustainedBurst < 1 {
@@ -593,6 +654,13 @@ func (c *SecurityConfig) Validate() error {
 	if c.FIMWatchMaxDirs < 16 || c.FIMWatchMaxDirs > 200000 {
 		c.FIMWatchMaxDirs = 1024
 	}
+	// head_bytes: 0 は無効（従来動作）、上限は 1 MiB。負値は 0 へ。
+	if c.FIMWatchHeadBytes < 0 {
+		c.FIMWatchHeadBytes = 0
+	}
+	if c.FIMWatchHeadBytes > 1048576 {
+		c.FIMWatchHeadBytes = 1048576
+	}
 	if len(c.FIMWatchIgnore) > 64 {
 		return fmt.Errorf("fim_watch_ignore は64件以内で指定してください: %d", len(c.FIMWatchIgnore))
 	}
@@ -629,6 +697,13 @@ func (c *SecurityConfig) Validate() error {
 	}
 	if c.SUIDFastScanInterval > 3600 {
 		c.SUIDFastScanInterval = 3600
+	}
+	// listen_port の再通知クールダウン: 負値は 0（無効）へ。上限は 1 日。
+	if c.ListenPortRenotifyCooldownSec < 0 {
+		c.ListenPortRenotifyCooldownSec = 0
+	}
+	if c.ListenPortRenotifyCooldownSec > 86400 {
+		c.ListenPortRenotifyCooldownSec = 86400
 	}
 	// inotify の監視対象。空なら既定（動きの速い置き場）へ戻す。
 	if len(c.SUIDWatchPaths) == 0 {

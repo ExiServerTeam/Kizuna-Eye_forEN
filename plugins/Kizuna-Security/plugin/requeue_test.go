@@ -9,6 +9,8 @@ import (
 // 回帰テスト: 送信に失敗したイベントを Requeue で先頭に戻し、順序と上限を保つ。
 func TestRequeueRestoresOrderAndCap(t *testing.T) {
 	cfg := DefaultConfig()
+	// 共有の ./logs ログインベースラインに書き込まない（テスト順序依存の防止）。
+	cfg.SSHLoginBaselinePath = ""
 	m := NewMonitor(cfg, nil, nil)
 
 	// 既存キューに1件。

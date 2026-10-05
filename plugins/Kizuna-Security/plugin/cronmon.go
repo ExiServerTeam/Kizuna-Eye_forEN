@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -96,25 +97,31 @@ func (c *CronMonitor) Check() {
 			if !c.watched[p] && !c.underWatchedDir(p) {
 				continue
 			}
-			events = append(events, module.SecurityEvent{
-				Category:  "cron",
-				Level:     "critical",
-				Title:     msg(c.lang, "cron.add.title"),
-				Message:   msg(c.lang, "cron.add.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			ev := i18nEvent(c.lang, "cron", "critical", "cron.add.title", "cron.add.msg",
+				module.SecurityEvent{
+					Source:      p,
+					Timestamp:   now,
+					Command:     fmt.Sprintf("crontab -e (%s)", p),
+					DetectFile:  "cronmon.go",
+					DetectLine:  99,
+					Remediation: fmt.Sprintf("cron ジョブが新規作成されました (%s)。心当たりが無ければ永続化を狙った攻撃の可能性があるため、内容を確認し不正なら crontab -r で削除してください。", p),
+					RelatedLog:  fmt.Sprintf("cron: %s が新規に作成されました", p),
+				}, p)
+			events = append(events, ev)
 			continue
 		}
 		if old != h {
-			events = append(events, module.SecurityEvent{
-				Category:  "cron",
-				Level:     "critical",
-				Title:     msg(c.lang, "cron.change.title"),
-				Message:   msg(c.lang, "cron.change.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			ev := i18nEvent(c.lang, "cron", "critical", "cron.change.title", "cron.change.msg",
+				module.SecurityEvent{
+					Source:      p,
+					Timestamp:   now,
+					Command:     fmt.Sprintf("crontab -e (%s)", p),
+					DetectFile:  "cronmon.go",
+					DetectLine:  110,
+					Remediation: fmt.Sprintf("cron ジョブの内容が変更されました (%s)。至急内容を確認し、不正なジョブなら削除してください。", p),
+					RelatedLog:  fmt.Sprintf("cron: %s が変更されました (hash %s -> %s)", p, old, h),
+				}, p)
+			events = append(events, ev)
 		}
 	}
 	for p := range c.baseline {
@@ -122,14 +129,17 @@ func (c *CronMonitor) Check() {
 			continue
 		}
 		if _, ok := current[p]; !ok {
-			events = append(events, module.SecurityEvent{
-				Category:  "cron",
-				Level:     "warning",
-				Title:     msg(c.lang, "cron.delete.title"),
-				Message:   msg(c.lang, "cron.delete.msg", p),
-				Source:    p,
-				Timestamp: now,
-			})
+			ev := i18nEvent(c.lang, "cron", "warning", "cron.delete.title", "cron.delete.msg",
+				module.SecurityEvent{
+					Source:      p,
+					Timestamp:   now,
+					Command:     fmt.Sprintf("crontab -r (%s)", p),
+					DetectFile:  "cronmon.go",
+					DetectLine:  125,
+					Remediation: fmt.Sprintf("cron ジョブが削除されました (%s)。意図的な削除か、攻撃者が痕跡を消したかを確認してください。", p),
+					RelatedLog:  fmt.Sprintf("cron: %s が削除されました", p),
+				}, p)
+			events = append(events, ev)
 		}
 	}
 
@@ -152,12 +162,13 @@ func (c *CronMonitor) scan() map[string]string {
 			continue
 		}
 		if info.IsDir() {
-			// The crontabs directory is mode drwx-wx--T (root:crontab), so the
-			// agent cannot list it. Read it through the read-only sudo helper
-			// instead; if that fails, fall back to the (blind) walk and the
-			// unreadable warning in checkUnreadable().
+			// The crontabs directory is mode drwx-wx--T (root:crontab). With
+			// A-4 the agent holds CAP_DAC_READ_SEARCH (AmbientCapabilities)
+			// and reads it directly; a non-A-4 deployment falls back to the
+			// legacy sudo helper. If both fail, fall back to the (blind)
+			// walk and the unreadable warning in checkUnreadable().
 			if p == cronSudoDir {
-				if entries, herr := readCronViaSudo(); herr == nil {
+				if entries, herr := readCronEntries(p); herr == nil {
 					for name, h := range entries {
 						current[filepath.Join(p, name)] = h
 					}
@@ -235,10 +246,11 @@ func (c *CronMonitor) checkUnreadable() {
 		}
 		_, rerr := os.ReadDir(p)
 		if rerr != nil {
-			// For the crontabs directory the sudo helper may still cover
-			// it, in which case monitoring is not actually blind.
+			// For the crontabs directory a direct read (A-4 capability) or
+			// the legacy sudo helper may still cover it, in which case
+			// monitoring is not actually blind.
 			if p == cronSudoDir {
-				if _, herr := readCronViaSudo(); herr == nil {
+				if _, herr := readCronEntries(p); herr == nil {
 					if c.unreadable[p] {
 						delete(c.unreadable, p)
 					}
@@ -249,14 +261,8 @@ func (c *CronMonitor) checkUnreadable() {
 				continue
 			}
 			c.unreadable[p] = true
-			c.emitFn(module.SecurityEvent{
-				Category:  "cron",
-				Level:     "warning",
-				Title:     msg(c.lang, "cron.unreadable.title"),
-				Message:   msg(c.lang, "cron.unreadable.msg", p),
-				Source:    p,
-				Timestamp: time.Now(),
-			})
+			c.emitFn(i18nEvent(c.lang, "cron", "warning", "cron.unreadable.title", "cron.unreadable.msg",
+				module.SecurityEvent{Source: p, Timestamp: time.Now()}, p))
 			if c.logger != nil {
 				c.logger.Warn("Kizuna-Security cron: 監視不能ディレクトリ: %s", p)
 			}
@@ -274,10 +280,50 @@ const cronSudoDir = "/var/spool/cron/crontabs"
 // (/etc/sudoers.d/kizuna-security-cron). It prints "<name>\t<sha256>" lines.
 const cronSudoHelper = "/usr/local/bin/kizuna-cron-read.sh"
 
+// readCronEntries returns base name -> sha256 for the per-user crontab
+// directory. It tries a direct read first (the A-4 path: the agent holds
+// CAP_DAC_READ_SEARCH and can list the otherwise unreadable drwx-wx--T dir),
+// then falls back to the legacy sudo helper for a non-A-4 deployment. An error
+// means neither worked and the caller should use the blind walk + unreadable
+// warning.
+func readCronEntries(dir string) (map[string]string, error) {
+	if entries, err := readCronDirDirect(dir); err == nil {
+		return entries, nil
+	}
+	return readCronViaSudo()
+}
+
+// readCronDirDirect lists dir with os.ReadDir and hashes each regular file.
+// It requires read permission on the directory; without CAP_DAC_READ_SEARCH
+// the drwx-wx--T crontabs directory is not listable and this returns an error.
+func readCronDirDirect(dir string) (map[string]string, error) {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]string)
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if name == "" || strings.ContainsAny(name, "/\\") || name == "." || name == ".." {
+			continue
+		}
+		h, herr := hashFile(filepath.Join(dir, name))
+		if herr != nil {
+			continue
+		}
+		out[name] = h
+	}
+	return out, nil
+}
+
 // readCronViaSudo runs the read-only helper with sudo -n and parses its
 // output. It returns base name -> sha256. Any error (helper missing, sudo
 // denied, timeout) is returned so the caller can fall back to the blind walk
-// and the unreadable warning.
+// and the unreadable warning. It is kept as a fallback for deployments where
+// the agent is not yet A-4 (no CAP_DAC_READ_SEARCH).
 func readCronViaSudo() (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

@@ -147,6 +147,28 @@ type NotificationsConfig struct {
 	CPUTempCriticalC    float64 `json:"cpu_temp_critical_c"`
 
 	NotifyRecovery bool `json:"notify_recovery"`
+
+	// --- 通知の信頼性 (タスク1) ---
+	// Discord は短時間に大量の Webhook を送ると HTTP 429 (rate limit)
+	// を返す。実機の攻撃テストで 393 件中 273 件が未達になったため、
+	// リトライと集約を追加する。
+	//
+	// DiscordMaxRetries is the maximum number of 429/5xx retries per send.
+	// 0 disables retry (old behaviour). Default: 5.
+	DiscordMaxRetries int `json:"discord_max_retries"`
+	// DiscordBackoffMaxSec caps the exponential backoff wait. Default: 60.
+	DiscordBackoffMaxSec int `json:"discord_backoff_max_sec"`
+
+	// BatchEnabled groups alerts that arrive close together into one
+	// message, so a burst does not trigger rate limiting. History is still
+	// recorded per-alert (only the notification is batched). *bool so an
+	// absent key means the default (true) rather than Go's false.
+	BatchEnabled *bool `json:"batch_enabled"`
+	// BatchWindowSec is the aggregation window. Default: 5.
+	BatchWindowSec int `json:"batch_window_sec"`
+	// BatchExcludeCritical sends critical alerts immediately instead of
+	// batching them, so a single critical is never delayed. Default: true.
+	BatchExcludeCritical *bool `json:"batch_exclude_critical"`
 }
 
 // AuthConfig controls the dashboard login and user management.
@@ -282,6 +304,14 @@ type DashboardConfig struct {
 	// AlertHistoryFile persists the alert history across restarts.
 	// Empty uses the default (logs/alert_history.jsonl).
 	AlertHistoryFile string `json:"alert_history_file"`
+
+	// AlertHistoryKeyPath is the HMAC key used to sign each persisted alert
+	// history line. It must be a key dedicated to this purpose (do not reuse
+	// the security-log chain key): one key per use limits the blast radius of
+	// a leak and lets each key be rotated independently. A relative path is
+	// resolved against the config directory. Empty disables signing
+	// (backward compatible).
+	AlertHistoryKeyPath string `json:"alert_history_key_path"`
 }
 
 // IsUploadEnabled reports whether plugin uploads are enabled.
@@ -359,6 +389,7 @@ func (c *AgentConfig) resolvePaths(configDir string) {
 func (c *DashboardConfig) resolvePaths(configDir string) {
 	c.LogFile = absFromConfigDir(configDir, c.LogFile)
 	c.AlertHistoryFile = absFromConfigDir(configDir, c.AlertHistoryFile)
+	c.AlertHistoryKeyPath = absFromConfigDir(configDir, c.AlertHistoryKeyPath)
 	c.PluginsDir = absFromConfigDir(configDir, c.PluginsDir)
 	c.Plugins.PublicKeyFile = absFromConfigDir(configDir, c.Plugins.PublicKeyFile)
 }
