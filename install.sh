@@ -766,6 +766,35 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
             warn "H-1 移行に失敗しました。手動で再実行してください: sudo $MIGRATE_SCRIPT $RUN_USER"
         fi
 
+        # 2b) 移行済みでも agent unit は最新テンプレートへ追従させる。移行を
+        #     スキップする分岐では unit が再生成されないため、テンプレート側の
+        #     修正（例: ReadWritePaths の配備依存パス除去と "-" による不在許容）
+        #     が既存環境へ永久に伝わらない。
+        AGENT_SRC="systemd/kizuna-eye-agent.service"
+        AGENT_DST="/etc/systemd/system/kizuna-eye-agent.service"
+        if [ "$ALREADY_INSTALLED" -eq 1 ] && [ -f "$AGENT_SRC" ] && [ -f "$AGENT_DST" ]; then
+            if ! $SUDO grep -q 'Kizuna-Eye Agent' "$AGENT_DST" 2>/dev/null; then
+                warn "$AGENT_DST は Kizuna-Eye の unit ではないため更新しません（手動で確認してください）"
+            else
+                AGENT_TMP="$(mktemp)"
+                sed -e "s|__DIR__|$PWD|g" \
+                    -e "s|__BIN__|$BIN_DIR|g" \
+                    -e "s|__DATA__|$DATA_DIR|g" \
+                    "$AGENT_SRC" > "$AGENT_TMP"
+                if grep -q '__[A-Z][A-Z_]*__' "$AGENT_TMP"; then
+                    warn "agent unit に未置換のプレースホルダが残るため更新をスキップします: grep -n '__[A-Z][A-Z_]*__' $AGENT_TMP"
+                elif $SUDO cmp -s "$AGENT_TMP" "$AGENT_DST"; then
+                    log "   ℹ️ agent unit は最新です"
+                else
+                    # 手編集を失わないよう退避してから差し替える（migrate と同じ流儀）。
+                    $SUDO cp -a "$AGENT_DST" "/tmp/kizuna-eye-agent.service.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+                    $SUDO install -m 0644 -o root -g root "$AGENT_TMP" "$AGENT_DST"
+                    ok "agent unit を最新テンプレートで更新しました（旧版は /tmp に退避）"
+                fi
+                rm -f "$AGENT_TMP"
+            fi
+        fi
+
         # 3) dashboard unit を導入（__USER__/__DIR__/__BIN__/__DATA__ を置換）
         DASH_SRC="systemd/kizuna-dashboard.service"
         DASH_DST="/etc/systemd/system/kizuna-dashboard.service"
