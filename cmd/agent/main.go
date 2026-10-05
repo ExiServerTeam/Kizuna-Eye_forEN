@@ -284,7 +284,9 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			lg.InfoT("agent.modules_missing", path)
+			// modules.json が無いのは正常（モジュール未登録）。初回起動のログを
+			// 埋めないよう Debug に落とす。
+			lg.DebugT("agent.modules_missing", path)
 			return nil
 		}
 		return fmt.Errorf("modules.json 読み込み失敗: %w", err)
