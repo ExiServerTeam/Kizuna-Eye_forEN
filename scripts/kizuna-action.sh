@@ -133,6 +133,28 @@ case "$action" in
       /var/lib/kizuna-eye/backups/*) ;;
       *) /usr/bin/printf 'backup path not allowed\n' >&2; exit 3 ;;
     esac
+    # 追加の防御（root で書き込むため）:
+    #   - 復元先そのものが symlink なら拒否（install は最終要素の symlink を
+    #     辿らず unlink する実装だが、実装差に依存しない）
+    #   - 親ディレクトリを実体解決し、解決後も許可プレフィックス内であることを
+    #     確認する（例: /tmp/link -> /etc のような親 symlink を経由して
+    #     root が /etc 配下へ書くのを防ぐ）
+    #   - backup 側の symlink も拒否（root に任意ファイルを読ませない）
+    if [ -L "$target" ]; then
+      /usr/bin/printf 'target is a symlink\n' >&2; exit 3
+    fi
+    if [ -L "$backup" ]; then
+      /usr/bin/printf 'backup is a symlink\n' >&2; exit 3
+    fi
+    parent="$(/usr/bin/dirname -- "$target")"
+    rparent="$(/usr/bin/readlink -f -- "$parent" 2>/dev/null || true)"
+    if [ -z "$rparent" ] || [ ! -d "$rparent" ]; then
+      /usr/bin/printf 'target directory not found\n' >&2; exit 3
+    fi
+    case "$rparent" in
+      /tmp|/tmp/*|/var/tmp|/var/tmp/*|/dev/shm|/dev/shm/*|/run|/run/*) ;;
+      *) /usr/bin/printf 'target directory not allowed\n' >&2; exit 3 ;;
+    esac
     [ -f "$backup" ] || { /usr/bin/printf 'backup missing\n' >&2; exit 4; }
     /usr/bin/install -m 0644 -- "$backup" "$target"
     ;;

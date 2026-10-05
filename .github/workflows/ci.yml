@@ -56,3 +56,32 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           govulncheck ./...
+
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 so scripts/check_secrets.sh can walk the full published
+      # history (remote branches + tags) instead of only the checkout commit.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck (warnings are fatal)
+        run: git ls-files -z '*.sh' | xargs -0 shellcheck -S warning
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run frontend static checks (XSS guard / i18n consistency)
+        run: |
+          node scripts/check_xss.js
+          node scripts/check_i18n.js
+
+      - name: Check that no secrets are committed
+        run: bash scripts/check_secrets.sh

@@ -27,9 +27,10 @@ PKG="kizuna-eye"
 log() { echo "[apt-repo] $*"; }
 
 # --- .deb を集める ---
-shopt -s nullglob
-DEBS=( "$ROOT"/dist/${PKG}_*_${ARCH}.deb )
-shopt -u nullglob
+# compgen -G でグロブ展開する。パターンを 1 つの引用文字列として渡せるため、
+# 意図しない単語分割・パス名展開を避けつつ mapfile で確実に配列化できる
+# （`DEBS=( ... * ... )` 形式は shellcheck の SC2206/SC2140 を招く）。
+mapfile -t DEBS < <(compgen -G "$ROOT/dist/${PKG}_*_${ARCH}.deb" || true)
 if [ ${#DEBS[@]} -eq 0 ]; then
     echo "❌ dist/ に .deb がありません。先に ./packaging/build-deb.sh を実行してください。" >&2
     exit 1

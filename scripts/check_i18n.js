@@ -1,9 +1,14 @@
 // i18n キー整合性チェッカー
-// 使い方: node check_i18n.js <web/static のパス>
+// 使い方: node check_i18n.js [web/static のパス]
+//
+// 引数を省略した場合は、このスクリプトからの相対（../web/static）を使う。
+// 以前は '.'（実行時の CWD）を既定にしていたため、リポジトリ直下で
+// `node scripts/check_i18n.js` と実行すると i18n.js を開けず ENOENT で
+// 落ちていた。check_xss.js と同じ __dirname 基準に揃える。
 const fs = require('fs');
 const path = require('path');
 
-const dir = process.argv[2] || '.';
+const dir = process.argv[2] || path.join(__dirname, '..', 'web', 'static');
 const i18n = fs.readFileSync(path.join(dir, 'i18n.js'), 'utf8');
 
 // 辞書部分だけを切り出す（STORAGE_KEY より前）
