@@ -11,8 +11,8 @@
 #   - GOTRACEBACK=crash で各 goroutine のスタックを残す
 # が機能する。
 #
-# インストール（install-services.sh が __...__ を置換して導入する）:
-#   sudo systemd/install-services.sh user
+# インストール（install.sh が __...__ を置換して導入する）:
+#   sudo ./install.sh
 # 手動で入れる場合:
 #   sed -e "s|__USER__|$USER|g" -e "s|__DIR__|$PWD|g" \
 #       -e "s|__BIN__|/opt/kizuna-eye/bin|g" \
@@ -31,6 +31,11 @@ Wants=network-online.target
 Type=simple
 User=__USER__
 Group=__USER__
+# H-1 移行後、agent が書くログ/状態はグループ kizuna-eye 所有になる。
+# systemd は User= の補助グループを自動では引き継がないため、明示的に
+# SupplementaryGroups を与えて dashboard が共有ログを読めるようにする。
+# グループが無い環境（H-1 未実施）では systemd が警告するだけで起動は続く。
+SupplementaryGroups=kizuna-eye
 WorkingDirectory=__DIR__
 
 # Go ランタイムのメモリ調整（start.sh と同じ既定）。

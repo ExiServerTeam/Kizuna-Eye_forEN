@@ -20,8 +20,10 @@
 #   - 設定 (agent_config.json / modules.json) は __DATA__ のまま 0640 で共有する。
 #     状態ファイルの絶対パスは modules.json 側に書き込まれている。
 #
-# インストール:
-#   sudo systemd/migrate-agent-user.sh user
+# インストール（推奨・install.sh から自動実行される）:
+#   sudo ./install.sh --systemd
+# 手動で行う場合:
+#   sudo systemd/migrate-agent-user.sh <実行ユーザー>
 # ============================================================
 [Unit]
 Description=Kizuna-Eye Agent (isolated user)
