@@ -21,10 +21,68 @@
     font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
     font-size: 0.82rem;
     line-height: 1.6;
-    white-space: pre;
+    white-space: pre-wrap;
+    word-break: break-all;
     max-width: 100%;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+}
+
+.log-viewer mark {
+    background: #fde047;
+    color: #111;
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.log-empty {
+    color: var(--text-muted);
+}
+
+/* 検索 / フィルタ行 */
+.log-filterbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 14px;
+    padding: 12px 18px;
+    margin-bottom: 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    min-width: 0;
+}
+
+.log-search {
+    flex: 1 1 240px;
+    min-width: 160px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.log-search:focus {
+    outline: none;
+    border-color: var(--primary-color);
+}
+
+.log-filter-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.log-match-count {
+    margin-left: auto;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 
 .log-status {
@@ -135,6 +193,38 @@
     white-space: nowrap;
     padding-top: 9px;
     padding-bottom: 9px;
+}
+
+/* 自動更新が ON の間は緑＋点滅で「今ライブ更新中」を一目で示す。
+   textContent の先頭に ● を付けるので、色が変わらない環境でも
+   文字だけで ON が判別できる（二重の手がかり）。 */
+#logFollowBtn.follow-on {
+    background: #16a34a;
+    border-color: #15803d;
+    color: #fff;
+    font-weight: 600;
+}
+
+#logFollowBtn.follow-on:hover {
+    background: #15803d;
+    border-color: #166534;
+}
+
+#logFollowBtn.follow-on::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #86efac;
+    margin-right: 6px;
+    vertical-align: middle;
+    animation: log-live-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes log-live-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.7); }
 }
 
 /* 横幅が足りないときは操作群を次の行に回し、左寄せで押しやすく。 */

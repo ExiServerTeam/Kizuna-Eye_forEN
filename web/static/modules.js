@@ -519,22 +519,34 @@
                                (s === 'failed' || s === 'error') ? t('status.failed') :
                                (s === 'running' || s === 'processing') ? t('status.running') : t('status.unknown');
 
-            // ★ Phase 8-6: バッジはLITE/PRO/PLUGIN、名前欄はdisplay_name
+            // バッジはプラグインの Tag() 宣言を最優先する。宣言が無い場合は
+            // 後方互換として display_name に LITE/PRO を含むかを見て、
+            // それも無ければ "PLUGIN" とする。
             let versionBadge, versionLabel, displayLabel;
             if (mod.type === 'plugin') {
                 const meta = pluginMetas.get(mod.name);
                 const displayName = meta?.display_name || '';
                 displayLabel = displayName || mod.name;
-                const upper = displayName.toUpperCase();
-                if (upper.includes('LITE')) {
-                    versionBadge = 'badge-lite';
-                    versionLabel = 'LITE';
-                } else if (upper.includes('PRO')) {
-                    versionBadge = 'badge-pro';
-                    versionLabel = 'PRO';
+                // 宣言されたタグ（"GUARD" 等）。大文字化してそのまま使う。
+                const declaredTag = (meta?.tag || '').trim().toUpperCase();
+                if (declaredTag) {
+                    versionLabel = declaredTag;
+                    versionBadge = declaredTag === 'GUARD' ? 'badge-guard'
+                                 : declaredTag === 'LITE' ? 'badge-lite'
+                                 : declaredTag === 'PRO' ? 'badge-pro'
+                                 : 'badge-plugin';
                 } else {
-                    versionBadge = 'badge-plugin';
-                    versionLabel = 'PLUGIN';
+                    const upper = displayName.toUpperCase();
+                    if (upper.includes('LITE')) {
+                        versionBadge = 'badge-lite';
+                        versionLabel = 'LITE';
+                    } else if (upper.includes('PRO')) {
+                        versionBadge = 'badge-pro';
+                        versionLabel = 'PRO';
+                    } else {
+                        versionBadge = 'badge-plugin';
+                        versionLabel = 'PLUGIN';
+                    }
                 }
             } else {
                 versionBadge = (mod.config?.type === 'pro') ? 'badge-pro' : 'badge-lite';

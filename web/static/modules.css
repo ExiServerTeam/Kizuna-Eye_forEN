@@ -210,8 +210,8 @@ label.btn-secondary:hover {
 }
 
 .badge-pro {
-    background: rgba(59, 130, 246, 0.15);
-    color: #3b82f6;
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
 }
 
 .badge-lite {
@@ -223,6 +223,13 @@ label.btn-secondary:hover {
 .badge-plugin {
     background: rgba(168, 85, 247, 0.15);
     color: #a855f7;
+}
+
+/* プラグインが Tag() で宣言する「GUARD」等の専用バッジ。
+   GUARD は防御系（セキュリティ監視）を表す。ロイヤルブルー。 */
+.badge-guard {
+    background: rgba(65, 105, 225, 0.18);
+    color: #4169e1;
 }
 
 /* ============================================================
@@ -321,10 +328,15 @@ label.btn-secondary:hover {
 }
 
 .module-card-header {
+    /* 1行目: ステータスバッジ + プラグイン名（module-card-row）
+       2行目: 実行等の操作ボタン（module-card-actions）
+       の縦2段にする。横並びだと名前が長いときボタンに押されて
+       折り返すか切れるため、名前は上、操作は下に固定する。 */
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 10px;
     margin-bottom: 14px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--border-color);
@@ -332,7 +344,9 @@ label.btn-secondary:hover {
 
 .module-card-row {
     display: flex;
-    align-items: center;
+    /* 名前が長いと2行以上に折り返すため、中央揃えだとバッジが
+       宙に浮いて見える。上揃えにして名前の1行目と揃える。 */
+    align-items: flex-start;
     gap: 10px;
     flex: 1;
     min-width: 0;
@@ -343,15 +357,21 @@ label.btn-secondary:hover {
     font-size: 1.05rem;
     font-weight: 600;
     color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* 1行に強制すると長いプラグイン名が「…」で切れて何のプラグインか
+       分からなくなる。折り返して全文を出す。長い英数字トークンでも
+       溢れないよう overflow-wrap を併用する。 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.3;
     flex: 1;
     min-width: 0;
 }
 
 .module-card-actions {
     display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     gap: 8px;
     flex-shrink: 0;
 }
@@ -953,7 +973,14 @@ label.btn-secondary:hover {
 
     .module-name {
         font-size: 0.95rem;
-        flex: 0 0 auto;
+        /* 1行目（バッジ + 名前）の横並びを保ったまま、名前だけが
+           残り幅を占有して折り返せるようにする。flex: 1 1 100% に
+           すると名前が改行されてバッジと別行になる。 */
+        flex: 1 1 auto;
+        min-width: 0;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        word-break: break-word;
     }
 
     .module-card-actions {
