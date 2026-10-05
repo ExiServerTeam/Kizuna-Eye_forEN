@@ -134,7 +134,7 @@ func NewPluginManager(storage *ModulesStorage, cfg *config.DashboardConfig, logg
 	// The directory holds executable .so files. It must stay owner-writable
 	// (only the dashboard user may place plugins) while remaining readable and
 	// traversable by the agent: with A-4 the agent runs as a separate user
-	// (kizuna-agent) and could not load plugins out of a 0700 directory.
+	// (kizuna-eye) and could not load plugins out of a 0700 directory.
 	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("plugins ディレクトリ作成失敗: %w", err)
 	}
@@ -641,7 +641,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// plugin to be re-uploaded.
 	//
 	// A-4: os.CreateTemp() produced the .so as 0600 and the uploader is the
-	// dashboard user while the agent runs as kizuna-agent, so the installed
+	// dashboard user while the agent runs as kizuna-eye, so the installed
 	// files must be made world-readable. Otherwise the signature check fails
 	// closed and every plugin silently stops loading after the migration.
 	// Read-only for others: only the owner (the dashboard user) can write,

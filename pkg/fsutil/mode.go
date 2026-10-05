@@ -8,7 +8,7 @@ import (
 // TightenSharedConfigMode rewrites the mode of path to owner-only (0600) while
 // keeping a deliberately granted group-read bit (0640) intact.
 //
-// Why this exists (A-4): the agent runs as its own system user (kizuna-agent)
+// Why this exists (A-4): the agent runs as its own system user (kizuna-eye)
 // while the dashboard — and therefore the operator who owns the data directory
 // — keeps running as the login account. The agent has to read the shared
 // configuration (agent_config.json, modules.json) that the dashboard rewrites on

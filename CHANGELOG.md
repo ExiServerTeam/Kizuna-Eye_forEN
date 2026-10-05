@@ -27,7 +27,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `uninstall.sh`: `install.sh` が導入した systemd サービス・unit・sudoers・ヘルパー・/etc/kizuna-eye・sysctl 設定を撤去する。`--purge` でデータ・鍵・バイナリ・専用ユーザーまで完全削除、`--dry-run` で内容確認のみ
+- `install.sh` にプラグイン署名ステップを追加（純正プラグインのみ。署名鍵が無ければ生成し `plugin-sign -sign-all`）
+- `install.sh` に systemd 登録（dashboard + agent）を内蔵。`--no-systemd` で手動管理に切替可
+- `update.sh` にプラグイン再署名ステップを追加（再ビルド後に `plugin-sign -sign-all`）
+
 ### Changed
+- `install.sh` 一本で初期セットアップが完結（systemd 登録まで自動）。agent は専用ユーザー `kizuna-eye` で起動
+- `update.sh` / `safe_update.sh` の systemd 検出を `kizuna-eye-agent` / `kizuna-dashboard` 対応にし、再起動・ロールバックを検出 unit で実施
+- `start.sh` / `stop.sh` の案内メッセージを `kizuna-eye-agent` に統一
+- `systemd/kizuna-dashboard.service` に `SupplementaryGroups=kizuna-eye` を追加（H-1 後の共有ログを dashboard が読めるように）
+- 旧 systemd 補助スクリプト `systemd/install-services.sh` / `systemd/migrate-to-systemd.sh` と旧 unit `systemd/kizuna-eye.service` / `systemd/kizuna-agent.service` を削除（install.sh / migrate-agent-user.sh に一本化）
+- コメント内の旧ユーザー名 `kizuna-agent` を `kizuna-eye` に統一
 - agent 専用ユーザーを `kizuna-agent` から `kizuna-eye` に、agent の systemd unit を `kizuna-eye-agent.service` に変更（H-1 命名統一。コード完了・実機反映は別セッション）。既存の `kizuna-eye.service`（start.sh を呼ぶ旧 system service, Type=oneshot）とは別物で、名前衝突を避けるため agent 版は `kizuna-eye-agent.service` とした
 - `migrate-agent-user.sh` / `start.sh` / `stop.sh` / `kizuna-watchdog.sh` の systemd 検出・unit 名を `kizuna-eye-agent` に対応
 - plugin `kizuna_security` の cron 監視を sudo ヘルパーから直接読み取りへ変更（`AmbientCapabilities=CAP_DAC_READ_SEARCH` で `/var/spool/cron/crontabs` を直接読む。sudo/sudoers 不要。sudo 失敗時は従来のヘルパーへフォールバック）
@@ -36,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `kizuna-watchdog.service`（systemd user unit, Type=oneshot）が service 終了時に cgroup 内の agent を道連れに SIGTERM で殺し、agent が約2秒で停止を繰り返す問題を修正（`KillMode=none` を追加）
+- `install.sh` / `update.sh` のビルドが Ubuntu 26.04 以降で失敗する問題を修正。先頭で `. /etc/os-release` を読むため `VERSION` が OS バージョン文字列（例 `26.04.1 LTS ...`）で上書きされ、ldflags に空白入りの不正値が渡っていた。os-release はサブシェルで必要値のみ取得し、ビルド用の変数を `KVERSION` に分離
+- `install.sh` を root 実行したとき cron 読み取りヘルパー / ワンクリック対処ヘルパーの導入が誤ってスキップされる問題を修正（`[ -z "$SUDO" ]` は root で真になるため、`id -u -ne 0` を併せて判定）
+- `update.sh` のプラグイン再署名が sudo 実行時に `/root/.kizuna-eye/...` の鍵を探して失敗する問題を修正（`SUDO_USER` のホーム基準で鍵を解決）
+- `update.sh` / `safe_update.sh` が systemd 管理下で agent しか再起動せず、dashboard が古いバイナリのまま動き続ける問題を修正（dashboard + agent の両 unit を検出して再起動）
 
 ### Security
 - エージェントから受信したステータスを範囲検証（`CPUUsage` / `MemPercent` / `DiskPercent` が 0〜100 の範囲外なら破棄）。不正値がメトリクス履歴・`/api/metrics` に流れ込むのを防止

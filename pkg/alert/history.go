@@ -119,7 +119,7 @@ func (h *History) SetPersistence(path string) {
 	h.path = path
 	_ = os.MkdirAll(filepath.Dir(path), 0700)
 	// 0600 へ締めるが、A-4 の移行が与えた group read (0640) は残す。このファイルは
-	// ダッシュボードが書き、agent (kizuna-agent) が V2-B の整合性検証で読むため、
+	// ダッシュボードが書き、agent (kizuna-eye) が V2-B の整合性検証で読むため、
 	// 無条件の 0600 は agent に「open failed」の警告を出させ続ける。
 	fsutil.TightenSharedConfigMode(path)
 }

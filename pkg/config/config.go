@@ -346,7 +346,7 @@ func (c *DashboardConfig) ResolvePluginsDir() string {
 // EnsurePluginsDir creates the plugins directory if needed.
 // The directory holds executable .so files: it must stay owner-writable so
 // only the dashboard user can place plugins, but the agent has to traverse and
-// read it. With A-4 the agent runs as a separate user (kizuna-agent), so 0755
+// read it. With A-4 the agent runs as a separate user (kizuna-eye), so 0755
 // is used instead of the previous owner-only 0700.
 func (c *DashboardConfig) EnsurePluginsDir() (string, error) {
 	dir := c.ResolvePluginsDir()
@@ -421,7 +421,7 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	// The agent config holds the shared agent token; tighten the mode on
 	// load so a file created world-readable is not left exposed.
 	//
-	// A-4: the agent runs as kizuna-agent while the dashboard (and the
+	// A-4: the agent runs as kizuna-eye while the dashboard (and the
 	// operator who owns this file) runs as the login user, so the migration
 	// grants the shared kizuna-eye group read (0640). Tightening to 0600
 	// here would make the config unreadable for the agent as soon as the

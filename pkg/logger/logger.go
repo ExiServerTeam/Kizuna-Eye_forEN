@@ -86,7 +86,7 @@ func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWri
 	// Tighten an existing file that may have been created world-readable.
 	// 0640 keeps a deliberate group-read bit: A-4 runs the agent as its own
 	// user, and the operator (plus the dashboard's log viewer, which reads the
-	// agent log) must still be able to read logs written by kizuna-agent.
+	// agent log) must still be able to read logs written by kizuna-eye.
 	// Which group that is decided by the containing directory's setgid bit.
 	_ = os.Chmod(path, 0640)
 	return w, nil
