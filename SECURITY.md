@@ -37,7 +37,7 @@ Kizuna-Eye のセキュリティポリシーです。脆弱性の報告方法・
 機微な内容（エクスプロイト・鍵・実 IP 等）を含む場合は、PGP 暗号化を
 希望できます。公開鍵は次の方法で取得してください。
 
-- リポジトリの `SECURITY.md` に鍵指纹（fingerprint）を掲載する運用に
+- リポジトリの `SECURITY.md` に鍵指紋（fingerprint）を掲載する運用に
   段階的に移行します。当面はメールで「暗号化希望」と伝えてください。
   （フィンガープリントを折り返し連絡します。）
 
@@ -82,7 +82,7 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
   読みます。悪意ある `.so` はこの検査プロセスでコード実行に至り得ます。
   `bwrap` による分離（`plugins.inspect_isolation`）を推奨します。
 
-### 3. 危険なデフォルト（OSS 公開前に見直し予定）
+### 3. 危険なデフォルト（既定値の見直しを計画中）
 
 - `auth.enabled` は既定 `false`、`public_viewer` は既定 `true`、
   `agent_token` は既定 空、`plugins.require_signature` は既定 `false`。

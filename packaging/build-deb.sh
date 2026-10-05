@@ -70,9 +70,9 @@ cp dashboard_config.example.json agent_config.example.json modules.json.example 
 cp systemd/kizuna-eye-agent.service systemd/kizuna-dashboard.service \
    "$STAGE/usr/share/kizuna-eye/systemd/"
 
-# パッケージ向けに unit を調整する。リポジトリ固有のパス（/samba/share/...）は
-# パッケージ先に存在しないため、ReadWritePaths をデータ領域だけに絞り、
-# Documentation を同梱ドキュメントへ向ける。
+# パッケージ向けに unit を調整する。unit に書かれた環境依存パス（リポジトリ配置や
+# バックアップ先）はパッケージ先に存在しないため、ReadWritePaths をデータ領域だけに
+# 絞り、Documentation を同梱ドキュメントへ向ける。
 for u in "$STAGE/usr/share/kizuna-eye/systemd/"*.service; do
     sed -i -E 's|^ReadWritePaths=.*|ReadWritePaths=/var/lib/kizuna-eye|' "$u"
     sed -i -E 's|^Documentation=.*|Documentation=file:///usr/share/doc/kizuna-eye/README.md|' "$u"

@@ -154,8 +154,14 @@ type NotificationsConfig struct {
 	// リトライと集約を追加する。
 	//
 	// DiscordMaxRetries is the maximum number of 429/5xx retries per send.
-	// 0 disables retry (old behaviour). Default: 5.
-	DiscordMaxRetries int `json:"discord_max_retries"`
+	// It is a *int so an absent key keeps the default (5) instead of Go's
+	// zero value: with a plain int, a config that never set the key silently
+	// disabled retry (0) and every 429 was dropped unretried. An explicit 0
+	// still disables retry (legacy behaviour).
+	// omitempty: a nil pointer is left out when the config is written back
+	// (AlertConfigHandler.persistConfig marshals the whole struct), so the
+	// file keeps documenting the default instead of gaining a "null" value.
+	DiscordMaxRetries *int `json:"discord_max_retries,omitempty"`
 	// DiscordBackoffMaxSec caps the exponential backoff wait. Default: 60.
 	DiscordBackoffMaxSec int `json:"discord_backoff_max_sec"`
 

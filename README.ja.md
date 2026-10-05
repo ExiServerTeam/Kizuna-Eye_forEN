@@ -81,7 +81,7 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 - `pkg/module`（プラグインの共通型・インターフェース。`Module` / `ConfigField` / `SecurityEvent` など）
 - `pkg/status`（`SystemStatus` などの共有型）
 
-手順: (1) `./build.sh` で本体を再ビルド。(2) 各プラグインを同一ソースで再ビルド（例: `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を `plugins/` へ配備し、agent を再起動。
+手順: (1) `./build.sh` で本体を再ビルド。(2) 各プラグインを同一ソースで再ビルド（例: `cd plugins/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を `plugins/` へ配備し、agent を再起動。
 
 ## インストール
 
@@ -182,6 +182,11 @@ agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashb
             "cpu_temp_warn_c": 70,
             "cpu_temp_critical_c": 85,
             "notify_recovery": true,
+            "discord_max_retries": 5,
+            "discord_backoff_max_sec": 60,
+            "batch_enabled": true,
+            "batch_window_sec": 5,
+            "batch_exclude_critical": true,
             "channels": [
                 {
                     "type": "discord",
@@ -191,6 +196,12 @@ agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashb
             ]
         }
     }
+
+通知の信頼性: `discord_max_retries`（既定 5、`0` で再送しない）は HTTP 429/5xx
+を指数バックオフで再送します（待機上限は `discord_backoff_max_sec`、既定 60 秒）。
+`batch_enabled` は `batch_window_sec`（既定 5 秒）以内に届いたアラートを1通に
+集約し、レート制限に掛かりにくくします。`batch_exclude_critical`（既定 true）で
+critical だけは集約せず即時送信します。
 
 `agent_config.json`:
 
@@ -287,7 +298,7 @@ Webダッシュボードの「モジュール管理」タブから `.so` をア�
 
 ### プラグインの例
 
-Kizuna-Backup LITE: アーカイブ / 同期モード、SSH経由のrsync転送、SHA-256検証を備えたバックアッププラグイン（別プロジェクト）。
+Kizuna-Backup LITE: アーカイブ / 同期モード、SSH経由のrsync転送、SHA-256検証を備えたバックアッププラグイン（別プロジェクト）。独立したリポジトリにあるため `install.sh` / `update.sh` は既定では対象にしません。一緒にビルド・配置する場合は `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` を付けて実行してください（同梱の Security プラグインは常にビルド対象です）。
 
 ## ドキュメント
 

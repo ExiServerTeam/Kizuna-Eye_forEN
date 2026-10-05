@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -41,5 +42,45 @@ func TestResolvePluginsDirExplicit(t *testing.T) {
 	cfg := &DashboardConfig{PluginsDir: "plugins"}
 	if got := cfg.ResolvePluginsDir(); got == "" {
 		t.Fatal("ResolvePluginsDir returned empty")
+	}
+}
+
+// Regression for the Discord 429 alert-loss bug: discord_max_retries is a *int
+// so that an absent key keeps the documented default (5) in pkg/notify, while an
+// explicit 0 still means "retry disabled".
+//
+// The same test pins the write-back behaviour: AlertConfigHandler.persistConfig
+// marshals the whole struct, and omitempty must keep a nil pointer out of the
+// file (otherwise the config gains a meaningless "discord_max_retries": null).
+func TestDiscordMaxRetriesPointerSemantics(t *testing.T) {
+	var cfg DashboardConfig
+	if cfg.Notifications.DiscordMaxRetries != nil {
+		t.Fatal("an absent discord_max_retries must stay nil")
+	}
+	out, err := json.Marshal(&cfg.Notifications)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "discord_max_retries") {
+		t.Errorf("nil pointer must be omitted when writing the config: %s", out)
+	}
+
+	// An explicit 0 must survive the round trip: it is the documented way to
+	// disable retry (legacy behaviour).
+	zero := 0
+	cfg.Notifications.DiscordMaxRetries = &zero
+	out, err = json.Marshal(&cfg.Notifications)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), `"discord_max_retries":0`) {
+		t.Errorf("explicit 0 must be serialized: %s", out)
+	}
+	var back NotificationsConfig
+	if err := json.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.DiscordMaxRetries == nil || *back.DiscordMaxRetries != 0 {
+		t.Errorf("round trip lost the explicit 0: %v", back.DiscordMaxRetries)
 	}
 }

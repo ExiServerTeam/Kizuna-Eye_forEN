@@ -24,7 +24,6 @@
 set -u
 
 NFT=/usr/sbin/nft
-IPTABLES=/usr/sbin/iptables
 CRONTAB_DIR=/var/spool/cron/crontabs
 
 # ss の絶対パスはディストリビューションで /usr/bin と /usr/sbin の
@@ -57,7 +56,7 @@ case "$action" in
     if ! /usr/bin/printf '%s' "$ip" | /usr/bin/grep -Eq '^[0-9a-fA-F:.]+$'; then
       /usr/bin/printf 'invalid ip\n' >&2; exit 3
     fi
-    if /usr/bin/printf '%s' "$ip" | /usr/bin/grep -q ':'; then setname=blocked6; family=ip6; else setname=blocked4; family=ip; fi
+    if /usr/bin/printf '%s' "$ip" | /usr/bin/grep -q ':'; then setname=blocked6; else setname=blocked4; fi
     # テーブルが無ければ作る（冪等）。
     $NFT list table inet kizuna >/dev/null 2>&1 || {
       $NFT add table inet kizuna
@@ -101,7 +100,7 @@ case "$action" in
     # バージョンによっては解釈が異なるため、全リスナーを取ってから
     # ポート番号で絞り込む（誤って「プロセスなし」と言わないため）。
     pids=$("$SS" -ltnp 2>/dev/null \
-             | /usr/bin/grep -E ":$port[[:space:]]" \
+             | /usr/bin/grep -E ":${port}[[:space:]]" \
              | /usr/bin/grep -oE 'pid=[0-9]+' \
              | /usr/bin/sed 's/^pid=//' \
              | /usr/bin/sort -u)

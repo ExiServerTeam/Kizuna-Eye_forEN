@@ -17,8 +17,6 @@ func newTestMonitor(minLevel string) *Monitor {
 	return NewMonitor(cfg, nil, nil)
 }
 
-func firstEvent(t *testing.T, m *Monitor) []struct{} { return nil }
-
 func TestSSHLoginDetected(t *testing.T) {
 	m := newTestMonitor("info")
 	m.loginKnownIPs["1.2.3.4"] = true

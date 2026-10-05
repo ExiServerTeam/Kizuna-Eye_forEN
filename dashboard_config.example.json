@@ -35,6 +35,11 @@
         "cpu_temp_warn_c": 70,
         "cpu_temp_critical_c": 85,
         "notify_recovery": true,
+        "discord_max_retries": 5,
+        "discord_backoff_max_sec": 60,
+        "batch_enabled": true,
+        "batch_window_sec": 5,
+        "batch_exclude_critical": true,
         "channels": [
             {
                 "type": "discord",

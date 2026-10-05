@@ -3,8 +3,10 @@
 
 BIN_DIR ?= /opt/kizuna-eye/bin
 # VERSION is the single source of truth (repo root). Never hardcode a version
-# here: it would drift from build.sh / the web UI on the next release.
-VERSION ?= $(shell cat VERSION 2>/dev/null || echo v0.7.1)
+# here: it would drift from build.sh / the web UI on the next release. The old
+# "|| echo v0.7.1" fallback did exactly that after the v0.7.0 release, so the
+# fallback now says only that the version is unknown.
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo v0.0.0-unknown)
 BUILD_TIME := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X Kizuna-Eye/internal/api.Version=$(VERSION) -X Kizuna-Eye/internal/api.BuildTime=$(BUILD_TIME)
 

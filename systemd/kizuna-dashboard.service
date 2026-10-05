@@ -27,6 +27,12 @@ Documentation=file://__DIR__/docs/PROCEDURE.md
 After=network-online.target
 Wants=network-online.target
 
+# 再起動の暴走（設定ミスで即死を繰り返す）を防ぐ。StartLimit* は [Unit] の
+# 設定。ここに置かないと systemd が「Unknown key ... ignoring」で無視し、
+# 制限が効かない（agent unit と同じ理由）。
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
 [Service]
 Type=simple
 User=__USER__
@@ -56,9 +62,6 @@ ExecStart=__BIN__/dashboard_linux -config __DATA__/dashboard_config.json
 # クラッシュ時のみ自動再起動（正常終了や手動 stop では再起動しない）。
 Restart=on-failure
 RestartSec=5
-# 再起動の暴走（設定ミスで即死を繰り返す）を防ぐ。
-StartLimitIntervalSec=300
-StartLimitBurst=10
 
 # 停止は SIGTERM を送って待つ。
 KillSignal=SIGTERM
