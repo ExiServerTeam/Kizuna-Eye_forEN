@@ -1,59 +1,84 @@
 # Kizuna-Eye v0.7.0
 
-低スペックサーバー向けの軽量監視ツール。今回は **インストール体験の刷新** と **APT パッケージ配布** が中心です。
+A lightweight server monitoring tool written in Go, designed for low-spec machines.
 
-## インストール（推奨: APT）
+This release focuses on **a simpler installation experience** and **APT package distribution**.
 
-Debian / Ubuntu ではビルド不要で入れられます（依存も自動導入）。
+## Features
 
-    # 公開鍵を登録
+- **Lightweight**: ~30–50 MB (Dashboard + Agent)
+- **Real-time updates** via WebSockets
+- **Browser-based configuration** (no SSH required)
+- **Authentication (optional)**: roles (admin / operator / viewer), bcrypt, sessions
+- **Plugin system** using Go `.so` dynamic plugins (Ed25519 signed)
+- **Notifications**: Discord / Slack / Telegram / LINE / Email
+- **Dark / Light mode**
+- **Disk S.M.A.R.T**, network bandwidth, metrics history
+- **Persistent alert history** with runtime thresholds
+- **i18n**: Japanese / English UI (default language selectable at install)
+
+## Requirements
+
+- Go 1.27.1 or higher
+- Ubuntu Server 20.04+ / Debian 11+ (other Linux distributions work too)
+- CGO_ENABLED=1 (when using the plugin package)
+
+## Installation
+
+### APT (recommended, Debian/Ubuntu)
+
+No build required; dependencies are installed automatically.
+
+    # Register the public key (dearmor is required)
     curl -fsSL https://exiserverteam.github.io/Kizuna-Eye_forEN/kizuna.gpg \
       | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
 
-    # リポジトリを追加
+    # Add the repository
     echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye_forEN stable main" \
       | sudo tee /etc/apt/sources.list.d/kizuna.list
 
-    # インストール
     sudo apt update
     sudo apt install kizuna-eye
 
-初回アクセス: `http://<host>:8080` → `/setup` で管理者アカウントを作成。
+First access: `http://<host>:8080` → create an admin account at `/setup`.
 
-対応: Ubuntu 20.04+ / Debian 11+（glibc 2.31 でビルド）。
+Uninstall: `sudo apt remove kizuna-eye` (keep data) / `sudo apt purge kizuna-eye` (full removal).
 
-## 主な変更
+### From source
+
+See README.md for details.
+
+## What's Changed
 
 ### Added
-- APT パッケージ配布: `apt install kizuna-eye` で導入可能。GPG 署名済みリポジトリ（GitHub Pages）
-- `uninstall.sh`: 導入した systemd サービス・sudoers・ヘルパー等を撤去。`--purge` で完全削除
-- `install.sh` 一本化: パッケージ導入 → ビルド → プラグイン署名 → systemd 登録 → 起動まで自動
-- プラグイン署名: 純正プラグインを `install.sh` / `update.sh` が Ed25519 で署名・再署名
-- UI 既定言語（EN/JA）: インストール時に選択（既定 EN）。`/lang.js` で配信
-- install / uninstall / migrate / start / stop のログを EN/JA 対応
+- **APT package distribution**: install with `apt install kizuna-eye` (GPG-signed repository on GitHub Pages)
+- **`uninstall.sh`**: removes services, sudoers, helpers; `--purge` for full removal
+- **One-shot `install.sh`**: packages → build → plugin signing → systemd registration → start
+- **Plugin signing**: `install.sh` / `update.sh` sign official plugins (Ed25519)
+- **UI default language (EN/JA)**: selected at install time (default EN), served via `/lang.js`
+- **EN/JA logs** for install / uninstall / migrate / start / stop
 
 ### Changed
-- `install.sh` を冪等化（2回目以降は再移行せず再起動のみ）
-- `update.sh` / `safe_update.sh` が dashboard + agent の両方を検出して再起動
-- agent 専用ユーザーを `kizuna-eye` に統一（`kizuna-eye-agent.service`）
-- dashboard に `SupplementaryGroups=kizuna-eye` を追加（共有ログ閲覧）
+- `install.sh` is now idempotent (re-run restarts instead of re-migrating)
+- `update.sh` / `safe_update.sh` detect and restart both dashboard and agent
+- Dedicated agent user unified to `kizuna-eye` (`kizuna-eye-agent.service`)
+- `systemd/kizuna-dashboard.service` gains `SupplementaryGroups=kizuna-eye`
 
 ### Fixed
-- Ubuntu 26.04 以降で `. /etc/os-release` が `VERSION` を上書きしビルド失敗する問題
-- root 実行時に cron / action ヘルパー導入がスキップされる問題
-- `update.sh` の再署名が `/root/.kizuna-eye` を探して失敗する問題
-- agent バイナリの実行権限（203/EXEC）を毎回適用するよう修正
+- Build failure on Ubuntu 26.04+ where `. /etc/os-release` overwrote `VERSION`
+- cron / action helper install skipped when run as root
+- `update.sh` plugin re-signing looked for keys under `/root/.kizuna-eye`
+- Agent binary exec permission (203/EXEC) now re-applied on every install
 
 ### Security
-- agent を専用ユーザーで分離（H-1）。鍵・状態は `/var/lib/kizuna-eye`（0700）
-- cron 監視を `CAP_DAC_READ_SEARCH` による直接読み取りへ（sudo/sudoers 不要）
-- プラグイン `.so` の Ed25519 署名検証（`require_signature` で fail-closed）
+- Agent runs as a dedicated user (H-1); keys and state live under `/var/lib/kizuna-eye` (0700)
+- cron monitoring reads crontabs directly via `CAP_DAC_READ_SEARCH` (no sudo/sudoers)
+- Plugin `.so` Ed25519 signature verification (fail-closed with `require_signature`)
 
-## アンインストール
+## Changelog
 
-    sudo apt remove kizuna-eye    # サービス撤去・データ温存
-    sudo apt purge  kizuna-eye    # データ・ユーザーも削除
+See CHANGELOG.md for the full history.
 
-## 添付ファイル
+## Attachments
 
-- `kizuna-eye_0.7.0_amd64.deb` — Ubuntu 20.04+ / Debian 11+ 用パッケージ
+- `kizuna-eye_0.7.0_amd64.deb` — for Ubuntu 20.04+ / Debian 11+
