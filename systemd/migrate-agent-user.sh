@@ -131,15 +131,22 @@ if [ -f "$SRC_DATA/keys/chain.key" ]; then
     echo "   $(stat -c '%a %U:%G' "$KEY_DIR/chain.key") $KEY_DIR/chain.key"
 fi
 
-echo "▶ 3.2 modules.json の状態パスを絶対パスへ書き換え"
 # 既定の "./logs/..." は agent の cwd (= repo) 基準で解決されるため、運用
 # ユーザーが書き換えられる repo logs/ に状態が置かれてしまう。保護ディレクトリ
 # の絶対パスへ書き換えることで、移行後に「隠蔽」できなくする。
 #
 # これらのキーはプラグインの UI (Fields) にも出るため、後から UI で保存しても
 # 消えない（web/static/modules.js は既存 config とマージする: Object.assign）。
+#
+# これは「既存インストールの移行」でだけ必要な処理。初回インストールの
+# modules.json は無い（モジュールは UI から追加）ので、kizuna_security が
+# 登録されていなければ見出しも含めて何も出さない。
 MODULES_JSON="$SRC_DATA/modules.json"
-if [ -f "$MODULES_JSON" ] && command -v python3 >/dev/null 2>&1; then
+if [ -f "$MODULES_JSON" ] && grep -q '"kizuna_security"' "$MODULES_JSON" 2>/dev/null; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "   ⚠️ python3 が無いため modules.json を書き換えられません（install.sh で導入するか手動確認）"
+    else
+    echo "▶ 3.2 modules.json の状態パスを絶対パスへ書き換え"
     python3 - "$MODULES_JSON" "$STATE_DIR" "$A4_SECURITY_LOG_DIR" "$KEY_DIR" "$REPO_LOGS/alert_history.jsonl" <<'PY'
 import json, os, sys, tempfile
 
@@ -177,7 +184,8 @@ for mod in data:
     break
 
 if not patched:
-    print("   ⚠️ modules.json に kizuna_security モジュールが無いため書き換えできません")
+    # bash 側の grep で kizuna_security の存在は確認済み。ここに来るのは
+    # 解析上の例外だけなので、静かに何もしない（初回にモジュールの話を出さない）。
     sys.exit(0)
 
 fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".modules.json-")
@@ -195,8 +203,7 @@ os.replace(tmp, path)
 print("   更新:", path)
 print("   log_path =", os.path.join(log_dir, "kizuna-security.log"))
 PY
-else
-    echo "   ⚠️ python3 が無いため modules.json を書き換えられません（手動確認が必要）"
+    fi
 fi
 
 # agent_config.json の log_file を絶対パスへ書き換える。既定 "logs/agent.log" は
@@ -447,7 +454,7 @@ echo "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果
 echo "   - backup プラグインが /samba/share/CD へ書けること"
 echo "   - 検知ログ（group read なので sudo 不要）: ls -l $A4_SECURITY_LOG_DIR/kizuna-security.log"
 echo "   - 状態ファイル（agent 専用）: sudo ls -l $STATE_DIR"
-echo "   - 共有設定が 0640 kizuna-eye であること: ls -l $SRC_DATA/agent_config.json $SRC_DATA/modules.json"
+echo "   - 共有設定が 0640 kizuna-eye であること: ls -l $SRC_DATA/agent_config.json（modules.json は登録後に作成される）"
 echo "   ログ方針を UI のログ一覧優先に変える場合:"
 echo "     sudo A4_SECURITY_LOG_DIR=$REPO_LOGS $0 $OLD_USER"
 echo "   ロールバック用バックアップ: $BACKUP"
