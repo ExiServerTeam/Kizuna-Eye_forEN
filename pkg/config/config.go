@@ -288,10 +288,13 @@ func (a AuthConfig) GuestSessionTTL() time.Duration {
 
 // DashboardConfig is the dashboard configuration.
 type DashboardConfig struct {
-	ListenAddr    string `json:"listen_addr"`
-	LogFile       string `json:"log_file"`
-	LogLevel      string `json:"log_level"` // "debug"|"info"|"warn"|"error" (empty = debug)
-	StaticDir     string `json:"static_dir"`
+	ListenAddr string `json:"listen_addr"`
+	LogFile    string `json:"log_file"`
+	LogLevel   string `json:"log_level"` // "debug"|"info"|"warn"|"error" (empty = debug)
+	StaticDir  string `json:"static_dir"`
+	// Language is the default UI language ("ja" | "en"). It is the fallback
+	// when the browser has no saved preference. Empty or unknown means "en".
+	Language      string `json:"language"`
 	PluginsDir    string `json:"plugins_dir"`
 	PluginsUpload *bool  `json:"plugins_upload_enabled"` // nil means unset
 
@@ -446,6 +449,7 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 		ListenAddr: ":8080",
 		LogFile:    "",
 		StaticDir:  "./web/static",
+		Language:   "en",
 		Notifications: NotificationsConfig{
 			Enabled:             false,
 			AgentTimeoutSec:     30,

@@ -1017,10 +1017,15 @@
             if (saved && DICT[saved]) return saved;
         } catch (e) {}
 
+        // Server-side default from dashboard_config.json (language). install.sh
+        // sets this; unknown/unset means "en". Served via /lang.js.
+        const def = (window.KIZUNA_DEFAULT_LANG || '').toLowerCase();
+        if (DICT[def]) return def;
+
         const nav = (navigator.language || 'ja').toLowerCase();
         if (nav.startsWith('ja')) return 'ja';
         if (nav.startsWith('en')) return 'en';
-        return 'ja';
+        return 'en';
     }
 
     let currentLang = detectLang();
