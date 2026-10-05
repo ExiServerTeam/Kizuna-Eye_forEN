@@ -72,24 +72,81 @@ A4_SECURITY_LOG_DIR="${A4_SECURITY_LOG_DIR:-$NEW_HOME/logs}"
 TS="$(date +%Y%m%d_%H%M%S)"
 BACKUP="/tmp/kizuna-a4-backup-$TS.tar.gz"
 
-echo "▶ 0. バックアップ"
+# 表示言語。install.sh が UI_LANG を export する（未設定なら日本語）。
+UI_LANG="${UI_LANG:-ja}"
+# 日本語の原文をキーに英語へ訳す。訳が無い行はそのまま（安全側）。
+msg() {
+    local m="$1"
+    [ "$UI_LANG" = "en" ] || { printf '%s' "$m"; return 0; }
+    case "$m" in
+        "▶ 0. バックアップ") m="▶ 0. Backup" ;;
+        "   ロールバックはこの tar を展開し、元の所有者へ chown して start.sh で起動します。") m="   Roll back by extracting this tar, chowning back to the original owner, and starting with start.sh." ;;
+        "▶ 1. ユーザー作成 (存在すればスキップ)") m="▶ 1. Create user (skip if it exists)" ;;
+        "▶ 2. ディレクトリ作成") m="▶ 2. Create directories" ;;
+        "▶ 3. 状態ファイル・チェーン鍵を保護ディレクトリへ移行") m="▶ 3. Move state files and the chain key to the protected directory" ;;
+        "▶ 3.2 modules.json の状態パスを絶対パスへ書き換え") m="▶ 3.2 Rewrite modules.json state paths to absolute" ;;
+        "▶ 3.5 プラグインを agent ユーザーから読めるようにする") m="▶ 3.5 Make plugins readable by the agent user" ;;
+        "▶ 3.6 共有グループと共有設定の権限") m="▶ 3.6 Shared group and config permissions" ;;
+        "▶ 3.7 ログの権限（共有ログ + 検知ログの移設）") m="▶ 3.7 Log permissions (shared logs + detection log relocation)" ;;
+        "▶ 4. unit 導入 (kizuna-eye-agent.service = A-4 版)") m="▶ 4. Install unit (kizuna-eye-agent.service)" ;;
+        "▶ 5. 旧 agent を停止") m="▶ 5. Stop the old agent" ;;
+        "▶ 6. 起動") m="▶ 6. Start" ;;
+        "✅ 移行完了。確認してください:") m="✅ Migration complete. Please verify:" ;;
+        "   - *ダッシュボードを再起動*（kizuna-eye グループ所属を反映。UI のログ閲覧と") m="   - *Restart the dashboard* (to pick up the kizuna-eye group; needed for UI log viewing" ;;
+        "     共有設定の読み書きに必要）。agent は systemd 管理なので start.sh / stop.sh は") m="     and reading/writing shared config). The agent is systemd-managed, so start.sh / stop.sh" ;;
+        "     agent を触らない（二重起動防止）。dashboard だけを指定する:") m="     do not touch it (prevents double start). Restart only the dashboard:" ;;
+        "   - ダッシュボード GET /api/status とアラート/Discord 通知") m="   - Dashboard GET /api/status and alert/Discord notifications" ;;
+        "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果）") m="   - The FIM permission INFO is gone (effect of CAP_DAC_READ_SEARCH)" ;;
+        "   - backup プラグインが /samba/share/CD へ書けること") m="   - The backup plugin can write to /samba/share/CD" ;;
+        "   - 検知ログ（group read なので sudo 不要）: ls -l "*) m="   - Detection log (group read, no sudo needed): ls -l ${m#   - 検知ログ（group read なので sudo 不要）: ls -l }" ;;
+        "   - 状態ファイル（agent 専用）: sudo ls -l "*) m="   - State files (agent-only): sudo ls -l ${m#   - 状態ファイル（agent 専用）: sudo ls -l }" ;;
+        "   - 共有設定が 0640 kizuna-eye であること: ls -l "*) m="   - Shared config is 0640 kizuna-eye: ls -l ${m#   - 共有設定が 0640 kizuna-eye であること: ls -l }" ;;
+        "   ログ方針を UI のログ一覧優先に変える場合:") m="   To prefer UI log listing over protected logs:" ;;
+        "   ロールバック用バックアップ: "*) m="   Rollback backup: ${m#   ロールバック用バックアップ: }" ;;
+        # --- 個別行（動的値を含む） ---
+        "   既存: "*) m="   existing: ${m#   既存: }" ;;
+        "   作成: "*) m="   created: ${m#   作成: }" ;;
+        "   グループ作成: "*) m="   group created: ${m#   グループ作成: }" ;;
+        *": 既に "*" に所属") m="${m%%: 既に *} already in ${m#*: 既に }"; m="${m% に所属}" ;;
+        *" を "*" に追加（プロセスへの反映には再起動が必要）") m="${m%% を *} added to ${m#* を }"; m="${m% に追加（プロセスへの反映には再起動が必要）} (restart needed to take effect)" ;;
+        *" が無いためスキップ") m="${m% が無いためスキップ} not present; skipping" ;;
+        "   ℹ️ "*" なし（plugins.require_signature=false なら不要）") m="   ℹ️ ${m#   ℹ️ }"; m="${m% なし（plugins.require_signature=false なら不要）} not present (not needed if require_signature=false)" ;;
+        "   ℹ️ 移設先に既存: "*"（スキップ）") m="   ℹ️ already exists at destination: ${m#   ℹ️ 移設先に既存: }"; m="${m%（スキップ）} (skipped)" ;;
+        "   移設: "*) m="   moved: ${m#   移設: }" ;;
+        "   ℹ️ 検知ログは repo logs に残す（UI のログ一覧に表示される）") m="   ℹ️ keeping the detection log in repo logs (shown in the UI log list)" ;;
+        "   ⚠️ agent_linux が残っています (PID: "*) m="   ⚠️ agent_linux still running (PID: ${m#   ⚠️ agent_linux が残っています (PID: }"; m="${m/ → root 権限で停止します/ → stopping with root privileges}" ;;
+        "❌ agent_linux を停止できませんでした (PID: "*) m="❌ Could not stop agent_linux (PID: ${m#❌ agent_linux を停止できませんでした (PID: }"; m="${m/。二重起動を避けるため中止します。/. Aborting to avoid a double start.}" ;;
+        "   手動で停止してから再実行してください: "*) m="   Stop it manually and re-run: ${m#   手動で停止してから再実行してください: }" ;;
+        "   ✅ 旧 agent は残っていません") m="   ✅ No leftover agent" ;;
+        "❌ "*" が見つかりません") m="❌ not found: ${m#❌ }"; m="${m% が見つかりません}" ;;
+        "   既存を退避: "*) m="   backed up existing: ${m#   既存を退避: }" ;;
+        "❌ unit に未置換のプレースホルダが残っています:") m="❌ Unreplaced placeholders remain in the unit:" ;;
+        "❌ root で実行してください: "*) m="❌ Run as root: ${m#❌ root で実行してください: }" ;;
+        "❌ 旧ユーザーを指定してください: "*) m="❌ Specify the old user: ${m#❌ 旧ユーザーを指定してください: }" ;;
+    esac
+    # 括弧内の注記を英語化
+    m="${m//（modules.json は登録後に作成される）/(modules.json is created after registration)}"
+    printf '%s' "$m"
+}
+
+echo "$(msg "▶ 0. バックアップ")"
 tar czf "$BACKUP" -C / \
     "${SRC_DATA#/}" \
     "${BIN_DIR#/}"/*.meta.json 2>/dev/null || true
 # 状態ファイルは repo logs にもあるため併せて退避
 tar rzf "$BACKUP" -C "$DIR" logs 2>/dev/null || true
 echo "   $BACKUP"
-echo "   ロールバックはこの tar を展開し、元の所有者へ chown して start.sh で起動します。"
+echo "$(msg "   ロールバックはこの tar を展開し、元の所有者へ chown して start.sh で起動します。")"
 
-echo "▶ 1. ユーザー作成 (存在すればスキップ)"
+echo "$(msg "▶ 1. ユーザー作成 (存在すればスキップ)")"
 if id "$NEW_USER" >/dev/null 2>&1; then
-    echo "   既存: $(id "$NEW_USER")"
+    echo "$(msg "   既存: $(id "$NEW_USER")")"
 else
     useradd --system --home "$NEW_HOME" --create-home --shell /usr/sbin/nologin "$NEW_USER"
-    echo "   作成: $(id "$NEW_USER")"
+    echo "$(msg "   作成: $(id "$NEW_USER")")"
 fi
 
-echo "▶ 2. ディレクトリ作成"
+echo "$(msg "▶ 2. ディレクトリ作成")"
 install -d -o "$NEW_USER" -g "$NEW_USER" -m 0700 "$STATE_DIR" "$KEY_DIR" "$NEW_HOME/logs"
 # ホームはグループに通り抜け (x) のみ許可する。検知ログを group read で読める
 # ようにするためで、state/keys は 0700 のままなので中身は見えない。
@@ -103,7 +160,7 @@ elif [ "$A4_SECURITY_LOG_DIR" != "$REPO_LOGS" ]; then
 fi
 stat -c '%a %U:%G %n' "$NEW_HOME" "$STATE_DIR" "$KEY_DIR" "$NEW_HOME/logs" | sed 's/^/   /'
 
-echo "▶ 3. 状態ファイル・チェーン鍵を保護ディレクトリへ移行"
+echo "$(msg "▶ 3. 状態ファイル・チェーン鍵を保護ディレクトリへ移行")"
 # 設定 (agent_config.json / modules.json) は移設しない。ダッシュボードが保存の
 # たびに書き換える唯一のファイルで、UI の設定変更を agent に届ける経路だから
 # （§3.6 で共有グループに group read を与える）。
@@ -144,13 +201,13 @@ fi
 MODULES_JSON="$SRC_DATA/modules.json"
 if [ -f "$MODULES_JSON" ] && grep -q '"kizuna_security"' "$MODULES_JSON" 2>/dev/null; then
     if ! command -v python3 >/dev/null 2>&1; then
-        echo "   ⚠️ python3 が無いため modules.json を書き換えられません（install.sh で導入するか手動確認）"
+        if [ "$UI_LANG" = "en" ]; then echo "   ⚠️ python3 missing; cannot rewrite modules.json (install it via install.sh or check manually)"; else echo "   ⚠️ python3 が無いため modules.json を書き換えられません（install.sh で導入するか手動確認）"; fi
     else
-    echo "▶ 3.2 modules.json の状態パスを絶対パスへ書き換え"
-    python3 - "$MODULES_JSON" "$STATE_DIR" "$A4_SECURITY_LOG_DIR" "$KEY_DIR" "$REPO_LOGS/alert_history.jsonl" <<'PY'
+    echo "$(msg "▶ 3.2 modules.json の状態パスを絶対パスへ書き換え")"
+    python3 - "$MODULES_JSON" "$STATE_DIR" "$A4_SECURITY_LOG_DIR" "$KEY_DIR" "$REPO_LOGS/alert_history.jsonl" "$UI_LANG" <<'PY'
 import json, os, sys, tempfile
 
-path, state_dir, log_dir, key_dir, alert_hist = sys.argv[1:6]
+path, state_dir, log_dir, key_dir, alert_hist, lang = sys.argv[1:7]
 with open(path, encoding="utf-8") as fh:
     data = json.load(fh)
 
@@ -200,7 +257,7 @@ try:
 except PermissionError:
     pass
 os.replace(tmp, path)
-print("   更新:", path)
+print(("   updated:" if lang == "en" else "   更新:"), path)
 print("   log_path =", os.path.join(log_dir, "kizuna-security.log"))
 PY
     fi
@@ -212,9 +269,9 @@ fi
 # 置き場 (repo logs, kizuna-eye 所有) を絶対パスで指す。
 AGENT_CFG="$SRC_DATA/agent_config.json"
 if [ -f "$AGENT_CFG" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$AGENT_CFG" "$REPO_LOGS/agent.log" <<'PY'
+    python3 - "$AGENT_CFG" "$REPO_LOGS/agent.log" "$UI_LANG" <<'PY'
 import json, os, sys, tempfile
-path, log_path = sys.argv[1:3]
+path, log_path, lang = sys.argv[1:4]
 with open(path, encoding="utf-8") as fh:
     d = json.load(fh)
 d["log_file"] = log_path
@@ -230,11 +287,11 @@ try:
 except PermissionError:
     pass
 os.replace(tmp, path)
-print("   更新:", path, "log_file =", log_path)
+print(("   updated:" if lang == "en" else "   更新:"), path, "log_file =", log_path)
 PY
 fi
 
-echo "▶ 3.5 プラグインを agent ユーザーから読めるようにする"
+echo "$(msg "▶ 3.5 プラグインを agent ユーザーから読めるようにする")"
 # A-3/A-4: agent は kizuna-eye として動くため、dashboard(実行ユーザー) が
 # 0600 で配置した .so / .so.sig は署名検証も dlopen もできず、移行直後に
 # プラグインが全滅する（fail-closed なので静かに止まる）。ディレクトリは
@@ -247,7 +304,7 @@ if [ -d "$PLUGINS_DIR" ]; then
     echo "   $(stat -c '%a %U:%G' "$PLUGINS_DIR") $PLUGINS_DIR"
     ls -1 "$PLUGINS_DIR" | sed 's/^/     /'
 else
-    echo "   ℹ️ $PLUGINS_DIR が無いためスキップ"
+    echo "$(msg "   ℹ️ $PLUGINS_DIR が無いためスキップ")"
 fi
 
 # A-4/H-1: agent 本体 (agent_linux) も kizuna-eye から実行できる必要がある。
@@ -261,21 +318,21 @@ if [ -f "$AGENT_BIN" ]; then
     echo "   $(stat -c '%a %U:%G' "$AGENT_BIN") $AGENT_BIN"
 fi
 
-echo "▶ 3.6 共有グループと共有設定の権限"
+echo "$(msg "▶ 3.6 共有グループと共有設定の権限")"
 # agent は $DATA の agent_config.json / modules.json を読み続ける（UI の設定変更を
 # agent に届けるため）。どちらもダッシュボード (= 運用ユーザー) が保存のたびに
 # 書き換えるため、共有グループ kizuna-eye に group read (0640) を与える。
 # ディレクトリは通り抜けのみ (0710) として、agent に $DATA の中身を列挙させない。
 if ! getent group "$SHARE_GROUP" >/dev/null 2>&1; then
     groupadd --system "$SHARE_GROUP"
-    echo "   グループ作成: $SHARE_GROUP"
+    echo "$(msg "   グループ作成: $SHARE_GROUP")"
 fi
 for u in "$NEW_USER" "$OLD_USER"; do
     if id -nG "$u" | tr ' ' '\n' | grep -qx "$SHARE_GROUP"; then
-        echo "   $u: 既に $SHARE_GROUP に所属"
+        echo "$(msg "   $u: 既に $SHARE_GROUP に所属")"
     else
         usermod -aG "$SHARE_GROUP" "$u"
-        echo "   $u を $SHARE_GROUP に追加（プロセスへの反映には再起動が必要）"
+        echo "$(msg "   $u を $SHARE_GROUP に追加（プロセスへの反映には再起動が必要）")"
     fi
 done
 chgrp "$SHARE_GROUP" "$SRC_DATA"
@@ -314,10 +371,10 @@ if [ -f "$PUB_SRC" ]; then
     install -D -m 0644 -o root -g root "$PUB_SRC" /etc/kizuna-eye/plugin_signing.pub
     echo "   $(stat -c '%a %U:%G' /etc/kizuna-eye/plugin_signing.pub) /etc/kizuna-eye/plugin_signing.pub"
 else
-    echo "   ℹ️ $PUB_SRC なし（plugins.require_signature=false なら不要）"
+    echo "$(msg "   ℹ️ $PUB_SRC なし（plugins.require_signature=false なら不要）")"
 fi
 
-echo "▶ 3.7 ログの権限（共有ログ + 検知ログの移設）"
+echo "$(msg "▶ 3.7 ログの権限（共有ログ + 検知ログの移設）")"
 # repo の logs/ は agent とダッシュボードの共有ログ置き場。setgid でグループを
 # kizuna-eye に継承させ、sticky で互いのファイルを消しにくくする。agent は
 # 自分のログ (agent.log / kizuna-backup-lite.log) を書き続けるためにディレクトリ
@@ -354,11 +411,11 @@ if [ "$A4_SECURITY_LOG_DIR" != "$REPO_LOGS" ]; then
         [ -e "$f" ] || continue
         bn="$(basename "$f")"
         if [ -e "$A4_SECURITY_LOG_DIR/$bn" ]; then
-            echo "   ℹ️ 移設先に既存: $A4_SECURITY_LOG_DIR/$bn（スキップ）"
+            echo "$(msg "   ℹ️ 移設先に既存: $A4_SECURITY_LOG_DIR/$bn（スキップ）")"
             continue
         fi
         mv "$f" "$A4_SECURITY_LOG_DIR/$bn"
-        echo "   移設: $bn"
+        echo "$(msg "   移設: $bn")"
     done
     chown -R "$NEW_USER:$SHARE_GROUP" "$A4_SECURITY_LOG_DIR"
     find "$A4_SECURITY_LOG_DIR" -type f -exec chmod 0640 {} +
@@ -366,7 +423,7 @@ if [ "$A4_SECURITY_LOG_DIR" != "$REPO_LOGS" ]; then
     echo "   $(stat -c '%a %U:%G' "$A4_SECURITY_LOG_DIR")"
     ls -l "$A4_SECURITY_LOG_DIR" | sed 's/^/     /'
 else
-    echo "   ℹ️ 検知ログは repo logs に残す（UI のログ一覧に表示される）"
+    echo "$(msg "   ℹ️ 検知ログは repo logs に残す（UI のログ一覧に表示される）")"
     for f in "$REPO_LOGS"/kizuna-security.log*; do
         [ -e "$f" ] || continue
         chown "$NEW_USER:$SHARE_GROUP" "$f"
@@ -376,26 +433,27 @@ else
 fi
 
 
-echo "▶ 4. unit 導入 (kizuna-eye-agent.service = A-4 版)"
+echo "$(msg "▶ 4. unit 導入 (kizuna-eye-agent.service = A-4 版)")"
 SRC_UNIT="$DIR/systemd/kizuna-eye-agent.service"
 DST_UNIT="/etc/systemd/system/kizuna-eye-agent.service"
-[ -f "$SRC_UNIT" ] || { echo "❌ $SRC_UNIT が見つかりません"; exit 1; }
+[ -f "$SRC_UNIT" ] || { echo "$(msg "❌ $SRC_UNIT が見つかりません")"; exit 1; }
 if [ -f "$DST_UNIT" ]; then
     cp -a "$DST_UNIT" "/tmp/kizuna-eye-agent.service.bak-$TS"
-    echo "   既存を退避: /tmp/kizuna-eye-agent.service.bak-$TS"
+    echo "$(msg "   既存を退避: /tmp/kizuna-eye-agent.service.bak-$TS")"
 fi
 sed -e "s|__DIR__|$DIR|g" -e "s|__BIN__|$BIN_DIR|g" -e "s|__DATA__|$SRC_DATA|g" "$SRC_UNIT" > "$DST_UNIT"
 chmod 0644 "$DST_UNIT"
 if grep -q '__[A-Z][A-Z_]*__' "$DST_UNIT"; then
-    echo "❌ unit に未置換のプレースホルダが残っています:"
+    echo "$(msg "❌ unit に未置換のプレースホルダが残っています:")"
     grep -n '__[A-Z][A-Z_]*__' "$DST_UNIT"
     exit 1
 fi
 
-echo "▶ 5. 旧 agent を停止"
+echo "$(msg "▶ 5. 旧 agent を停止")"
 systemctl disable --now kizuna-eye-agent 2>/dev/null || true
 if [ -x "$DIR/stop.sh" ]; then
-    sudo -u "$OLD_USER" "$DIR/stop.sh" || true
+    # sudo は既定で環境をリセットするため、UI_LANG を明示的に渡す（表示言語の維持）。
+    sudo -u "$OLD_USER" env UI_LANG="$UI_LANG" "$DIR/stop.sh" || true
 fi
 sleep 1
 
@@ -415,7 +473,7 @@ find_leftover_agents() {
 }
 LEFTOVER="$(find_leftover_agents | tr '\n' ' ' || true)"
 if [ -n "$LEFTOVER" ]; then
-    echo "   ⚠️ agent_linux が残っています (PID: $LEFTOVER) → root 権限で停止します"
+    echo "$(msg "   ⚠️ agent_linux が残っています (PID: $LEFTOVER) → root 権限で停止します")"
     # shellcheck disable=SC2086
     kill $LEFTOVER 2>/dev/null || true
     sleep 2
@@ -428,33 +486,33 @@ if [ -n "$LEFTOVER" ]; then
     fi
 fi
 if [ -n "$LEFTOVER" ]; then
-    echo "❌ agent_linux を停止できませんでした (PID: $LEFTOVER)。二重起動を避けるため中止します。"
-    echo "   手動で停止してから再実行してください: sudo kill -9 $LEFTOVER"
+    echo "$(msg "❌ agent_linux を停止できませんでした (PID: $LEFTOVER)。二重起動を避けるため中止します。")"
+    echo "$(msg "   手動で停止してから再実行してください: sudo kill -9 $LEFTOVER")"
     exit 1
 fi
-echo "   ✅ 旧 agent は残っていません"
+echo "$(msg "   ✅ 旧 agent は残っていません")"
 
-echo "▶ 6. 起動"
+echo "$(msg "▶ 6. 起動")"
 systemctl daemon-reload
 systemctl enable --now kizuna-eye-agent
 sleep 2
 systemctl --no-pager --full status kizuna-eye-agent || true
 
 echo ""
-echo "✅ 移行完了。確認してください:"
+echo "$(msg "✅ 移行完了。確認してください:")"
 echo "   - systemctl status kizuna-eye-agent"
 echo "   - journalctl -u kizuna-eye-agent -n 50"
-echo "   - *ダッシュボードを再起動*（kizuna-eye グループ所属を反映。UI のログ閲覧と"
-echo "     共有設定の読み書きに必要）。agent は systemd 管理なので start.sh / stop.sh は"
-echo "     agent を触らない（二重起動防止）。dashboard だけを指定する:"
+echo "$(msg "   - *ダッシュボードを再起動*（kizuna-eye グループ所属を反映。UI のログ閲覧と")"
+echo "$(msg "     共有設定の読み書きに必要）。agent は systemd 管理なので start.sh / stop.sh は")"
+echo "$(msg "     agent を触らない（二重起動防止）。dashboard だけを指定する:")"
 echo "       sudo -u $OLD_USER $DIR/stop.sh dashboard"
 echo "       sudo -u $OLD_USER $DIR/start.sh dashboard"
-echo "   - ダッシュボード GET /api/status とアラート/Discord 通知"
-echo "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果）"
-echo "   - backup プラグインが /samba/share/CD へ書けること"
-echo "   - 検知ログ（group read なので sudo 不要）: ls -l $A4_SECURITY_LOG_DIR/kizuna-security.log"
-echo "   - 状態ファイル（agent 専用）: sudo ls -l $STATE_DIR"
-echo "   - 共有設定が 0640 kizuna-eye であること: ls -l $SRC_DATA/agent_config.json（modules.json は登録後に作成される）"
-echo "   ログ方針を UI のログ一覧優先に変える場合:"
+echo "$(msg "   - ダッシュボード GET /api/status とアラート/Discord 通知")"
+echo "$(msg "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果）")"
+echo "$(msg "   - backup プラグインが /samba/share/CD へ書けること")"
+echo "$(msg "   - 検知ログ（group read なので sudo 不要）: ls -l $A4_SECURITY_LOG_DIR/kizuna-security.log")"
+echo "$(msg "   - 状態ファイル（agent 専用）: sudo ls -l $STATE_DIR")"
+echo "$(msg "   - 共有設定が 0640 kizuna-eye であること: ls -l $SRC_DATA/agent_config.json（modules.json は登録後に作成される）")"
+echo "$(msg "   ログ方針を UI のログ一覧優先に変える場合:")"
 echo "     sudo A4_SECURITY_LOG_DIR=$REPO_LOGS $0 $OLD_USER"
-echo "   ロールバック用バックアップ: $BACKUP"
+echo "$(msg "   ロールバック用バックアップ: $BACKUP")"

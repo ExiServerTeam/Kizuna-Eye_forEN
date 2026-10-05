@@ -71,6 +71,153 @@ case "$UI_LANG" in
     ja|en) ;;
     *) warn "言語 '$UI_LANG' は未対応のため en を使用します（対応: ja / en）"; UI_LANG="en" ;;
 esac
+# 子プロセス（migrate-agent-user.sh）が表示言語を参照できるよう引き継ぐ。
+export UI_LANG
+
+# 表示言語。UI_LANG=ja 以外（en）は英語で出す。日本語の原文をキーに英語へ訳し、
+# 訳が無いメッセージは日本語のまま出す（安全側）。
+tr_msg() {
+    local m="$1"
+    [ "$UI_LANG" = "en" ] || { printf '%s' "$m"; return 0; }
+    case "$m" in
+        # --- 前提 ---
+        "root で実行中") m="Running as root" ;;
+        "sudo (NOPASSWD) 利用可") m="sudo (NOPASSWD) available" ;;
+        "sudo にパスワードが必要です。NOPASSWD を設定すると無人実行できます（任意）。")
+            m="sudo needs a password. Set NOPASSWD for unattended runs (optional)." ;;
+        "sudo がありません。パッケージ導入や /usr/local への Go 導入は手動になります。")
+            m="sudo not found. Install packages and Go under /usr/local manually." ;;
+        "/etc/os-release が読めません。続行します。") m="Cannot read /etc/os-release. Continuing." ;;
+        "Ubuntu/Debian 以外です（"*)
+            m="Not Ubuntu/Debian (${m#Ubuntu/Debian 以外です（}"; m="${m%）。続行します。}). Continuing." ;;
+        "言語 '"*"' は未対応のため en を使用します（対応: ja / en）")
+            m="Unsupported language; using en (supported: ja / en)." ;;
+        "不明な選択 '"*"' のため English (en) を使用します")
+            m="Unknown choice; using English (en)." ;;
+        "   言語: "*) m="   Language: ${m#   言語: }" ;;
+        # --- パッケージ ---
+        "パッケージ確認 (PM="*) m="Package check (PM=${m#パッケージ確認 (PM=}" ;;
+        *" （未導入 → "*) m="${m% （未導入 → *} (not installed)" ;;
+        *" （未導入）") m="${m% （未導入）} (not installed)" ;;
+        "パッケージマネージャ未検出。手動で導入してください: "*)
+            m="No package manager detected. Install manually: ${m#パッケージマネージャ未検出。手動で導入してください: }" ;;
+        "不足分をインストール: "*) m="Installing missing packages: ${m#不足分をインストール: }" ;;
+        "パッケージ導入に失敗しました。") m="Package installation failed." ;;
+        "パッケージ導入完了") m="Packages installed" ;;
+        "不足分があります（--no-install のためスキップ）: "*)
+            m="Missing packages (skipped, --no-install): ${m#不足分があります（--no-install のためスキップ）: }" ;;
+        "必要なパッケージは揃っています") m="All required packages are present" ;;
+        # --- Go ---
+        "Go の確認（必要: "*"）") m="Go check (required: ${m#Go の確認（必要: })" ;;
+        "検出: "*) m="Detected: ${m#検出: }" ;;
+        "Go バージョン OK") m="Go version OK" ;;
+        "go が見つかりません。Go "*) m="go not found. Install Go: ${m#go が見つかりません。Go }" ;;
+        "例: curl -LO "*) m="Example: curl -LO ${m#例: curl -LO }" ;;
+        "go "*" は "*" 未満。GOTOOLCHAIN=auto で "*" を自動取得します（初回ネット必須）。")
+            m="Go is older than required; GOTOOLCHAIN=auto will fetch it (network needed on first run)." ;;
+        # --- ディレクトリ / ビルド ---
+        "ディレクトリ準備") m="Preparing directories" ;;
+        "ディレクトリ作成に失敗") m="Failed to create directories" ;;
+        "本体をビルド中... (version="*) m="Building main binaries... (version=${m#本体をビルド中... (version=}" ;;
+        "build 失敗: "*) m="build failed: ${m#build 失敗: }" ;;
+        "プラグインをビルド中...") m="Building plugins..." ;;
+        "プラグインソース無し: "*) m="No plugin source: ${m#プラグインソース無し: }" ;;
+        *" は main パッケージではないためスキップ") m="${m% は main パッケージではないためスキップ} is not a main package; skipping" ;;
+        "x/sys 不一致: "*) m="x/sys mismatch: ${m#x/sys 不一致: }" ;;
+        "🔌 ビルド: "*) m="🔌 Building: ${m#🔌 ビルド: }" ;;
+        "プラグインビルド失敗: "*) m="Plugin build failed: ${m#プラグインビルド失敗: }" ;;
+        # --- 署名 ---
+        "プラグイン署名（純正）") m="Signing plugins (official)" ;;
+        "   署名鍵が無いため生成します: "*) m="   No signing key; generating: ${m#   署名鍵が無いため生成します: }" ;;
+        "署名鍵を生成しました（秘密鍵はオフホスト保管を推奨）") m="Signing key generated (store the private key off-host)" ;;
+        "署名鍵の生成に失敗しました。署名をスキップします。") m="Failed to generate signing key; skipping signing." ;;
+        "   署名鍵: "*) m="   Signing key: ${m#   署名鍵: }" ;;
+        "純正プラグインに署名しました: "*) m="Signed official plugins: ${m#純正プラグインに署名しました: }" ;;
+        "プラグイン署名に失敗しました（.so が無い場合は無視して構いません）。") m="Plugin signing failed (ignore if there is no .so)." ;;
+        # --- 設定初期化 ---
+        "設定ファイルの初期化") m="Initializing config files" ;;
+        "example が見つかりません: "*) m="example not found: ${m#example が見つかりません: }" ;;
+        "   既存: "*) m="   existing: ${m#   既存: }" ;;
+        "作成: "*) m="created: ${m#作成: }" ;;
+        "認証を有効化: auth.enabled=true / public_viewer=false") m="Auth enabled: auth.enabled=true / public_viewer=false" ;;
+        "   初回アクセス時に /setup で管理者アカウントを作成してください") m="   Create an admin account at /setup on first access" ;;
+        "既定言語を設定: language="*) m="Default language set: language=${m#既定言語を設定: language=}" ;;
+        "language の書き込みを確認できませんでした（dashboard_config.json を確認してください）")
+            m="Could not confirm the language was written (check dashboard_config.json)" ;;
+        "agent_token を生成: "*) m="Generated agent_token: ${m#agent_token を生成: }" ;;
+        "   所有者: "*) m="   owner: ${m#   所有者: }" ;;
+        # --- sudoers / ヘルパー ---
+        "smartctl の sudoers 設定") m="Configuring sudoers for smartctl" ;;
+        "sudoers 設定: "*) m="sudoers entry: ${m#sudoers 設定: }" ;;
+        "sudoers 設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:")
+            m="Failed to write sudoers (visudo or permissions). Configure manually:" ;;
+        "smartctl 未導入のため sudoers 設定をスキップします（smartmontools 導入後に ./install.sh を再実行してください）。")
+            m="smartctl not installed; skipping sudoers (re-run ./install.sh after installing smartmontools)." ;;
+        "/etc/sudoers.d がありません。手動で設定してください。") m="/etc/sudoers.d not found. Configure manually." ;;
+        "sudo が使えないため sudoers 設定をスキップします。S.M.A.R.T には権限が必要です。")
+            m="sudo unavailable; skipping sudoers. S.M.A.R.T needs privileges." ;;
+        "cron 読み取りヘルパーの導入") m="Installing cron-read helper" ;;
+        "sudo が使えないため cron ヘルパーの導入をスキップします。手動で:")
+            m="sudo unavailable; skipping cron helper. Manually:" ;;
+        "cron ヘルパーが見つかりません: "*) m="cron helper not found: ${m#cron ヘルパーが見つかりません: }" ;;
+        "/etc/sudoers.d がありません。手動で cron 用 sudoers を設定してください。") m="/etc/sudoers.d not found. Configure the cron sudoers manually." ;;
+        "cron ヘルパー: "*) m="cron helper: ${m#cron ヘルパー: }" ;;
+        "cron ヘルパーの設置に失敗しました: "*) m="Failed to install the cron helper: ${m#cron ヘルパーの設置に失敗しました: }" ;;
+        "ワンクリック対処ヘルパーの導入") m="Installing one-click action helper" ;;
+        "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:")
+            m="sudo unavailable; skipping action helper. Manually:" ;;
+        "対処ヘルパーが見つかりません: "*) m="action helper not found: ${m#対処ヘルパーが見つかりません: }" ;;
+        "/etc/sudoers.d がありません。手動で対処用 sudoers を設定してください。") m="/etc/sudoers.d not found. Configure the action sudoers manually." ;;
+        "対処ヘルパー: "*) m="action helper: ${m#対処ヘルパー: }" ;;
+        "対処ヘルパーの設置に失敗しました: "*) m="Failed to install the action helper: ${m#対処ヘルパーの設置に失敗しました: }" ;;
+        "対処用 sudoers の設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:")
+            m="Failed to write the action sudoers (visudo or permissions). Configure manually:" ;;
+        # --- systemd ---
+        "systemd 登録（dashboard + agent）") m="Registering systemd services (dashboard + agent)" ;;
+        "sudo が使えないため systemd 登録をスキップします。手動で: sudo systemd/migrate-agent-user.sh "*)
+            m="sudo unavailable; skipping systemd registration. Run manually." ;;
+        "旧 unit "*" を disable（二重起動防止）") m="Disabling legacy unit ${m#旧 unit }" ;;
+        "   ℹ️ agent は移行済み（"*) m="   agent already migrated; restarting only" ;;
+        *" が無いため agent の H-1 移行をスキップします。") m="migration script missing; skipping H-1 migration." ;;
+        "agent を専用ユーザー (kizuna-eye) で systemd 管理下に移行しました") m="Migrated agent to the dedicated kizuna-eye user under systemd" ;;
+        "H-1 移行に失敗しました。手動で再実行してください: sudo "*) m="H-1 migration failed. Re-run manually: sudo ${m#H-1 移行に失敗しました。手動で再実行してください: sudo }" ;;
+        "dashboard unit 導入: "*) m="Installed dashboard unit: ${m#dashboard unit 導入: }" ;;
+        *" が無いため dashboard unit をスキップします。") m="dashboard unit source missing; skipping." ;;
+        "dashboard を systemd で起動/再起動しました") m="Started/restarted dashboard via systemd" ;;
+        "dashboard の systemd 起動に失敗しました。手動で: sudo systemctl enable --now kizuna-dashboard")
+            m="Failed to start dashboard via systemd. Run: sudo systemctl enable --now kizuna-dashboard" ;;
+        "agent を再起動しました") m="Restarted agent" ;;
+        "agent の再起動に失敗しました: sudo systemctl restart kizuna-eye-agent") m="Failed to restart agent: sudo systemctl restart kizuna-eye-agent" ;;
+        # --- 起動 ---
+        "2回目以降の実行です。起動する場合は ./start.sh を実行してください。") m="Already installed. Run ./start.sh to start." ;;
+        "既に動作中です。./stop.sh で停止してから起動します。") m="Already running; stopping with ./stop.sh first." ;;
+        "起動します...") m="Starting..." ;;
+        "起動に失敗しました") m="Failed to start" ;;
+        "start.sh が見つかりません。手動で起動してください。") m="start.sh not found. Start manually." ;;
+        "起動をスキップしました（--no-start）") m="Skipped start (--no-start)" ;;
+        "起動をスキップしました（systemd で起動済み（dashboard + agent））") m="Skipped start (already started via systemd)" ;;
+        # --- ℹ️ 付き（info）は絵文字ごと差し替える（パターンは絵文字込みで一致させる） ---
+        "ℹ️  2回目以降の実行です。起動する場合は ./start.sh を実行してください。") m="ℹ️  Already installed. Run ./start.sh to start." ;;
+        "ℹ️  起動をスキップしました（--no-start）") m="ℹ️  Skipped start (--no-start)" ;;
+        "ℹ️  起動をスキップしました（systemd で起動済み（dashboard + agent））") m="ℹ️  Skipped start (already started via systemd)" ;;
+        # --- 完了サマリ（末尾の日本語注記を含む具体形を先に置く） ---
+        "  更新            : ./update.sh  （GitHub から取得→再ビルド→再起動）") m="  Update          : ./update.sh  (fetch from GitHub -> rebuild -> restart)" ;;
+        "  停止            : ./stop.sh  （H-1 導入時: agent は sudo systemctl stop kizuna-eye-agent）") m="  Stop            : ./stop.sh  (with H-1: agent via sudo systemctl stop kizuna-eye-agent)" ;;
+        "  アンインストール: ./uninstall.sh  （データ温存 / 完全削除は --purge）") m="  Uninstall       : ./uninstall.sh  (keep data / full removal with --purge)" ;;
+        "  アクセス        : "*) m="  Access          : ${m#  アクセス        : }" ;;
+        "  ── はじめにお読みください ──────────────────────") m="  ── Getting started ───────────────────────────────" ;;
+        "  ブラウザで上記の URL にアクセスし、管理者アカウントを作成してください。") m="  Open the URL above in a browser and create an admin account." ;;
+        "  （初回は自動でセットアップ画面 /setup が開きます）") m="  (The setup screen /setup opens automatically on first access.)" ;;
+        "  UI 言語         : "*) m="  UI language     : ${m#  UI 言語         : }" ;;
+        "  ログ            : "*) m="  Logs            : ${m#  ログ            : }" ;;
+        "  更新            : "*) m="  Update          : ${m#  更新            : }" ;;
+        "  停止            : "*) m="  Stop            : ${m#  停止            : }" ;;
+        "  アンインストール: "*) m="  Uninstall       : ${m#  アンインストール: }" ;;
+    esac
+    m="${m//引数なしのみ/no-args only}"
+    m="${m//（右上のボタンで JA \/ EN を切り替え可）/ (toggle JA\/EN top-right)}"
+    printf '%s' "$m"
+}
 
 # ログ表示。"▶ 見出し" の行は手順として自動採番し、区切り線で囲む。
 # 誰が見ても「今どの手順をやっているか」が分かるようにする。
@@ -80,19 +227,27 @@ log() {
         "▶ "*)
             STEP_NO=$((STEP_NO+1))
             echo "──────────────────────────────────────────────────"
-            echo " 【手順 ${STEP_NO}】${1#▶ }"
+            if [ "$UI_LANG" = "en" ]; then
+                echo " [Step ${STEP_NO}] $(tr_msg "${1#▶ }")"
+            else
+                echo " 【手順 ${STEP_NO}】$(tr_msg "${1#▶ }")"
+            fi
             echo "──────────────────────────────────────────────────"
             ;;
-        *) echo "$*" ;;
+        *) echo "$(tr_msg "$*")" ;;
     esac
 }
-warn() { echo "⚠️  $*"; }
-err()  { echo "❌ $*"; }
-ok()   { echo "✅ $*"; }
+warn() { echo "⚠️  $(tr_msg "$*")"; }
+err()  { echo "❌ $(tr_msg "$*")"; }
+ok()   { echo "✅ $(tr_msg "$*")"; }
 
 echo ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║          Kizuna-Eye セットアップ                  ║"
+if [ "$UI_LANG" = "en" ]; then
+    echo "║              Kizuna-Eye Setup                    ║"
+else
+    echo "║          Kizuna-Eye セットアップ                  ║"
+fi
 echo "╚══════════════════════════════════════════════════╝"
 
 # ---- 0. 言語の選択（対話時のみ） ----
@@ -658,7 +813,11 @@ fi
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 log ""
 echo "╔══════════════════════════════════════════════════╗"
-echo "║            ✅ セットアップ完了                    ║"
+if [ "$UI_LANG" = "en" ]; then
+    echo "║            ✅ Setup complete                      ║"
+else
+    echo "║            ✅ セットアップ完了                    ║"
+fi
 echo "╚══════════════════════════════════════════════════╝"
 log ""
 log "  アクセス        : http://${LAN_IP:-<server-ip>}:8080"
