@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.1] - 2026-09-29
+## [Unreleased]
+
+## [0.7.0] - 2026-10-05
 
 ### Added
 - ログイン画面に「ゲストとしてログイン」ボタンを追加。`auth.public_viewer` 有効時のみ表示され、viewer 権限（読み取り専用）でダッシュボードに入れる
@@ -17,15 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `install.sh` / `update.sh` / `safe_update.sh` を追加。必要なパッケージ（rsync / smartmontools / git / curl）を差分で確認・導入し、更新失敗時はロールバック
 
 ### Changed
-- バージョン表記を v0.7.1 に統一（web 全体・Makefile・build.sh）
+- バージョン表記を v0.7.0 に統一（web 全体・Makefile・build.sh）
 - アカウントメニューの絵文字を削除（アイコン変更 / パスワード変更 / ユーザー管理）
 - CPUカードはCPU温度のみ、メモリカードは空き容量のみ、ストレージカードは温度＋空き容量のみを表示
 
 ### Security
 - `auth.public_viewer` を追加。有効時は未ログインでもダッシュボード・`/ws`・`/api/status` のみ閲覧可能（履歴・アラート・ログ・管理系はログイン必須）
 - エージェント起動時に rsync / smartctl の有無を確認し、ログと標準エラーに警告
-
-## [Unreleased]
 
 ### Added
 - `uninstall.sh`: `install.sh` が導入した systemd サービス・unit・sudoers・ヘルパー・/etc/kizuna-eye・sysctl 設定を撤去する。`--purge` でデータ・鍵・バイナリ・専用ユーザーまで完全削除、`--dry-run` で内容確認のみ

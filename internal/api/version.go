@@ -7,7 +7,7 @@ import (
 )
 
 // Version is the app version. Overridable via -ldflags at build time.
-var Version = "v0.7.1"
+var Version = "v0.7.0"
 
 // BuildTime is the build timestamp (optional).
 var BuildTime = ""

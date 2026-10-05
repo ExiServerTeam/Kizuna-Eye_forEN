@@ -179,7 +179,7 @@ fi
 # Prefer the repo VERSION file (single source of truth), then the git tag.
 # 変数名は KVERSION にする。環境によっては VERSION が別用途で設定されており
 # （例: . /etc/os-release）、その値を拾うと ldflags が壊れてビルドに失敗する。
-KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.0)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${KVERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"

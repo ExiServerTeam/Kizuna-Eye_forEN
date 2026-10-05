@@ -400,7 +400,7 @@ ok "$BIN_DIR / $PLUGIN_OUT_DIR / logs / plugins"
 if [ "$DO_BUILD" -eq 1 ]; then
     # Prefer the repo VERSION file (single source of truth), then the git tag.
     # 変数名は KVERSION にして、環境変数 VERSION（os-release 等）との衝突を避ける。
-    KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+    KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.0)}"
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     log ""
     log "▶ 本体をビルド中... (version=${KVERSION})"

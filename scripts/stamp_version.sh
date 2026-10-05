@@ -21,7 +21,7 @@ if [ ! -f VERSION ]; then
     exit 1
 fi
 
-RAW="$(tr -d '[:space:]' < VERSION)"      # 例: v0.7.1
+RAW="$(tr -d '[:space:]' < VERSION)"      # 例: v0.7.0
 # キャッシュバスター用の数字だけの版（先頭の v を除く）
 NUM="${RAW#v}"
 
