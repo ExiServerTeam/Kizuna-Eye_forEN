@@ -59,7 +59,7 @@ func New(cfg Config, lg *logger.Logger) *Updater {
 	}
 	if cfg.RepositoryURL == "" || cfg.UpdateScript == "" {
 		if lg != nil {
-			lg.Warn("自動更新: 設定が不完全です（repository_url / update_script）")
+			lg.WarnT("updater.incomplete")
 		}
 		return nil
 	}
@@ -75,7 +75,7 @@ func (u *Updater) Run(stop <-chan struct{}) {
 		return
 	}
 	if u.lg != nil {
-		u.lg.Info("自動更新: 有効（確認間隔: %s, 現在: %s）", u.cfg.Interval, u.cfg.CurrentVersion)
+		u.lg.InfoT("updater.enabled", u.cfg.Interval, u.cfg.CurrentVersion)
 	}
 
 	// Initial check shortly after startup, then on every tick.
@@ -105,7 +105,7 @@ func (u *Updater) checkAndUpdate() {
 		u.lastErr = err.Error()
 		u.mu.Unlock()
 		if u.lg != nil {
-			u.lg.Warn("自動更新: バージョン確認失敗: %v", err)
+			u.lg.WarnT("updater.check_failed", err)
 		}
 		return
 	}
@@ -117,25 +117,25 @@ func (u *Updater) checkAndUpdate() {
 
 	if !isNewer(latest, u.cfg.CurrentVersion) {
 		if u.lg != nil {
-			u.lg.Debug("自動更新: 最新版です (%s)", u.cfg.CurrentVersion)
+			u.lg.DebugT("updater.latest", u.cfg.CurrentVersion)
 		}
 		return
 	}
 
 	if u.lg != nil {
-		u.lg.Info("自動更新: 新バージョン検知 %s → %s。更新スクリプトを実行します", u.cfg.CurrentVersion, latest)
+		u.lg.InfoT("updater.new_version", u.cfg.CurrentVersion, latest)
 	}
 	if err := u.runUpdateScript(); err != nil {
 		u.mu.Lock()
 		u.lastErr = err.Error()
 		u.mu.Unlock()
 		if u.lg != nil {
-			u.lg.Error("自動更新: スクリプト実行失敗: %v", err)
+			u.lg.ErrorT("updater.script_failed", err)
 		}
 		return
 	}
 	if u.lg != nil {
-		u.lg.Info("自動更新: 更新スクリプト完了（次回起動で反映されます）")
+		u.lg.InfoT("updater.script_done")
 	}
 }
 
@@ -166,7 +166,7 @@ func (u *Updater) runUpdateScript() error {
 	cmd.Dir = scriptDir(u.cfg.UpdateScript)
 	out, err := cmd.CombinedOutput()
 	if u.lg != nil && len(out) > 0 {
-		u.lg.Info("自動更新: %s 出力:\n%s", u.cfg.UpdateScript, string(out))
+		u.lg.InfoT("updater.output", u.cfg.UpdateScript, string(out))
 	}
 	return err
 }

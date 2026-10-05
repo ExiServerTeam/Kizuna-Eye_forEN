@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	kelog "Kizuna-Eye/pkg/logger"
 )
 
 // maxAvatarBytes bounds an avatar image upload.
@@ -127,7 +129,7 @@ func (h *Handler) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.logger != nil {
-		h.logger.Info("アバター更新: user=%s", sess.Username)
+		kelog.LogInfo(h.logger, "auth.avatar_updated", sess.Username)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated", "avatar": name})
 }

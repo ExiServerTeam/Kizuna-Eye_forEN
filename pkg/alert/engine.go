@@ -108,14 +108,22 @@ func (e *Engine) UpdateConfig(c Config) {
 
 // EnableHistoryPersistence loads prior history and persists new entries.
 func (e *Engine) EnableHistoryPersistence(path string) {
+	e.EnableHistoryPersistenceKeyed(path, nil)
+}
+
+// EnableHistoryPersistenceKeyed is like EnableHistoryPersistence but also
+// signs each persisted line with the given HMAC key. A nil/empty key keeps
+// the previous unsigned behavior (fully backward compatible).
+func (e *Engine) EnableHistoryPersistenceKeyed(path string, sigKey []byte) {
 	if e.history == nil {
 		return
 	}
 	if e.log != nil {
 		e.history.SetLogger(e.log.Warn)
 	}
+	e.history.SetSigningKey(sigKey)
 	if err := e.history.Load(path); err != nil && e.log != nil {
-		e.log.Warn("アラート履歴の読み込み失敗: %v", err)
+		e.log.WarnT("alert.history_load_failed", err)
 	}
 	e.history.SetPersistence(path)
 }
@@ -130,12 +138,96 @@ func (e *Engine) ClearAlerts() error {
 	return e.history.Clear()
 }
 
+// FindAlertByID returns a copy of the alert with the given ID, or nil when
+// no entry matches. It is used by the one-click action API (task 2) to
+// resolve an ID to the alert it should act on.
+func (e *Engine) FindAlertByID(id string) *HistoryEntry {
+	if e.history == nil || id == "" {
+		return nil
+	}
+	for _, a := range e.history.List() {
+		if a.ID == id {
+			cp := a
+			return &cp
+		}
+	}
+	return nil
+}
+
+// RecordAction appends an audit entry to the alert history describing the
+// outcome of a one-click remediation. The entry references the original
+// alert by type/title so the UI can group them.
+func (e *Engine) RecordAction(a *HistoryEntry, action, target, result string) {
+	if e.history == nil || a == nil {
+		return
+	}
+	level := notify.LevelSuccess
+	if strings.HasPrefix(result, "failed") {
+		level = notify.LevelWarning
+	}
+	icon := "🛠️"
+	msg := action
+	if target != "" {
+		msg = action + " " + target
+	}
+	e.history.AddSourcedDetail(&notify.Alert{
+		Type:      "security_action",
+		Level:     level,
+		Icon:      icon,
+		Title:     "対処を実行: " + action,
+		Message:   msg + " -> " + result,
+		Timestamp: time.Now(),
+	}, "dashboard", true, HistoryEntry{
+		Command:     action + " " + target,
+		DetectFile:  "internal/api/actions.go",
+		Remediation: "実行結果: " + result,
+		RelatedLog:  "元アラート: " + a.Title + " (" + a.ID + ")",
+	})
+}
+
 // ReportAlert records an externally supplied alert to history and notifies.
 // Used by plugins (e.g. security) that detect their own events.
 // source identifies the origin; trusted is true only for alerts the
 // dashboard generated itself (not from a forgeable log line).
 func (e *Engine) ReportAlert(a *notify.Alert, source string, trusted bool) {
 	e.dispatch(a, source, trusted)
+}
+
+// ReportAlertDetail is like ReportAlert but also stores the optional detail
+// fields (command, detection logic location, remediation, related log line)
+// used by the alert-detail view (task 1).
+func (e *Engine) ReportAlertDetail(a *notify.Alert, source string, trusted bool, detail AlertDetail) {
+	if a == nil {
+		return
+	}
+	if e.history != nil {
+		e.history.AddSourcedDetail(a, source, trusted, HistoryEntry{
+			Command:     detail.Command,
+			DetectFile:  detail.DetectFile,
+			DetectLine:  detail.DetectLine,
+			Remediation: detail.Remediation,
+			RelatedLog:  detail.RelatedLog,
+			TitleEN:     detail.TitleEN,
+			MessageEN:   detail.MessageEN,
+		})
+	}
+	if e.notifier != nil {
+		e.notifier.Notify(a)
+	}
+}
+
+// AlertDetail carries the optional fields shown in the alert-detail view.
+// It mirrors the detail fields of alert.HistoryEntry so callers do not need
+// to import the history package directly.
+type AlertDetail struct {
+	Command     string
+	DetectFile  string
+	DetectLine  int
+	Remediation string
+	RelatedLog  string
+	// TitleEN / MessageEN carry the English rendering (task 9).
+	TitleEN   string
+	MessageEN string
 }
 
 // dispatch records to history and then notifies.

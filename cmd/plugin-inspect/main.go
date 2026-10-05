@@ -15,9 +15,13 @@ import (
 
 // InspectResult は plugin-inspect が吐き出す JSON のルートや。
 type InspectResult struct {
-	Success      bool            `json:"success"`
-	Name         string          `json:"name"`
-	DisplayName  string          `json:"display_name,omitempty"`
+	Success     bool   `json:"success"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	// Tag is the short badge the plugin declares via Tag() string
+	// (e.g. "GUARD" / "LITE" / "PRO"). Empty when the plugin does not
+	// declare one; the UI then shows "PLUGIN".
+	Tag          string          `json:"tag,omitempty"`
 	Description  string          `json:"description"`
 	IntervalSec  float64         `json:"interval_sec"`
 	Fields       json.RawMessage `json:"fields"`
@@ -137,6 +141,9 @@ func inspect(soPath string) (res InspectResult) {
 	}
 	if s := callString(v, "Description"); s != "" {
 		res.Description = s
+	}
+	if s := callString(v, "Tag"); s != "" {
+		res.Tag = s
 	}
 	if d := callDurationSec(v, "Interval"); d > 0 {
 		res.IntervalSec = d

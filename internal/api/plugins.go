@@ -18,6 +18,7 @@ import (
 
 	"Kizuna-Eye/internal/pluginsig"
 	"Kizuna-Eye/pkg/config"
+	kelog "Kizuna-Eye/pkg/logger"
 	"Kizuna-Eye/pkg/module"
 )
 
@@ -95,8 +96,12 @@ type runGuard struct {
 
 // PluginMeta is the content of plugins/{name}.meta.json.
 type PluginMeta struct {
-	Name         string               `json:"name"`
-	DisplayName  string               `json:"display_name,omitempty"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name,omitempty"`
+	// Tag is the short badge the plugin declares via Tag() string
+	// ("GUARD" / "LITE" / "PRO" ...). Empty means the plugin did not
+	// declare one and the UI shows "PLUGIN".
+	Tag          string               `json:"tag,omitempty"`
 	SOFilename   string               `json:"so_filename"`
 	Description  string               `json:"description,omitempty"`
 	IntervalSec  float64              `json:"interval_sec,omitempty"`
@@ -166,7 +171,7 @@ func NewPluginManager(storage *ModulesStorage, cfg *config.DashboardConfig, logg
 			// Not fatal here: the check is enforced fail-closed when an
 			// upload is actually inspected. Warn so the misconfiguration is
 			// visible at startup rather than only on the first upload.
-			logger.Error("プラグイン検査の隔離に必要な bwrap が見つかりません (%s)。アップロードは拒否されます（plugins.inspect_isolation=\"off\" で従来動作）: %v", bwrapBin, err)
+			kelog.LogError(logger, "api.bwrap_missing", bwrapBin, err)
 		}
 	}
 
@@ -344,7 +349,7 @@ func (p *PluginManager) handleRunPlugin(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if p.logger != nil {
-		p.logger.Info("手動実行リクエスト送信: plugin=%s request_id=%s", name, requestID)
+		kelog.LogInfo(p.logger, "api.plugin_run_request", name, requestID)
 	}
 
 	writeJSON(w, http.StatusAccepted, map[string]string{
@@ -505,7 +510,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if p.logger != nil {
-		p.logger.Info("プラグインアップロード受信: %s (%d bytes) from %s", name, written, r.RemoteAddr)
+		kelog.LogInfo(p.logger, "api.plugin_upload_recv", name, written, r.RemoteAddr)
 	}
 
 	// A-3: verify the detached Ed25519 signature BEFORE plugin-inspect.
@@ -535,7 +540,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		if verr := pluginsig.VerifyBytes(data, sigBytes, pub, name+".so"); verr != nil {
 			if p.logger != nil {
-				p.logger.Error("プラグイン署名検証に失敗したため拒否: %s: %v", name, verr)
+				kelog.LogError(p.logger, "api.plugin_sig_failed", name, verr)
 			}
 			p.reportAudit("plugin_upload_rejected",
 				"署名検証に失敗したプラグイン '"+name+"' を拒否しました (from "+r.RemoteAddr+")")
@@ -543,7 +548,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.logger != nil {
-			p.logger.Info("プラグイン署名を検証しました（検査前）: %s", name)
+			kelog.LogInfo(p.logger, "api.plugin_sig_ok", name)
 		}
 	}
 
@@ -556,7 +561,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	meta, err := p.inspectPlugin(r.Context(), name, tmpPath, r.RemoteAddr)
 	if err != nil {
 		if p.logger != nil {
-			p.logger.Error("プラグイン検証失敗のため拒否: %s: %v", name, err)
+			kelog.LogError(p.logger, "api.plugin_verify_failed", name, err)
 		}
 		writeJSONError(w, http.StatusBadRequest,
 			"プラグインの検証に失敗したため登録できません（.so が壊れているか、対応していない形式です）: "+err.Error())
@@ -669,7 +674,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// meta.json so the plugin is not left half-registered.
 	if err := p.storage.Add(modConfig); err != nil {
 		if p.logger != nil {
-			p.logger.Warn("モジュール登録失敗: %s: %v", name, err)
+			kelog.LogWarn(p.logger, "api.module_register_failed", name, err)
 		}
 		_ = os.Remove(soPath)
 		_ = os.Remove(sigPath)
@@ -757,7 +762,7 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// remain on disk, instead of falsely claiming success.
 	if err := os.Remove(filepath.Join(p.pluginsDir, name+".so")); err != nil && !os.IsNotExist(err) {
 		if p.logger != nil {
-			p.logger.Error("プラグイン .so の削除に失敗: %s: %v", name, err)
+			kelog.LogError(p.logger, "api.plugin_so_delete_failed", name, err)
 		}
 		writeJSONError(w, http.StatusInternalServerError, ".so の削除に失敗しました: "+err.Error())
 		return
@@ -771,7 +776,7 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 	_ = os.RemoveAll(filepath.Join(p.pluginsDir, name+".web"))
 
 	if p.logger != nil {
-		p.logger.Info("プラグインモジュール削除: %s", name)
+		kelog.LogInfo(p.logger, "api.plugin_module_deleted", name)
 	}
 	// Audit: removing a plugin is a code-execution boundary change.
 	p.reportAudit("plugin_delete", "プラグイン '"+name+"' を削除しました (from "+r.RemoteAddr+")")
@@ -802,6 +807,7 @@ func (p *PluginManager) inspectPlugin(
 		Success      bool                 `json:"success"`
 		Name         string               `json:"name"`
 		DisplayName  string               `json:"display_name"`
+		Tag          string               `json:"tag"`
 		Description  string               `json:"description"`
 		IntervalSec  float64              `json:"interval_sec"`
 		Fields       []module.ConfigField `json:"fields"`
@@ -827,6 +833,7 @@ func (p *PluginManager) inspectPlugin(
 	return &PluginMeta{
 		Name:        raw.Name,
 		DisplayName: raw.DisplayName,
+		Tag:         raw.Tag,
 		SOFilename:  name + ".so",
 		Description: raw.Description,
 		IntervalSec: raw.IntervalSec,

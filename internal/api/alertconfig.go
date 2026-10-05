@@ -11,6 +11,7 @@ import (
 	"Kizuna-Eye/pkg/alert"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/fsutil"
+	kelog "Kizuna-Eye/pkg/logger"
 )
 
 // AlertConfigProvider is implemented by the alert engine.
@@ -155,7 +156,7 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if h.logger != nil {
-			h.logger.Info("アラート閾値を更新し、dashboard_config.json に保存しました")
+			kelog.LogInfo(h.logger, "api.alertcfg_updated")
 		}
 	}
 
