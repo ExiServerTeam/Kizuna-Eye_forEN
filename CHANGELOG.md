@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Discord 通知の再送既定値が `0`（再送なし）として読まれ、HTTP 429 のアラートが黙って捨てられていた問題を修正。`discord_max_retries` を未設定（既定 5）と明示的な `0` で区別し、送信タイムアウトを再送回数に応じて延伸（15 秒でバックオフを打ち切っていた）
+- `install.sh` / `systemd/migrate-agent-user.sh` が、`/opt/kizuna-eye` の**親ディレクトリのモード**を正規化していなかったため、root の umask 077 で作られた 0700 のまま非 root サービスユーザーが本体を exec できず `status=203/EXEC` で起動不能になる問題を修正（モードを明示的に `o+rx` へ）。systemd ユニット起動後に `is-active` を確認し、落ちていれば journal の見方と復旧コマンドを案内するようにした
+- `kizuna-dashboard.service` の `StartLimitIntervalSec` / `StartLimitBurst` が `[Service]` にあり systemd に無視されていたため `[Unit]` へ移動（再起動の暴走制限が効いていなかった）
+- 配備固有の絶対パス（`/samba/share/...`）を除去。プラグイン設定の既定値は作業ディレクトリ基準の相対パス、agent ユニットの `ReadWritePaths` は `__DIR__/logs`（`-` 付きで不在でも起動可）へ変更
+- `install.sh` / `update.sh` / `scripts/build-plugin.sh` の外部プラグイン（Kizuna-Backup LITE）ソース位置を `KIZUNA_LITE_PLUGIN_DIR` による opt-in に統一（他のリポジトリを前提にしたパスを持たない）
+
+### Changed
+- スクリプトの shellcheck 指摘を解消（`ls | grep` の廃止、未使用ループ変数、`cd ... || exit`、`/proc` の PID 列挙を glob 化）
+
 ## [0.7.0] - 2026-10-05
 
 ### Added
