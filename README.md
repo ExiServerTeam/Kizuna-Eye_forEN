@@ -109,8 +109,8 @@ Uninstall with `sudo apt remove kizuna-eye` (keep data) or `sudo apt purge kizun
 
 ### 1. Clone the repository
 
-    git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
-    cd Kizuna-Eye
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git
+    cd Kizuna-Eye_forEN
 
 ### 2. Download dependencies
 

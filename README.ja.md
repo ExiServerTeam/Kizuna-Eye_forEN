@@ -110,8 +110,8 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 `install.sh` だけで初期セットアップが完結します（パッケージ導入 → ビルド →
 プラグイン署名 → sudoers → systemd 登録 → 起動）。
 
-    git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
-    cd Kizuna-Eye
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git
+    cd Kizuna-Eye_forEN
     sudo ./install.sh
 
 agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashboard は
@@ -127,8 +127,8 @@ agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashb
 
 ### 1. リポジトリをクローン
 
-    git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
-    cd Kizuna-Eye
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git
+    cd Kizuna-Eye_forEN
 
 ### 2. 依存関係を取得
 
