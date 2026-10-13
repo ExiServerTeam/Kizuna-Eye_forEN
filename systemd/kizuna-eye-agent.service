@@ -1,0 +1,83 @@
+# ============================================================
+# Kizuna-Eye Agent systemd unit (H-1/A-4: 専用ユーザー kizuna-eye + 権限分離)
+#
+# 注: 既存の kizuna-eye.service は「start.sh を呼ぶ旧 system service」で別物。
+#     本 unit は agent 単体を専用ユーザー kizuna-eye で動かす（名前衝突回避の
+#     ため kizuna-eye-agent.service とする）。
+#
+# A-4 の目的:
+#   - agent を運用アカウント `user` から切り離し、uid=1000 が奪われても
+#     FIM ベースライン / チェーン鍵 / アラート状態を改変できないようにする。
+#   - AmbientCapabilities=CAP_DAC_READ_SEARCH により /etc/shadow 等を
+#     読めるようにし、A-2 の「権限不足 INFO」も解消する（agent 全体は非 root）。
+#   - この capability により、cron 監視 (cronmon.go) は sudo ヘルパーを使わず
+#     /var/spool/cron/crontabs を直接読める（NoNewPrivileges=yes と両立）。
+#
+# 前提（systemd/migrate-agent-user.sh が作る）:
+#   - ユーザー kizuna-eye (system/nologin, home /var/lib/kizuna-eye)
+#   - /var/lib/kizuna-eye/{state,keys,logs} (state/keys は 0700, kizuna-eye 所有)
+#   - 共有グループ kizuna-eye (kizuna-eye + 運用ユーザー) に所属
+#   - 設定 (agent_config.json / modules.json) は __DATA__ のまま 0640 で共有する。
+#     状態ファイルの絶対パスは modules.json 側に書き込まれている。
+#
+# インストール:
+#   sudo systemd/migrate-agent-user.sh user
+# ============================================================
+[Unit]
+Description=Kizuna-Eye Agent (isolated user)
+Documentation=file://__DIR__/docs/PROCEDURE.md
+After=network-online.target
+Wants=network-online.target
+
+# 再起動の暴走を防ぐ（5 分間に 10 回失敗したら failed にする）。
+# StartLimit* は [Unit] の設定。ここに置かないと systemd が「Unknown key ...
+# ignoring」で無視し、制限が効かない。
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=kizuna-eye
+Group=kizuna-eye
+WorkingDirectory=__DIR__
+
+Environment=GOGC=50
+Environment=GOMEMLIMIT=64MiB
+Environment=GOTRACEBACK=crash
+
+LimitCORE=infinity
+
+# 新規ファイルは 0640 (group read) を既定にする。書き込み権は変えず、
+# 運用ユーザー/ダッシュボードが agent の書くログを読めるようにするため。
+UMask=0027
+
+# 設定は __DATA__ の共有ファイルをそのまま読む。
+ExecStart=__BIN__/agent_linux -config __DATA__/agent_config.json -modules __DATA__/modules.json
+
+# ---- 権限分離 ----
+# /etc/shadow 等を読みつつ、agent プロセス自体は非 root のまま。
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+# ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+ReadWritePaths=/var/lib/kizuna-eye /samba/share/Kizuna-Eye/logs /samba/share/CD
+
+Restart=on-failure
+RestartSec=5
+
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kizuna-eye-agent
+
+[Install]
+WantedBy=multi-user.target

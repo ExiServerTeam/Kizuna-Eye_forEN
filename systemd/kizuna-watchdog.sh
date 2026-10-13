@@ -56,6 +56,7 @@ fi
 # systemd 管理下なら本番犬は無効（systemd の Restart=on-failure に任せる）。
 if command -v systemctl >/dev/null 2>&1; then
     if systemctl is-active --quiet kizuna-agent 2>/dev/null \
+       || systemctl is-active --quiet kizuna-eye-agent 2>/dev/null \
        || systemctl is-active --quiet kizuna-dashboard 2>/dev/null; then
         exit 0
     fi

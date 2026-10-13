@@ -299,6 +299,47 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
             warn "  echo '$CRON_USER ALL=(root) NOPASSWD: $CRON_HELPER_DST \"\"' | sudo tee $CRON_SUDOERS"
             warn "  sudo chmod 0440 $CRON_SUDOERS"
         fi
+    fi
+fi
+
+# ---- 7c. ワンクリック対処ヘルパーの導入（タスク2） ----
+# ダッシュボードは user 権限で動くため、kill / ファイアウォール操作 /
+# cron 削除を直接は実行できない。kizuna-action.sh はアクション名を
+# 列挙型に固定して引数を厳格に検証するので、sudoers は「このスクリプトを
+# 引数付きで実行すること」だけを許可すればよい（引数の検証はスクリプト内）。
+ACTION_HELPER_SRC="scripts/kizuna-action.sh"
+ACTION_HELPER_DST="/usr/local/bin/kizuna-action.sh"
+if [ "$SETUP_SUDOERS" -eq 1 ]; then
+    log ""
+    log "▶ ワンクリック対処ヘルパーの導入"
+    ACTION_USER="${SUDO_USER:-$(id -un)}"
+    ACTION_SUDOERS="/etc/sudoers.d/kizuna-security-action"
+    if [ -z "$SUDO" ]; then
+        warn "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:"
+        warn "  sudo install -m 0755 -o root -g root $ACTION_HELPER_SRC $ACTION_HELPER_DST"
+        warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
+    elif [ ! -f "$ACTION_HELPER_SRC" ]; then
+        warn "対処ヘルパーが見つかりません: $ACTION_HELPER_SRC"
+    elif [ ! -d /etc/sudoers.d ]; then
+        warn "/etc/sudoers.d がありません。手動で対処用 sudoers を設定してください。"
+    else
+        if $SUDO install -m 0755 -o root -g root "$ACTION_HELPER_SRC" "$ACTION_HELPER_DST"; then
+            ok "対処ヘルパー: $ACTION_HELPER_DST"
+        else
+            warn "対処ヘルパーの設置に失敗しました: $ACTION_HELPER_DST"
+        fi
+        ACTION_TMP="$(mktemp)"
+        # 引数付きでも許可する（検証はスクリプト内）。cron ヘルパーの "" と
+        # 異なり、こちらは引数が必須のため引数固定はできない。
+        printf '%s ALL=(root) NOPASSWD: %s\n' "$ACTION_USER" "$ACTION_HELPER_DST" > "$ACTION_TMP"
+        if $SUDO install -m 0440 -o root -g root "$ACTION_TMP" "$ACTION_SUDOERS" 2>/dev/null \
+           && $SUDO visudo -cf "$ACTION_SUDOERS" >/dev/null 2>&1; then
+            ok "sudoers 設定: $ACTION_SUDOERS (user=$ACTION_USER)"
+        else
+            warn "対処用 sudoers の設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:"
+            warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
+            warn "  sudo chmod 0440 $ACTION_SUDOERS"
+        fi
         rm -f "$CRON_TMP"
     fi
 fi
