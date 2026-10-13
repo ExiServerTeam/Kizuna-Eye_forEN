@@ -141,10 +141,16 @@ body {
 }
 
 /* ===== ヘッダー ===== */
+/* ヘッダーは 2 段構成:
+   1 段目 = ロゴ + 接続ステータス（左） / 各コントロール（右）
+   2 段目 = ナビゲーション（全幅・折り返し可）
+   どの幅でも要素がはみ出したり不自然に改行したりしない。 */
 .header {
     display: flex;
-    justify-content: space-between;
+    flex-wrap: wrap;
     align-items: center;
+    column-gap: 16px;
+    row-gap: 10px;
     padding: 14px 24px;
     border-radius: 16px;
     background: var(--bg-header);
@@ -156,10 +162,11 @@ body {
     transition: background 0.35s, border-color 0.35s, box-shadow 0.35s;
 }
 
+/* 1 段目の左側: ロゴと接続ステータスだけ。ナビは次の行へ送る。 */
 .header-left {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     flex: 1 1 auto;
     min-width: 0;
 }
@@ -176,11 +183,14 @@ body {
     background-clip: text;
 }
 
+/* ナビは 2 段目に全幅で配置する。 */
 .nav-tabs {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    margin-left: 20px;
+    flex: 1 1 100%;
+    order: 3;
+    margin-left: 0;
     min-width: 0;
 }
 
@@ -250,6 +260,8 @@ body {
     flex: 0 0 auto;
     flex-wrap: wrap;
     justify-content: flex-end;
+    margin-left: auto;
+    order: 2;
 }
 
 .version-badge {
@@ -2326,45 +2338,20 @@ body.card-dragging {
         gap: 10px;
     }
 
-    /* 1行目: ロゴ + 右側コントロール / 2行目: ナビ（横スクロール） */
+    /* スマホ: 1段目=ロゴ+ステータス / 2段目=コントロール / 3段目=ナビ */
+    .header {
+        padding: 12px 14px;
+        row-gap: 8px;
+    }
+
     .header-left {
-        flex-wrap: wrap;
+        flex: 1 1 auto;
         gap: 10px;
-        flex: 1 1 100%;
         min-width: 0;
-        order: 1;
     }
 
     .logo {
-        font-size: 1.3rem;
-        order: 1;
-    }
-
-    /* ステータスはロゴの右へ */
-    .status-badge {
-        order: 2;
-        margin-left: auto;
-    }
-
-    /* ナビは次の行に全幅で横スクロール */
-    .nav-tabs {
-        margin-left: 0;
-        gap: 2px;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        flex: 1 1 100%;
-        order: 3;
-    }
-
-    .header-right {
-        flex: 1 1 100%;
-        order: 2;
-    }
-
-    .nav-tab {
-        padding: 6px 12px;
-        font-size: 0.8rem;
-        white-space: nowrap;
+        font-size: 1.25rem;
     }
 
     .status-badge {
@@ -2372,11 +2359,29 @@ body.card-dragging {
         padding: 2px 10px;
     }
 
+    /* コントロール群はナビの前に全幅で並べる */
     .header-right {
+        flex: 1 1 100%;
+        order: 2;
         gap: 8px;
         flex-wrap: wrap;
-        justify-content: flex-end;
+        justify-content: flex-start;
         max-width: 100%;
+        margin-left: 0;
+    }
+
+    /* ナビは最下段に全幅・折り返し */
+    .nav-tabs {
+        flex: 1 1 100%;
+        order: 3;
+        margin-left: 0;
+        gap: 2px;
+    }
+
+    .nav-tab {
+        padding: 6px 12px;
+        font-size: 0.8rem;
+        white-space: nowrap;
     }
 
     .gauge-grid {
