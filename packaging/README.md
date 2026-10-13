@@ -56,19 +56,55 @@
 
 ---
 
-# 手動でやる場合
+# GitHub Releases で公開する（推奨）
 
-`release.sh` を使わず個別に叩くこともできる。
+apt リポジトリは「フラットな Release アセット」を直接リポジトリにはできない
+（`dists/stable/...` の構造が必要）。そこで:
 
-    ./packaging/apt-key.sh            # 署名鍵（初回のみ）
-    ./packaging/docker-build-deb.sh   # ubuntu:20.04 内でビルド → .deb
-    ./packaging/apt-repo.sh           # apt-repo/ を生成 + 署名
-    sudo ./packaging/test-apt-repo.sh ubuntu:20.04   # 隔離検証
+- **`.deb` と tarball** → GitHub Release のアセット（人が手で落とす用）
+- **apt リポジトリ本体** → `gh-pages` ブランチ（GitHub Pages = apt の配布元）
 
-## 中身の確認
+この 2 つを **タグ push で自動化**するワークフローを同梱している
+（`.github/workflows/release.yml`）。
 
-    dpkg-deb -c dist/kizuna-eye_*.deb   # ファイル一覧
-    dpkg-deb -I dist/kizuna-eye_*.deb   # 依存などのメタ情報
+## 1. 署名鍵を Secret に登録（初回のみ）
+
+    # ローカルで署名鍵を作る（未作成なら）
+    ./packaging/apt-key.sh
+
+    # 秘密鍵を base64 で出力
+    gpg --homedir .gnupg-apt --export-secret-keys | base64 -w0
+
+出力を GitHub のリポジトリ → **Settings > Secrets and variables > Actions**
+で `KIZUNA_APT_SIGNING_KEY` として登録する。
+
+> ⚠️ 秘密鍵は絶対にコミットしない（`.gnupg-apt/` は `.gitignore` 済み）。
+> この鍵を失うと既存ユーザーは `apt update` に失敗するので、オフホストで
+> 厳重にバックアップすること。
+
+## 2. Actions の権限を有効化（初回のみ）
+
+**Settings > Actions > General > Workflow permissions** で
+**Read and write permissions** を選ぶ（Release 作成と `gh-pages` push に必要）。
+
+## 3. GitHub Pages を有効化（初回のみ）
+
+**Settings > Pages** で Source を **Deploy from a branch**、Branch を
+**gh-pages / (root)** にする。
+
+## 4. タグを push するだけ
+
+    git tag v0.8.1
+    git push origin v0.8.1
+
+ワークフローが自動で:
+
+1. `ubuntu:20.04` でビルド → `.deb` 生成 → apt-repo 構築 → 20.04 で実検証
+2. GitHub Release を作成（`.deb` / `kizuna-eye-linux-amd64.tar.gz` /
+   `kizuna.gpg` / `kizuna-keyring.gpg` を添付）
+3. `apt-repo/` を `gh-pages` へ公開
+
+公開 URL: `https://<owner>.github.io/<repo>/`
 
 ---
 
@@ -80,11 +116,11 @@
 ## リポジトリを登録（初回のみ）
 
     # 公開鍵を登録（dearmor が必須。armor のままでは signed-by が効かない）
-    curl -fsSL https://<org>.github.io/<repo>/kizuna.gpg \
+    curl -fsSL https://<owner>.github.io/<repo>/kizuna.gpg \
       | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
 
     # リポジトリを追加
-    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://<org>.github.io/<repo> stable main" \
+    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://<owner>.github.io/<repo> stable main" \
       | sudo tee /etc/apt/sources.list.d/kizuna.list
 
     sudo apt update
@@ -95,6 +131,14 @@
 
 完了時に表示される URL をブラウザで開き、`/setup` で管理者アカウントを作成する。
 以降の設定（通知・モジュール・閾値・言語）は**すべて Web UI** で行う。
+
+## 更新
+
+    sudo apt update && sudo apt upgrade kizuna-eye
+
+> 注: deb で導入した環境は `apt upgrade` で更新する。agent の
+> `auto_update`（GitHub Releases を監視して `safe_update.sh` を実行）は
+> git クローン前提のため、deb 運用では**無効のまま**にしておく。
 
 ## アンインストール
 
@@ -131,19 +175,31 @@
 
 ---
 
-# 公開（GitHub Pages の例）
+# 手動でやる場合（CI を使わない）
 
-`apt-repo/` の中身を `gh-pages` ブランチのルートに置く。
+`release.sh` を使わず個別に叩くこともできる。
+
+    ./packaging/apt-key.sh            # 署名鍵（初回のみ）
+    ./packaging/docker-build-deb.sh   # ubuntu:20.04 内でビルド → .deb
+    ./packaging/apt-repo.sh           # apt-repo/ を生成 + 署名
+    sudo ./packaging/test-apt-repo.sh ubuntu:20.04   # 隔離検証
+
+## 中身の確認
+
+    dpkg-deb -c dist/kizuna-eye_*.deb   # ファイル一覧
+    dpkg-deb -I dist/kizuna-eye_*.deb   # 依存などのメタ情報
+
+## gh-pages へ手動 push
 
     cd apt-repo
     git init -b gh-pages
     git add -A && git commit -m "apt repo"
-    git remote add origin git@github.com:<org>/<repo>.git
+    git remote add origin git@github.com:<owner>/<repo>.git
     git push -f origin gh-pages
 
-公開 URL: `https://<org>.github.io/<repo>/`
+---
 
-## 鍵のローテーション
+# 鍵のローテーション
 
 - 署名鍵を失うと既存ユーザーは `apt update` に失敗する。`.gnupg-apt/` を必ずバックアップ。
 - 鍵を替えたらユーザーは公開鍵の再登録（`/usr/share/keyrings/kizuna.gpg` の差し替え）が必要。
