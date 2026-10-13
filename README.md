@@ -85,6 +85,28 @@ Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the 
 
 ## Installation
 
+### Install via APT (recommended, Debian/Ubuntu)
+
+No build required; dependencies are installed automatically.
+
+    # Register the public key (dearmor is required)
+    curl -fsSL https://exiserverteam.github.io/Kizuna-Eye_forEN/kizuna.gpg \
+      | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
+
+    # Add the repository
+    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye_forEN stable main" \
+      | sudo tee /etc/apt/sources.list.d/kizuna.list
+
+    sudo apt update
+    sudo apt install kizuna-eye
+
+First access: `http://<host>:8080` → create an admin account at `/setup`.
+Uninstall with `sudo apt remove kizuna-eye` (keep data) or `sudo apt purge kizuna-eye` (full removal).
+
+> Built for Ubuntu 20.04+ / Debian 11+.
+
+### Install from source
+
 ### 1. Clone the repository
 
     git clone https://github.com/sy815twty-spec/Kizuna-Eye.git

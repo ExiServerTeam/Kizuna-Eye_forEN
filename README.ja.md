@@ -85,7 +85,27 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 
 ## インストール
 
-### かんたんセットアップ（推奨）
+### APT でインストール（推奨・Debian/Ubuntu）
+
+ビルド不要で、依存関係も自動で導入されます。
+
+    # 公開鍵を登録（dearmor が必要）
+    curl -fsSL https://exiserverteam.github.io/Kizuna-Eye_forEN/kizuna.gpg \
+      | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
+
+    # リポジトリを追加
+    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye_forEN stable main" \
+      | sudo tee /etc/apt/sources.list.d/kizuna.list
+
+    sudo apt update
+    sudo apt install kizuna-eye
+
+初回アクセス: `http://<ホスト>:8080` → `/setup` で管理者アカウントを作成。
+アンインストールは `sudo apt remove kizuna-eye`（データ温存）/ `sudo apt purge kizuna-eye`（完全削除）。
+
+> Ubuntu 20.04 以降 / Debian 11 以降を対象にビルドしています。
+
+### かんたんセットアップ（ソースから・推奨）
 
 `install.sh` だけで初期セットアップが完結します（パッケージ導入 → ビルド →
 プラグイン署名 → sudoers → systemd 登録 → 起動）。
