@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+// Level はログの重要度だ。
 type Level int
 
 const (
@@ -31,27 +32,36 @@ var levelNames = map[Level]string{
 	FATAL: "FATAL",
 }
 
+// Options は Logger の生成オプションだ。
 type Options struct {
 	LogFile string
 	Level   Level
 	Prefix  string
 	UseUTC  bool
 
+	// MaxSizeMB はローテーションを起こすサイズ閾値だ。0（または未設定）は既定の
+	// 10 MB を使い、負値はローテーションを無効化する。
 	// MaxSizeMB is the size threshold that triggers rotation. 0 (or unset)
 	// uses the default of 10 MB; a negative value disables rotation.
 	MaxSizeMB int
+	// MaxBackups は保持するローテーション済みファイル数だ（既定: 5）。
 	// MaxBackups is the number of rotated files to keep (default: 5).
 	MaxBackups int
 
+	// ForwardURL を設定すると、出力されたすべてのログ行をこの HTTP(S) エンドポイントへ
+	// 転送する（1 リクエスト 1 行、ノンブロッキング、有界キュー、リダイレクト拒否）。
+	// opt-in で既定は off。pkg/logger は host 専用なので、プラグインのビルドハッシュは変わらない。
 	// ForwardURL, when set, mirrors every emitted log line to this HTTP(S)
 	// endpoint (one line per request, non-blocking, bounded queue, redirects
 	// refused). Opt-in and off by default. pkg/logger is host-only, so this
 	// does not change any plugin build hash.
 	ForwardURL string
+	// ForwardTimeout は 1 回の転送リクエストの上限だ（既定: 5s）。
 	// ForwardTimeout bounds one forward request (default: 5s).
 	ForwardTimeout time.Duration
 }
 
+// Logger は Kizuna-Eye 共通のロガーだ。
 type Logger struct {
 	mu     sync.Mutex
 	logger *log.Logger
@@ -59,11 +69,14 @@ type Logger struct {
 	prefix string
 	file   *os.File
 	writer io.Writer
+	// fw を設定すると行をリモートエンドポイントへ転送する（forward.go 参照）。
 	// fw, when set, mirrors lines to a remote endpoint (see forward.go).
 	fw *forwardWriter
 }
 
 // ============================================================
+// rotatingWriter はファイルへ書き、maxSize を超えて成長すると
+// ローテーションし、最大 maxBackups 個の旧ファイルを保持する。
 // rotatingWriter writes to a file and rotates it when it grows
 // past maxSize, keeping at most maxBackups old files.
 // ============================================================
@@ -77,6 +90,10 @@ type rotatingWriter struct {
 }
 
 func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWriter, error) {
+	// ログはユーザー名・IP を含む。ディレクトリは作成時に所有者のみにする。
+	// 配備によっては「共有」ログディレクトリを setgid + グループ所有へ緩め、
+	// 隔離された agent が書き続けられるようにするが、それは運用者の判断であり、
+	// このプロセスが勝手に広げるものではない。
 	// Logs contain usernames/IPs; keep the directory owner-only when we create
 	// it. A deployment may relax the *shared* log directory to setgid + group
 	// ownership so an isolated agent can keep writing there; that is an
@@ -92,6 +109,10 @@ func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWri
 	if err := w.open(); err != nil {
 		return nil, err
 	}
+	// world-readable で作られた可能性のある既存ファイルを締める。
+	// 0640 は意図的なグループ読み取りビットを保つ。A-4 で agent は専用ユーザーで動き、
+	// 運用者（および agent ログを読む dashboard のログビューア）は kizuna-eye が書いた
+	// ログを依然として読める必要がある。どのグループかは包含ディレクトリの setgid ビットで決まる。
 	// Tighten an existing file that may have been created world-readable.
 	// 0640 keeps a deliberate group-read bit: A-4 runs the agent as its own
 	// user, and the operator (plus the dashboard's log viewer, which reads the
@@ -102,6 +123,9 @@ func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWri
 }
 
 func (w *rotatingWriter) open() error {
+	// ログファイルはユーザー名・IP その他の機微データを含み得るため 0640 で作成する。
+	// 書き込みは所有者のみ、読み取りは共有 kizuna-eye グループへ（newRotatingWriter 参照）。
+	// プロセスの umask はこれを厳しくできるだけで、広げることはない。
 	// Log files may contain usernames, IPs, and other sensitive data, so
 	// create them 0640: owner-only for writing, group-read for the shared
 	// kizuna-eye group (see newRotatingWriter). The process umask can only
@@ -126,6 +150,8 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 
 	if w.maxSize > 0 && w.size+int64(len(p)) > w.maxSize {
 		if err := w.rotate(); err != nil {
+			// ローテーション失敗。書き込み可能なハンドルを必ず確保する。
+			// さもないとこの行（および以降のすべての行）が閉じたファイルへ書かれ失われる。
 			// Rotation failed. Make sure we still have a writable handle,
 			// otherwise the log line (and every line after it) would be
 			// written to a closed file and lost.
@@ -144,6 +170,7 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 }
 
 func (w *rotatingWriter) rotate() error {
+	// ハンドルを使用不能にし、ローテーション失敗時に Write が再オープンするようにする。
 	// Mark the handle unusable so Write reopens on a rotation failure.
 	if err := w.file.Close(); err != nil {
 		w.file = nil
@@ -161,6 +188,7 @@ func (w *rotatingWriter) rotate() error {
 	}
 	_ = os.Rename(w.path, w.path+".1")
 
+	// maxBackups を超えるものを除去する（防御的）。
 	// Remove anything beyond maxBackups (defensive).
 	w.cleanup()
 
@@ -168,6 +196,10 @@ func (w *rotatingWriter) rotate() error {
 }
 
 func (w *rotatingWriter) cleanup() {
+	// ローテーション済みファイルは "<path>.1"（最新）.."<path>.N"（最古）と名付ける。
+	// 数値サフィックスが maxBackups を超えるファイルを除去する。これにより、
+	// 最新ファイルを覆い隠す古いサフィックス（例: path.10 が文字列ソートで path.2 より
+	// 古いと扱われる）を残さない。
 	// Rotated files are named "<path>.1" (newest) .. "<path>.N" (oldest).
 	// Remove any file whose numeric suffix exceeds maxBackups, so we never
 	// keep a stale suffix that would otherwise shadow the newest file
@@ -195,6 +227,8 @@ func (w *rotatingWriter) Sync() error {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// 再オープンも失敗したローテーション失敗後は w.file が nil になる。
+	// シャットダウン中の Sync/Close がそれを参照してはならない（nil panic）。
 	// w.file is nil after a failed rotation whose reopen also failed, so a
 	// Sync/Close during shutdown must not dereference it (nil panic).
 	if w.file == nil {
@@ -272,6 +306,9 @@ func NewLogger(opts *Options) *Logger {
 	// nil の *rotatingWriter を writer に入れてはいけない。型アサーションは
 	// 成功するため Sync/Close が nil レシーバを触り、シャットダウン時に
 	// panic する（LogFile 未指定・オープン失敗時に発生）。
+	// Never put a nil *rotatingWriter into writer: a type assertion succeeds,
+	// so Sync/Close would touch a nil receiver and panic at shutdown (this
+	// happens when LogFile is unset or open failed).
 	if rot != nil {
 		out.writer = rot
 	}
@@ -299,6 +336,8 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	l.logger.Println(prefix + msg)
 
 	if level == FATAL {
+		// 既に保持しているロック下で Close する（Close は再ロックしてデッドロックする）。
+		// os.Exit は戻らないので unlock は不要だ。
 		// Close under the lock we already hold (Close would re-lock and
 		// deadlock). os.Exit does not return, so no unlock is needed.
 		l.closeLocked()
@@ -306,6 +345,11 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 }
 
+// logT は両言語のレンダリングを載せた JSON Lines エントリを 1 行書く。
+// 基底の "message" は日本語レンダリング（既存の UI 既定）で、"message_en" は英語だ。
+// これにより web/static/logs.js が UI 言語に応じて選べる。log() と違い、出力は
+// 1 行 1 JSON オブジェクトで、従来の "[LEVEL] [PREFIX] ts msg" テキストではない。
+// 移行中は 1 ファイル内で両形式が混在し得る（logs.js は既に許容している）。
 // logT writes one JSON Lines entry carrying BOTH language renderings. The
 // base "message" is the Japanese rendering (the existing UI default) and
 // "message_en" is the English one, so web/static/logs.js can pick per the UI
@@ -331,6 +375,7 @@ func (l *Logger) logT(level Level, key string, args ...interface{}) {
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
+		// イベントを決して落とさない。最小限のプレーン行にフォールバックする。
 		// Never drop the event: fall back to a minimal plain line.
 		l.logger.Println(levelNames[level] + " " + key)
 	} else {
@@ -349,6 +394,8 @@ func (l *Logger) Warn(format string, args ...interface{})  { l.log(WARN, format,
 func (l *Logger) Error(format string, args ...interface{}) { l.log(ERROR, format, args...) }
 func (l *Logger) Fatal(format string, args ...interface{}) { l.log(FATAL, format, args...) }
 
+// *T メソッドは、リテラルの書式文字列ではなくカタログキー（catalog.go 参照）を取り、
+// ja/en 両方のレンダリングを持つ JSON Lines エントリを出力する。
 // *T methods take a catalog key (see catalog.go) instead of a literal format
 // string and emit a JSON Lines entry with both ja/en renderings.
 func (l *Logger) DebugT(key string, args ...interface{}) { l.logT(DEBUG, key, args...) }
@@ -357,6 +404,8 @@ func (l *Logger) WarnT(key string, args ...interface{})  { l.logT(WARN, key, arg
 func (l *Logger) ErrorT(key string, args ...interface{}) { l.logT(ERROR, key, args...) }
 func (l *Logger) FatalT(key string, args ...interface{}) { l.logT(FATAL, key, args...) }
 
+// Sync はバッファ済みログデータをフラッシュする。ロガーミューテックスを取るため、
+// ログ書き込み（同じファイル/ライターに触る）と並行実行できない。
 // Sync flushes buffered log data. It takes the logger mutex so it cannot run
 // concurrently with a log write (which would touch the same file/writer).
 func (l *Logger) Sync() error {
@@ -371,6 +420,8 @@ func (l *Logger) Sync() error {
 	return nil
 }
 
+// Close はログファイルを閉じる。Sync と同じ理由でロガーミューテックスを取る。
+// FATAL 経路は既に保持しているため closeLocked を直接呼ぶ。
 // Close closes the log file. It takes the logger mutex for the same reason as
 // Sync. The FATAL path calls closeLocked directly because it already holds it.
 func (l *Logger) Close() {
@@ -379,6 +430,7 @@ func (l *Logger) Close() {
 	l.closeLocked()
 }
 
+// closeLocked は実際の close を行う。呼び出し側は l.mu を保持すること。
 // closeLocked performs the actual close. Caller must hold l.mu.
 func (l *Logger) closeLocked() {
 	if rw, ok := l.writer.(*rotatingWriter); ok && rw != nil {
@@ -391,6 +443,8 @@ func (l *Logger) closeLocked() {
 	}
 }
 
+// ParseLevel は文字列を Level へ変換する。不明な値は INFO を返す。
+// ParseLevel converts a string to a Level. Unknown values return INFO.
 func ParseLevel(s string) Level {
 	switch s {
 	case "debug":

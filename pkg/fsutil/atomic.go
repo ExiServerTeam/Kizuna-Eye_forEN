@@ -1,3 +1,5 @@
+// fsutil パッケージは、dashboard・agent・security プラグインが共有する
+// 小さなファイルシステムヘルパーを提供する。
 // Package fsutil provides small filesystem helpers shared by the dashboard,
 // the agent, and the security plugin.
 package fsutil
@@ -9,6 +11,23 @@ import (
 	"path/filepath"
 )
 
+// WriteFileAtomic は data を path へアトミックに書く。バイト列は同一ディレクトリの
+// 一時ファイルへ書き、fsync し、その後 path へ rename する。
+// したがって読み手が書きかけのファイルを見ることはなく、クラッシュで
+// 切り詰められた設定・ベースライン・セッションファイルが残ることもない。
+//
+// perm は rename の「前」に一時ファイルへ適用する。これにより最終ファイルが
+// 要求より広いモードで存在することが決してない（以前は fim.go / session.go /
+// api/config.go / api/modules.go がそれぞれ手書きで再実装しており、プラグイン側は
+// fsync すらしていなかった）。
+//
+// 次の 2 ケースは書き込まずに fail-closed とする。
+//   - path が空。
+//   - path が既存のシンボリックリンク。ハードニング配備のベースライン・状態ファイル・
+//     設定は、攻撃者が書き込める可能性のあるディレクトリに置かれる（SMB 露出の注意を参照）。
+//     シンボリックリンク越しに書くと、書き手が標的を選べてしまう。
+//
+// 親ディレクトリが無い場合は 0700 で作成する。
 // WriteFileAtomic writes data to path atomically: the bytes go to a temporary
 // file in the same directory, are fsynced, and are then renamed over path.
 // A reader therefore never observes a half-written file, and a crash cannot
@@ -46,6 +65,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("fsutil: 一時ファイル作成失敗: %w", err)
 	}
 	name := tmp.Name()
+	// すべてのエラー経路で一時ファイルを削除する。rename 後は no-op になる。
 	// Removes the temp file on every error path; a no-op after the rename.
 	defer func() { _ = os.Remove(name) }()
 

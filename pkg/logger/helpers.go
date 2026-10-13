@@ -1,5 +1,15 @@
 package logger
 
+// *T メソッドは具象 *Logger にある。一部のパッケージ（internal/api、internal/auth）は
+// テスト可能性のために最小の Logger インターフェースを受け入れ、プラグイン
+// （module.Logger しか見ない）は影響を受けない。これらのヘルパーはそのような
+// インターフェースを適合させる。値が *Logger なら JSON Lines の *T エントリ
+// （message + message_en）を使い、そうでなければキーを書式文字列として
+// 素のメソッドへフォールバックする。
+//
+// pkg/logger はどのプラグインからもインポートされない（確認済み）。したがって
+// このファイルを追加してもプラグインのビルドハッシュは変わらず、プラグインの
+// 再ビルドを強制しない。同じ理由で pkg/module をインポートしてはならない。
 // The *T methods live on the concrete *Logger. Some packages (internal/api,
 // internal/auth) accept a minimal Logger interface so they stay testable and
 // so plugins (which only ever see module.Logger) are unaffected. These
@@ -32,6 +42,11 @@ func LogInfo(l infoLogger, key string, args ...interface{}) {
 		t.InfoT(key, args...)
 		return
 	}
+	// key は書式文字列ではなくカタログの「キー」だ。% 指定子はカタログ値側にある。
+	// key + args をそのまま Info() に渡すと fmt.Sprintf が指定子を見つけられず、
+	// 引数をそのまま追記してしまい、本番ログが
+	// "api.plugin_sig_missing%!(EXTRA string=unsigned_demo)" のようになった。
+	// 最小 Logger でも読める行になるようカタログ経由でレンダリングする。
 	// key is a catalog KEY, not a format string: the %-verbs live in the
 	// catalog value. Passing key + args straight to Info() made fmt.Sprintf
 	// see no verbs and append the arguments literally, so production logs
@@ -48,6 +63,7 @@ func LogWarn(l warnLogger, key string, args ...interface{}) {
 		t.WarnT(key, args...)
 		return
 	}
+	// LogInfo を参照: キーではなくカタログ値をレンダリングする。
 	// See LogInfo: render the catalog value, never the key.
 	l.Warn("%s", msg("ja", key, args...))
 }
@@ -60,6 +76,7 @@ func LogError(l errorLogger, key string, args ...interface{}) {
 		t.ErrorT(key, args...)
 		return
 	}
+	// LogInfo を参照: キーではなくカタログ値をレンダリングする。
 	// See LogInfo: render the catalog value, never the key.
 	l.Error("%s", msg("ja", key, args...))
 }
@@ -72,6 +89,7 @@ func LogDebug(l debugLogger, key string, args ...interface{}) {
 		t.DebugT(key, args...)
 		return
 	}
+	// LogInfo を参照: キーではなくカタログ値をレンダリングする。
 	// See LogInfo: render the catalog value, never the key.
 	l.Debug("%s", msg("ja", key, args...))
 }
