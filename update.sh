@@ -259,6 +259,28 @@ if [ "$(id -u)" -eq 0 ] && getent group kizuna-eye >/dev/null 2>&1; then
 fi
 ok "権限を正規化しました (agent_linux: 0750 root:kizuna-eye)"
 
+# ワンクリック対処サービス（特権ソケット）の unit / server を配備する。
+# 既存インストールでも socket 方式へ移行できるよう、更新時に流す（冪等）。
+ACTION_SERVER_SRC="scripts/kizuna-action-server"
+ACTION_HELPER_SRC="scripts/kizuna-action.sh"
+if [ -f "$ACTION_SERVER_SRC" ] && [ -f systemd/kizuna-action.socket ]; then
+    if [ -n "$SUDO" ] || [ "$(id -u)" -eq 0 ]; then
+        $SUDO install -d -m 0755 /usr/lib/kizuna-eye 2>/dev/null || true
+        $SUDO install -m 0755 -o root -g root "$ACTION_HELPER_SRC" /usr/lib/kizuna-eye/kizuna-action.sh 2>/dev/null || true
+        $SUDO install -m 0755 -o root -g root "$ACTION_SERVER_SRC" /usr/lib/kizuna-eye/kizuna-action-server 2>/dev/null || true
+        $SUDO install -m 0644 -o root -g root systemd/kizuna-action.socket /lib/systemd/system/kizuna-action.socket 2>/dev/null || true
+        $SUDO install -m 0644 -o root -g root systemd/kizuna-action.service /lib/systemd/system/kizuna-action.service 2>/dev/null || true
+        if [ -f systemd/kizuna-eye-tmpfiles.conf ]; then
+            $SUDO install -m 0644 -o root -g root systemd/kizuna-eye-tmpfiles.conf /usr/lib/tmpfiles.d/kizuna-eye.conf 2>/dev/null || true
+            $SUDO systemd-tmpfiles --create /usr/lib/tmpfiles.d/kizuna-eye.conf 2>/dev/null || true
+        fi
+        $SUDO rm -f /etc/sudoers.d/kizuna-security-action /usr/local/bin/kizuna-action.sh 2>/dev/null || true
+        $SUDO systemctl daemon-reload 2>/dev/null || true
+        $SUDO systemctl enable --now kizuna-action.socket 2>/dev/null || true
+        ok "ワンクリック対処サービス（特権ソケット）を配備しました"
+    fi
+fi
+
 # PLUGINS_REBUILT counts how many plugin .so files were actually rebuilt.
 # It is used below to refuse a restart when a shared package changed but no
 # plugin could be rebuilt (the deployed .so would then fail to load).

@@ -8,8 +8,11 @@ set -e
 case "$1" in
   remove|deconfigure)
     if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop kizuna-action.socket 2>/dev/null || true
+      systemctl stop kizuna-action.service 2>/dev/null || true
       systemctl stop kizuna-dashboard.service 2>/dev/null || true
       systemctl stop kizuna-eye-agent.service 2>/dev/null || true
+      systemctl disable kizuna-action.socket 2>/dev/null || true
       systemctl disable kizuna-dashboard.service 2>/dev/null || true
       systemctl disable kizuna-eye-agent.service 2>/dev/null || true
     fi
@@ -19,6 +22,8 @@ case "$1" in
           /etc/sudoers.d/kizuna-security-cron 2>/dev/null || true
     rm -f /usr/local/bin/kizuna-action.sh \
           /usr/local/bin/kizuna-cron-read.sh 2>/dev/null || true
+    rm -f /usr/lib/kizuna-eye/kizuna-action.sh \
+          /usr/lib/kizuna-eye/kizuna-action-server 2>/dev/null || true
     ;;
 esac
 

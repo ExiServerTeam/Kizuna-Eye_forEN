@@ -106,10 +106,18 @@ find "$STAGE/usr/share/doc/kizuna-eye" -type f -exec chmod 0644 {} + 2>/dev/null
 #   - cron 監視が sudo フォールバック不能
 # という無言の機能欠落が起きていた。
 install -d "$STAGE/usr/share/kizuna-eye/helpers"
-cp scripts/kizuna-action.sh scripts/kizuna-cron-read.sh \
+cp scripts/kizuna-action.sh scripts/kizuna-cron-read.sh scripts/kizuna-action-server \
    "$STAGE/usr/share/kizuna-eye/helpers/"
 chmod 0755 "$STAGE/usr/share/kizuna-eye/helpers/kizuna-action.sh" \
-           "$STAGE/usr/share/kizuna-eye/helpers/kizuna-cron-read.sh"
+           "$STAGE/usr/share/kizuna-eye/helpers/kizuna-cron-read.sh" \
+           "$STAGE/usr/share/kizuna-eye/helpers/kizuna-action-server"
+
+# ワンクリック対処サービス（特権ソケット）の systemd unit / tmpfiles。
+# postinst がこれらを配置し、kizuna-action.socket を有効化する。sudoers は使わない。
+install -d "$STAGE/usr/share/kizuna-eye/systemd"
+cp systemd/kizuna-action.socket systemd/kizuna-action.service \
+   systemd/kizuna-eye-tmpfiles.conf \
+   "$STAGE/usr/share/kizuna-eye/systemd/" 2>/dev/null || true
 
 # --- ドキュメント ---
 install -d "$STAGE/usr/share/doc/$PKG"

@@ -681,53 +681,66 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     fi
 fi
 
-# ---- 7c. ワンクリック対処ヘルパーの導入（タスク2） ----
-# ダッシュボードは user 権限で動くため、kill / ファイアウォール操作 /
-# cron 削除を直接は実行できない。kizuna-action.sh はアクション名を
-# 列挙型に固定して引数を厳格に検証するので、sudoers は「このスクリプトを
-# 引数付きで実行すること」だけを許可すればよい（引数の検証はスクリプト内）。
+# ---- 7c. ワンクリック対処サービス（特権ソケット）の導入（タスク2） ----
+# ダッシュボードは非特権で動く。kill / ファイアウォール操作 / cron 削除 /
+# ファイル復元は特権が要るため、root で動く専用サービス
+# (kizuna-action.service) に委譲する。ダッシュボードは Unix ソケット
+# /run/kizuna-eye/action.sock に JSON を送るだけで、sudo も sudoers も
+# 使わない（dashboard を NoNewPrivileges/ProtectSystem のまま保てる）。
 ACTION_HELPER_SRC="scripts/kizuna-action.sh"
-ACTION_HELPER_DST="/usr/local/bin/kizuna-action.sh"
+ACTION_HELPER_DST="/usr/lib/kizuna-eye/kizuna-action.sh"
+ACTION_SERVER_SRC="scripts/kizuna-action-server"
+ACTION_SERVER_DST="/usr/lib/kizuna-eye/kizuna-action-server"
+ACTION_SOCKET_SRC="systemd/kizuna-action.socket"
+ACTION_SERVICE_SRC="systemd/kizuna-action.service"
+ACTION_TMPFILES_SRC="systemd/kizuna-eye-tmpfiles.conf"
 if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log ""
-    log "▶ ワンクリック対処ヘルパーの導入"
-    # The ACTION helper is run by the DASHBOARD, not the agent. install.sh
-    # runs the dashboard as the operating user (see the systemd section:
-    # "dashboard: 実行ユーザーのまま kizuna-dashboard.service で管理する"),
-    # so the NOPASSWD grant must go to that user. Forcing it to kizuna-eye
-    # (the agent user) left the dashboard unable to sudo, so every
-    # one-click action (kill / firewall / cron delete / restore) silently
-    # failed. The .deb instead installs the dashboard AS kizuna-eye, so
-    # postinst grants kizuna-eye — the two install paths legitimately differ.
-    ACTION_USER="${SUDO_USER:-$(id -un)}"
-    ACTION_SUDOERS="/etc/sudoers.d/kizuna-security-action"
+    log "▶ ワンクリック対処サービス（特権ソケット）の導入"
     if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
-        warn "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:"
-        warn "  sudo install -m 0755 -o root -g root $ACTION_HELPER_SRC $ACTION_HELPER_DST"
-        warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
-    elif [ ! -f "$ACTION_HELPER_SRC" ]; then
-        warn "対処ヘルパーが見つかりません: $ACTION_HELPER_SRC"
-    elif [ ! -d /etc/sudoers.d ]; then
-        warn "/etc/sudoers.d がありません。手動で対処用 sudoers を設定してください。"
+        warn "sudo が使えないため対処サービスの導入をスキップします。手動で:"
+        warn "  sudo install -D -m 0755 $ACTION_HELPER_SRC $ACTION_HELPER_DST"
+        warn "  sudo install -D -m 0755 $ACTION_SERVER_SRC $ACTION_SERVER_DST"
+        warn "  sudo install -m 0644 $ACTION_SOCKET_SRC /lib/systemd/system/kizuna-action.socket"
+        warn "  sudo install -m 0644 $ACTION_SERVICE_SRC /lib/systemd/system/kizuna-action.service"
+        warn "  sudo install -m 0644 $ACTION_TMPFILES_SRC /usr/lib/tmpfiles.d/kizuna-eye.conf"
+        warn "  sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/kizuna-eye.conf"
+        warn "  sudo systemctl daemon-reload && sudo systemctl enable --now kizuna-action.socket"
+    elif [ ! -f "$ACTION_HELPER_SRC" ] || [ ! -f "$ACTION_SERVER_SRC" ]; then
+        warn "対処サービス資産が見つかりません（$ACTION_HELPER_SRC / $ACTION_SERVER_SRC）"
     else
+        $SUDO install -d -m 0755 /usr/lib/kizuna-eye
         if $SUDO install -m 0755 -o root -g root "$ACTION_HELPER_SRC" "$ACTION_HELPER_DST"; then
             ok "対処ヘルパー: $ACTION_HELPER_DST"
         else
             warn "対処ヘルパーの設置に失敗しました: $ACTION_HELPER_DST"
         fi
-        ACTION_TMP="$(mktemp)"
-        # 引数付きでも許可する（検証はスクリプト内）。cron ヘルパーの "" と
-        # 異なり、こちらは引数が必須のため引数固定はできない。
-        printf '%s ALL=(root) NOPASSWD: %s\n' "$ACTION_USER" "$ACTION_HELPER_DST" > "$ACTION_TMP"
-        if $SUDO install -m 0440 -o root -g root "$ACTION_TMP" "$ACTION_SUDOERS" 2>/dev/null \
-           && $SUDO visudo -cf "$ACTION_SUDOERS" >/dev/null 2>&1; then
-            ok "sudoers 設定: $ACTION_SUDOERS (user=$ACTION_USER)"
+        if $SUDO install -m 0755 -o root -g root "$ACTION_SERVER_SRC" "$ACTION_SERVER_DST"; then
+            ok "対処サーバー: $ACTION_SERVER_DST"
         else
-            warn "対処用 sudoers の設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:"
-            warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
-            warn "  sudo chmod 0440 $ACTION_SUDOERS"
+            warn "対処サーバーの設置に失敗しました: $ACTION_SERVER_DST"
         fi
-        rm -f "$ACTION_TMP"
+        if [ -f "$ACTION_SOCKET_SRC" ] && [ -f "$ACTION_SERVICE_SRC" ]; then
+            $SUDO install -m 0644 -o root -g root "$ACTION_SOCKET_SRC" /lib/systemd/system/kizuna-action.socket
+            $SUDO install -m 0644 -o root -g root "$ACTION_SERVICE_SRC" /lib/systemd/system/kizuna-action.service
+            ok "systemd unit: kizuna-action.socket / kizuna-action.service"
+        else
+            warn "systemd unit ソースがありません（$ACTION_SOCKET_SRC / $ACTION_SERVICE_SRC）"
+        fi
+        if [ -f "$ACTION_TMPFILES_SRC" ]; then
+            $SUDO install -m 0644 -o root -g root "$ACTION_TMPFILES_SRC" /usr/lib/tmpfiles.d/kizuna-eye.conf
+            $SUDO systemd-tmpfiles --create /usr/lib/tmpfiles.d/kizuna-eye.conf 2>/dev/null || true
+        fi
+        # 旧 sudoers 方式の残骸を掃除（sudo 方式から socket 方式への移行）。
+        if [ -f /etc/sudoers.d/kizuna-security-action ]; then
+            $SUDO rm -f /etc/sudoers.d/kizuna-security-action && ok "旧 sudoers を削除（socket 方式へ移行）"
+        fi
+        $SUDO systemctl daemon-reload 2>/dev/null || true
+        if $SUDO systemctl enable --now kizuna-action.socket 2>/dev/null; then
+            ok "kizuna-action.socket を有効化・起動しました"
+        else
+            warn "kizuna-action.socket の起動に失敗しました。手動で: sudo systemctl enable --now kizuna-action.socket"
+        fi
     fi
 fi
 

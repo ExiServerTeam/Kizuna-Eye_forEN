@@ -73,36 +73,31 @@ case "$1" in
     # --- 5. プラグインディレクトリ ---
     install -d -o "$PKG_USER" -g "$PKG_USER" -m 0755 "$BIN_DIR/plugins"
 
-    # --- 5b. 特権ヘルパーと sudoers ---
-    # ダッシュボードは非 root (kizuna-eye) で動くため、kill / ファイアウォール /
-    # cron 削除は root ヘルパー経由でしか実行できない。ヘルパーを配置し、
-    # sudoers で「そのスクリプトだけ」に NOPASSWD を与える。
-    #
-    # install.sh には元からあったが deb には無く、apt で入れるとワンクリック
-    # 対処が無言で全滅していた（ヘルパー不在 + sudoers 不在）。ここで揃える。
+    # --- 5b. 特権ヘルパーとワンクリック対処サービス（特権ソケット） ---
+    # ダッシュボードは非 root (kizuna-eye) で動く。kill / ファイアウォール /
+    # cron 削除 / ファイル復元は root で動く専用サービス (kizuna-action.service)
+    # に委譲する。ダッシュボードは Unix ソケット /run/kizuna-eye/action.sock に
+    # JSON を送るだけで sudo も sudoers も使わない。
     HELPERS_SRC="$SHARE_DIR/helpers"
     if [ -d "$HELPERS_SRC" ]; then
-      install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-action.sh" /usr/local/bin/kizuna-action.sh 2>/dev/null || true
+      install -d -m 0755 /usr/lib/kizuna-eye
+      install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-action.sh" /usr/lib/kizuna-eye/kizuna-action.sh 2>/dev/null || true
+      install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-action-server" /usr/lib/kizuna-eye/kizuna-action-server 2>/dev/null || true
+      # cron 読み取りヘルパーは agent が使うため残す（CAP_DAC_READ_SEARCH が無い環境向け）。
       install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-cron-read.sh" /usr/local/bin/kizuna-cron-read.sh 2>/dev/null || true
-
-      if [ -d /etc/sudoers.d ] && command -v visudo >/dev/null 2>&1; then
-        # 引数付きで許可するのは action のみ（検証はスクリプト内）。cron は
-        # 引数なしの実行だけを許可し、任意パス読み取りに使われないようにする。
-        ACTION_TMP="$(mktemp)"
-        printf '%s ALL=(root) NOPASSWD: /usr/local/bin/kizuna-action.sh\n' "$PKG_USER" > "$ACTION_TMP"
-        if visudo -cf "$ACTION_TMP" >/dev/null 2>&1; then
-          install -m 0440 -o root -g root "$ACTION_TMP" /etc/sudoers.d/kizuna-security-action
-        fi
-        rm -f "$ACTION_TMP"
-
-        CRON_TMP="$(mktemp)"
-        printf '%s ALL=(root) NOPASSWD: /usr/local/bin/kizuna-cron-read.sh ""\n' "$PKG_USER" > "$CRON_TMP"
-        if visudo -cf "$CRON_TMP" >/dev/null 2>&1; then
-          install -m 0440 -o root -g root "$CRON_TMP" /etc/sudoers.d/kizuna-security-cron
-        fi
-        rm -f "$CRON_TMP"
-      fi
     fi
+
+    # systemd unit / tmpfiles（action socket）を配置。
+    if [ -f "$SHARE_DIR/systemd/kizuna-action.socket" ]; then
+      install -m 0644 -o root -g root "$SHARE_DIR/systemd/kizuna-action.socket" /lib/systemd/system/kizuna-action.socket
+      install -m 0644 -o root -g root "$SHARE_DIR/systemd/kizuna-action.service" /lib/systemd/system/kizuna-action.service
+    fi
+    if [ -f "$SHARE_DIR/systemd/kizuna-eye-tmpfiles.conf" ]; then
+      install -m 0644 -o root -g root "$SHARE_DIR/systemd/kizuna-eye-tmpfiles.conf" /usr/lib/tmpfiles.d/kizuna-eye.conf
+      command -v systemd-tmpfiles >/dev/null 2>&1 && systemd-tmpfiles --create /usr/lib/tmpfiles.d/kizuna-eye.conf >/dev/null 2>&1 || true
+    fi
+    # 旧 sudoers 方式の残骸を掃除（sudo → socket 方式への移行）。
+    rm -f /etc/sudoers.d/kizuna-security-action /usr/local/bin/kizuna-action.sh 2>/dev/null || true
 
     # --- 6. systemd unit のプレースホルダを実値に置換 ---
     for u in kizuna-eye-agent kizuna-dashboard; do
@@ -120,6 +115,8 @@ case "$1" in
       systemctl daemon-reload || true
       systemctl enable kizuna-eye-agent.service || true
       systemctl enable kizuna-dashboard.service || true
+      # ワンクリック対処サービス（特権ソケット）を有効化。接続時に起動される。
+      systemctl enable --now kizuna-action.socket || true
       # 設定生成直後は起動しない（ユーザーが /setup で管理者作成できるよう、
       # ダッシュボードは起動しておく）
       systemctl restart kizuna-dashboard.service || true
