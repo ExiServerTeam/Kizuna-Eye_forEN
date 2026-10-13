@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -196,6 +197,11 @@ func (h *AlertConfigHandler) persistConfig() error {
 }
 
 func validatePct(name string, v float64) error {
+	// NaN/Inf は範囲比較がすべて false になるため、素の範囲チェックを
+	// すり抜ける。明示的に弾く（status.Validate と同じ方針）。
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return fmt.Errorf("%s が不正な値です", name)
+	}
 	if v < 0 || v > 100 {
 		return fmt.Errorf("%s は 0〜100 の範囲で指定してください", name)
 	}
@@ -204,6 +210,9 @@ func validatePct(name string, v float64) error {
 
 // validateTemp validates a CPU temperature threshold (0〜150℃).
 func validateTemp(name string, v float64) error {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return fmt.Errorf("%s が不正な値です", name)
+	}
 	if v < 0 || v > 150 {
 		return fmt.Errorf("%s は 0〜150 の範囲で指定してください", name)
 	}

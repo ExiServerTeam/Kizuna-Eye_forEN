@@ -121,6 +121,7 @@ function isSafeAttrExpr(expr, safeLocals, depth) {
 
   // cond ? a : b —— cond は真偽値の選択にしか使われないので何でもよい。
   // a / b にデータが入ると危険なので、それぞれを再帰的に検査する。
+  // 三項演算子を先に処理する（+ より ?: を外側で見るため）。
   const q = topLevelIndexOf(s, '?');
   if (q >= 0) {
     const rest = s.slice(q + 1);
@@ -128,6 +129,14 @@ function isSafeAttrExpr(expr, safeLocals, depth) {
     if (c < 0) return false;
     return isSafeAttrExpr(rest.slice(0, c), safeLocals, depth + 1) &&
            isSafeAttrExpr(rest.slice(c + 1), safeLocals, depth + 1);
+  }
+
+  // 文字列連結: すべての項が安全なら安全（例: ' ' + cssClass(tagClass)）。
+  // 連結の片方でも危険な項があれば false になるよう、再帰的に検査する。
+  const plus = topLevelIndexOf(s, '+');
+  if (plus >= 0) {
+    return isSafeAttrExpr(s.slice(0, plus), safeLocals, depth + 1) &&
+           isSafeAttrExpr(s.slice(plus + 1), safeLocals, depth + 1);
   }
 
   // 単純な識別子（無害化済みローカルとして登録済みのものだけ許可）

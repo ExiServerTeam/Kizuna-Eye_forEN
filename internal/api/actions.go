@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -230,13 +231,26 @@ type actionError struct{ msg string }
 
 func (e *actionError) Error() string { return e.msg }
 
-// ipInMessage extracts the first IPv4/IPv6-looking token from the alert
-// message. The SSH alert message contains "接続元: <ip>" and the port alert
-// contains an address:port, so this gives the UI a default target it can
-// show for confirmation. The operator can still override it.
+// extractIPFromMessage returns the first token in the alert message that is a
+// syntactically valid IPv4/IPv6 address. The SSH alert contains
+// "接続元: <ip>" and the port alert contains an address:port, so this gives
+// the UI a default target to confirm; the operator can still override it.
+//
+// net.ParseIP is used instead of a loose regexp: the previous pattern
+// (\b[0-9a-fA-F:]{3,45}\b) also matched a bare number (a port "44444", a PID)
+// or a time ("12:34"), which then passed ipRe and was offered to the sudo
+// helper as a bogus target. Requiring ParseIP to succeed rejects those.
 func extractIPFromMessage(a *alert.HistoryEntry) string {
-	re := regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b|\b[0-9a-fA-F:]{3,45}\b`)
-	return re.FindString(a.Message)
+	for _, tok := range strings.FieldsFunc(a.Message, func(r rune) bool {
+		return !(r == '.' || r == ':' ||
+			(r >= '0' && r <= '9') ||
+			(r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F'))
+	}) {
+		if net.ParseIP(tok) != nil {
+			return tok
+		}
+	}
+	return ""
 }
 
 // extractPortFromAlert pulls the TCP port out of a listening-port alert.

@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 // ============================================================
@@ -20,7 +19,7 @@ type LINENotifier struct {
 func NewLINENotifier(token string) *LINENotifier {
 	return &LINENotifier{
 		token:  token,
-		client: &http.Client{Timeout: 10 * time.Second},
+		client: newNotifyHTTPClient(),
 	}
 }
 

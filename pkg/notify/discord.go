@@ -53,7 +53,7 @@ func NewDiscordNotifierWithOptions(webhookURL string, maxRetries, backoffMaxSec 
 	}
 	return &DiscordNotifier{
 		webhookURL: webhookURL,
-		client:     &http.Client{Timeout: 10 * time.Second},
+		client:     newNotifyHTTPClient(),
 		maxRetries: maxRetries,
 		backoffMax: time.Duration(backoffMaxSec) * time.Second,
 		logger:     log,

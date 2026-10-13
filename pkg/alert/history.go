@@ -63,6 +63,16 @@ type HistoryEntry struct {
 // with only the in-memory entries.
 const maxPersistBytes = 4 << 20 // 4 MiB
 
+// firstNonEmpty returns a when it is non-empty, otherwise b. Used to prefer a
+// detail-provided English string but still fall back to the alert's own EN
+// rendering (the engine and dashboard populate Alert.TitleEN/MessageEN).
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
 // levelWeight returns the retention weight for a level. Higher is kept longer.
 func levelWeight(level string) int {
 	switch strings.ToLower(level) {
@@ -169,8 +179,8 @@ func (h *History) AddSourcedDetail(a *notify.Alert, source string, trusted bool,
 		DetectLine:  detail.DetectLine,
 		Remediation: detail.Remediation,
 		RelatedLog:  detail.RelatedLog,
-		TitleEN:     detail.TitleEN,
-		MessageEN:   detail.MessageEN,
+		TitleEN:     firstNonEmpty(detail.TitleEN, a.TitleEN),
+		MessageEN:   firstNonEmpty(detail.MessageEN, a.MessageEN),
 	}
 	e.ID = entryID(e)
 	h.entries = append(h.entries, e)

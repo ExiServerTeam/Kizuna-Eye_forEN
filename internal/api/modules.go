@@ -256,6 +256,11 @@ type ModuleHandler struct {
 	// with the same name cannot silently overwrite it and so no orphan .so
 	// stays loadable after the module is gone.
 	pluginsDir string
+	// adminChecker reports whether the request is from an admin. It is
+	// injected by the dashboard (api must not import auth). A nil checker is
+	// treated as "not admin" (fail-closed), so a missing wiring can never
+	// widen the permission for a code-execution-boundary change.
+	adminChecker func(*http.Request) bool
 }
 
 // NewModuleHandler creates a ModuleHandler.
@@ -263,6 +268,98 @@ type ModuleHandler struct {
 // removed (no file cleanup).
 func NewModuleHandler(storage *ModulesStorage, pluginsDir string) *ModuleHandler {
 	return &ModuleHandler{storage: storage, pluginsDir: pluginsDir}
+}
+
+// SetAdminChecker injects the admin test used for code-execution-boundary
+// operations (currently: changing a module's plugin_path). Call during startup.
+func (h *ModuleHandler) SetAdminChecker(fn func(*http.Request) bool) {
+	h.adminChecker = fn
+}
+
+// pluginPathOf extracts "plugin_path" from a module config JSON, or "" when
+// the field is absent. A malformed config yields "" (treated as absent).
+func pluginPathOf(cfg json.RawMessage) string {
+	if len(cfg) == 0 {
+		return ""
+	}
+	var c struct {
+		PluginPath string `json:"plugin_path"`
+	}
+	if json.Unmarshal(cfg, &c) != nil {
+		return ""
+	}
+	return c.PluginPath
+}
+
+// adminOnlyConfigFields lists module config keys that touch a protection or
+// recovery capability, or a code-execution boundary. Changing any of them
+// requires admin (see docs/PROCEDURE.md 3.1); other settings stay editable by
+// operator. The list is sorted so change detection is deterministic when more
+// than one field differs.
+var adminOnlyConfigFields = []string{
+	"block_duration_sec",
+	"block_mode",
+	"block_state_path",
+	"block_whitelist",
+	"chain_key_path",
+	"cron_check",
+	"cron_paths",
+	"fim_watch",
+	"fim_watch_baseline_path",
+	"fim_watch_paths",
+	"firewall_backend",
+	"integrity_baseline_path",
+	"integrity_files",
+	"listen_port_check",
+	"log_path",
+	"notify_min_level",
+	"plugin_path",
+	"suid_check",
+	"suid_fast_check",
+	"suid_fast_paths",
+	"suid_paths",
+	"suid_watch",
+	"suid_watch_paths",
+	"sudo_ignore_commands",
+	"watch_files",
+}
+
+// rawConfigMap decodes a module config into its raw key/value pairs. An empty
+// or malformed config yields nil (treated as "no fields").
+func rawConfigMap(cfg json.RawMessage) map[string]json.RawMessage {
+	if len(cfg) == 0 {
+		return nil
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(cfg, &m) != nil {
+		return nil
+	}
+	return m
+}
+
+// changedAdminOnlyField returns the name of the first admin-only config field
+// (in sorted order) whose value differs between old and new, or "" when none
+// did. A protection field that is present in old but absent from new counts as
+// a change too: ModulesStorage.Update replaces the config wholesale (only an
+// entirely empty config keeps the old one), so omitting the field would drop
+// it. Comparison is by raw JSON value, so any type change is detected.
+func changedAdminOnlyField(oldCfg, newCfg json.RawMessage) string {
+	oldMap := rawConfigMap(oldCfg)
+	newMap := rawConfigMap(newCfg)
+	for _, key := range adminOnlyConfigFields {
+		ov, oOK := oldMap[key]
+		nv, nOK := newMap[key]
+		if !nOK {
+			if oOK {
+				return key
+			}
+			continue
+		}
+		if !oOK || !bytes.Equal(ov, nv) {
+			return key
+		}
+	}
+	return ""
 }
 
 // RegisterRoutes registers the module routes.
@@ -275,7 +372,15 @@ func (h *ModuleHandler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // handleGetAll returns all modules.
+//
+// It re-reads modules.json from disk before answering. The agent watches the
+// file's mtime and reloads it, but the dashboard used to keep only the
+// snapshot loaded at startup, so a module added to modules.json by hand (or by
+// another process) appeared in the agent but not in the UI. Reloading here
+// keeps the two views consistent; a read error falls back to the in-memory
+// snapshot so the module list never fails to render.
 func (h *ModuleHandler) handleGetAll(w http.ResponseWriter, r *http.Request) {
+	_ = h.storage.Load()
 	modules := h.storage.GetAll()
 	writeJSON(w, http.StatusOK, modules)
 }
@@ -309,6 +414,28 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&mod); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "リクエストボディのパースに失敗しました: "+err.Error())
 		return
+	}
+
+	// Some config fields touch a protection/recovery capability or a
+	// code-execution boundary (plugin_path). The path-based middleware rule
+	// cannot tell a settings edit from such a change, so the check is done
+	// here: if any admin-only field differs from the stored value, admin is
+	// required. A nil checker is treated as "not admin" (fail-closed).
+	if cur := h.storage.Get(name); cur != nil {
+		// Disabling (or enabling) a module starts/stops its monitoring, so it
+		// is a protection capability change: admin only.
+		if mod.Enabled != cur.Enabled {
+			if h.adminChecker == nil || !h.adminChecker(r) {
+				writeJSONError(w, http.StatusForbidden, "モジュールの有効/無効の変更には管理者権限が必要です")
+				return
+			}
+		}
+		if field := changedAdminOnlyField(cur.Config, mod.Config); field != "" {
+			if h.adminChecker == nil || !h.adminChecker(r) {
+				writeJSONError(w, http.StatusForbidden, "設定「"+field+"」の変更には管理者権限が必要です")
+				return
+			}
+		}
 	}
 
 	// Update persists internally and rolls back on save failure.

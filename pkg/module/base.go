@@ -402,22 +402,22 @@ const (
 // still usable. A plugin that wants a fully English UI must fill all four
 // (LabelEN / HintEN / PlaceholderEN / GroupEN).
 type ConfigField struct {
-	Key         string          `json:"key"`
-	Label       string          `json:"label"`
-	LabelEN     string          `json:"label_en,omitempty"`
-	Type        ConfigFieldType `json:"type"`
-	Default     string          `json:"default,omitempty"`
-	Required    bool            `json:"required,omitempty"`
-	Options     []string        `json:"options,omitempty"`
-	Placeholder string          `json:"placeholder,omitempty"`
-	PlaceholderEN string        `json:"placeholder_en,omitempty"`
-	Hint        string          `json:"hint,omitempty"`
-	HintEN      string          `json:"hint_en,omitempty"`
-	Group       string          `json:"group,omitempty"`
-	GroupEN     string          `json:"group_en,omitempty"`
-	Min         *float64        `json:"min,omitempty"`
-	Max         *float64        `json:"max,omitempty"`
-	Pattern     string          `json:"pattern,omitempty"`
+	Key           string          `json:"key"`
+	Label         string          `json:"label"`
+	LabelEN       string          `json:"label_en,omitempty"`
+	Type          ConfigFieldType `json:"type"`
+	Default       string          `json:"default,omitempty"`
+	Required      bool            `json:"required,omitempty"`
+	Options       []string        `json:"options,omitempty"`
+	Placeholder   string          `json:"placeholder,omitempty"`
+	PlaceholderEN string          `json:"placeholder_en,omitempty"`
+	Hint          string          `json:"hint,omitempty"`
+	HintEN        string          `json:"hint_en,omitempty"`
+	Group         string          `json:"group,omitempty"`
+	GroupEN       string          `json:"group_en,omitempty"`
+	Min           *float64        `json:"min,omitempty"`
+	Max           *float64        `json:"max,omitempty"`
+	Pattern       string          `json:"pattern,omitempty"`
 }
 
 // Validate checks a value against the field definition.

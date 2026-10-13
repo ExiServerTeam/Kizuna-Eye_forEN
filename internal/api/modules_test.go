@@ -98,7 +98,9 @@ func TestModuleHandlersDistinguishNotFoundFromSaveFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req = httptest.NewRequest(http.MethodPut, "/api/modules/p1", strings.NewReader(`{"name":"p1"}`))
+	// Keep enabled=true: a change to the enabled flag is now admin-only, so
+	// omitting it (=> false) would fail with 403 before the save is attempted.
+	req = httptest.NewRequest(http.MethodPut, "/api/modules/p1", strings.NewReader(`{"name":"p1","enabled":true}`))
 	req.SetPathValue("name", "p1")
 	rec = httptest.NewRecorder()
 	h.handleUpdate(rec, req)

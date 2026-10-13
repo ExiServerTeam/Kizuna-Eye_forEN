@@ -28,6 +28,13 @@ type Alert struct {
 	Title     string    // title (without icon)
 	Message   string    // body
 	Timestamp time.Time // occurred at
+
+	// TitleEN / MessageEN are the English renderings of Title / Message.
+	// The alert history stores them so the UI can be switched to English
+	// without re-deriving the string from a key. Empty means "no English
+	// rendering"; the UI falls back to Title / Message.
+	TitleEN   string
+	MessageEN string
 }
 
 // Color returns the color code used by Discord embeds.

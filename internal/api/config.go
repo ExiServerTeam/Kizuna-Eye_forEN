@@ -185,7 +185,22 @@ func (c *ConfigHandler) restoreSecretsFromFile(filePath string, incoming interfa
 // criticalBlocks are top-level config keys that must not be dropped by a
 // partial update. If the incoming object does not contain the key at all, the
 // existing value is copied over so the block is never silently removed.
-var criticalBlocks = []string{"auth", "notifications"}
+//
+// "auth" / "notifications" は認証・通知（無効化されると防御が落ちる）。
+// "plugins" は署名検証ポリシー（require_signature / public_key_file /
+// inspect_isolation）。これが消えると未署名 .so が再びロード可能になり
+// セキュリティが後退する。
+// "plugins_upload_enabled" / "alert_history_key_path" は単独キーだが、
+// 前者は RCE 境界（アップロード可否）、後者はアラート履歴の HMAC 署名鍵の
+// 指定であり、欠落すると署名が無効化される。いずれも部分更新で消しては
+// ならないため保護対象に含める。
+var criticalBlocks = []string{
+	"auth",
+	"notifications",
+	"plugins",
+	"plugins_upload_enabled",
+	"alert_history_key_path",
+}
 
 func preserveCriticalBlocks(incoming, existing interface{}) interface{} {
 	inc, ok := incoming.(map[string]interface{})
@@ -328,6 +343,23 @@ func (c *ConfigHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Restore masked secrets ("***") from the on-disk config BEFORE
+	// validating, so the values that are validated are exactly the ones that
+	// will be saved. Validating first rejected a legitimate save whenever a
+	// secret was left masked: an existing Discord webhook_url is returned to
+	// the editor as "***", and the URL check then failed with "http または
+	// https のみ許可されます:" (empty scheme).
+	for _, key := range []string{"agent", "dashboard"} {
+		if cfg, ok := configs[key]; ok {
+			switch key {
+			case "agent":
+				configs[key] = c.restoreSecretsFromFile(c.agentConfigPath, cfg)
+			case "dashboard":
+				configs[key] = c.restoreSecretsFromFile(c.dashboardConfigPath, cfg)
+			}
+		}
+	}
+
 	// Validate every present config before writing anything, so the bulk
 	// endpoint behaves the same as PUT /api/config/{type} and cannot persist
 	// a config that is missing required fields.
@@ -341,14 +373,14 @@ func (c *ConfigHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	if agentCfg, ok := configs["agent"]; ok {
-		if err := c.saveJSONFile(c.agentConfigPath, c.restoreSecretsFromFile(c.agentConfigPath, agentCfg)); err != nil {
+		if err := c.saveJSONFile(c.agentConfigPath, agentCfg); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save agent config: %v", err))
 			return
 		}
 	}
 
 	if dashboardCfg, ok := configs["dashboard"]; ok {
-		if err := c.saveJSONFile(c.dashboardConfigPath, c.restoreSecretsFromFile(c.dashboardConfigPath, dashboardCfg)); err != nil {
+		if err := c.saveJSONFile(c.dashboardConfigPath, dashboardCfg); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save dashboard config: %v", err))
 			return
 		}
@@ -392,12 +424,18 @@ func (c *ConfigHandler) handleUpdateConfigByType(w http.ResponseWriter, r *http.
 		return
 	}
 
+	// Restore masked secrets before validating, so the validated values match
+	// what is saved (see handleUpdateConfig). modules.json holds no secrets, so
+	// it is skipped (its top level is an array, not an object).
+	if configType != "modules" {
+		cfg = c.restoreSecretsFromFile(filePath, cfg)
+	}
+
 	if err := c.validateConfig(configType, cfg); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "Validation failed: "+err.Error())
 		return
 	}
 
-	cfg = c.restoreSecretsFromFile(filePath, cfg)
 	if err := c.saveJSONFile(filePath, cfg); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save %s config: %v", configName, err))
 		return

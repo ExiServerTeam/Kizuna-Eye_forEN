@@ -177,6 +177,8 @@ func (e *Engine) RecordAction(a *HistoryEntry, action, target, result string) {
 		Title:     "対処を実行: " + action,
 		Message:   msg + " -> " + result,
 		Timestamp: time.Now(),
+		TitleEN:   "Action executed: " + action,
+		MessageEN: msg + " -> " + result,
 	}, "dashboard", true, HistoryEntry{
 		Command:     action + " " + target,
 		DetectFile:  "internal/api/actions.go",
@@ -265,6 +267,8 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 				Title:     "Agent 復帰",
 				Message:   "Agentからの応答が復帰しました。",
 				Timestamp: now,
+				TitleEN:   "Agent recovered",
+				MessageEN: "The Agent is responding again.",
 			})
 		}
 		e.agentOnline = true
@@ -339,6 +343,8 @@ func (e *Engine) CheckAgentTimeout() {
 				Title:     "Agent 未接続が継続",
 				Message:   "Agentとの接続が回復していません（原因: " + reason + "）。監視が停止しています。",
 				Timestamp: time.Now(),
+				TitleEN:   "Agent still disconnected",
+				MessageEN: "The Agent connection has not recovered (reason: " + reason + "). Monitoring is stopped.",
 			}, "dashboard", true)
 			return
 		}
@@ -362,6 +368,8 @@ func (e *Engine) CheckAgentTimeout() {
 			Title:     "Agent 応答なし",
 			Message:   "Agentから応答がありません。至急確認してください。",
 			Timestamp: time.Now(),
+			TitleEN:   "Agent not responding",
+			MessageEN: "No response from the Agent. Check immediately.",
 		}, "dashboard", true)
 		return
 	}
@@ -391,6 +399,8 @@ func (e *Engine) OnAgentDisconnect() {
 			Title:     "Agent 切断",
 			Message:   "Agentが切断されました。",
 			Timestamp: time.Now(),
+			TitleEN:   "Agent disconnected",
+			MessageEN: "The Agent has disconnected.",
 		}, "dashboard", true)
 		return
 	}
@@ -486,9 +496,11 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 
 		level := notify.LevelWarning
 		title := "メモリ警告"
+		titleEn := "Memory warning"
 		if isCritical {
 			level = notify.LevelCritical
 			title = "メモリ異常"
+			titleEn = "Memory critical"
 		}
 
 		if !shouldFire(st, e.cfg.HoldDuration, e.cfg.Cooldown, now, level) {
@@ -498,12 +510,14 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 		st.firedLevel = level
 
 		msg := fmt.Sprintf("メモリ使用率が高まっています！（現在: %.1f%%）至急確認して下さい！", pct)
+		msgEn := fmt.Sprintf("Memory usage is high! (current: %.1f%%) Check immediately!", pct)
 		if !isCritical {
 			msg = fmt.Sprintf("メモリ使用率が%.1f%%に達しました。", pct)
+			msgEn = fmt.Sprintf("Memory usage reached %.1f%%.", pct)
 		}
 		return &notify.Alert{
 			Type: "memory", Level: level, Icon: iconForLevel(level), Title: title,
-			Message: msg, Timestamp: now,
+			Message: msg, Timestamp: now, TitleEN: titleEn, MessageEN: msgEn,
 		}
 	}
 
@@ -532,6 +546,8 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 		Title:     "メモリ復旧",
 		Message:   fmt.Sprintf("メモリ使用率が正常に戻りました。（現在: %.1f%%）", pct),
 		Timestamp: now,
+		TitleEN:   "Memory recovered",
+		MessageEN: fmt.Sprintf("Memory usage returned to normal. (current: %.1f%%)", pct),
 	}
 }
 
@@ -553,9 +569,11 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 
 		level := notify.LevelWarning
 		title := "ストレージ警告"
+		titleEn := "Storage warning"
 		if isCritical {
 			level = notify.LevelCritical
 			title = "ストレージ異常"
+			titleEn = "Storage critical"
 		}
 
 		if !shouldFire(st, e.cfg.HoldDuration, e.cfg.Cooldown, now, level) {
@@ -565,17 +583,23 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 		st.firedLevel = level
 
 		var msg string
+		var msgEn string
 		if isCritical {
 			msg = fmt.Sprintf(
 				"ストレージの空き容量が少なくなっています！（残り: %s / %.1f%%）至急確認してください！",
 				formatStorage(freeBytes), freePct,
 			)
+			msgEn = fmt.Sprintf(
+				"Storage free space is low! (remaining: %s / %.1f%%) Check immediately!",
+				formatStorage(freeBytes), freePct,
+			)
 		} else {
 			msg = fmt.Sprintf("ストレージの空き容量が%.1f%%になりました。", freePct)
+			msgEn = fmt.Sprintf("Storage free space reached %.1f%%.", freePct)
 		}
 		return &notify.Alert{
 			Type: "disk", Level: level, Icon: iconForLevel(level), Title: title,
-			Message: msg, Timestamp: now,
+			Message: msg, Timestamp: now, TitleEN: titleEn, MessageEN: msgEn,
 		}
 	}
 
@@ -607,6 +631,11 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 			formatStorage(freeBytes), freePct,
 		),
 		Timestamp: now,
+		TitleEN:   "Storage recovered",
+		MessageEN: fmt.Sprintf(
+			"Storage free space recovered. (current: free %s / %.1f%%)",
+			formatStorage(freeBytes), freePct,
+		),
 	}
 }
 
@@ -642,9 +671,11 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 
 		level := notify.LevelWarning
 		title := "CPU温度警告"
+		titleEn := "CPU temperature warning"
 		if isCritical {
 			level = notify.LevelCritical
 			title = "CPU温度異常"
+			titleEn = "CPU temperature critical"
 		}
 
 		if !shouldFire(st, e.cfg.HoldDuration, e.cfg.Cooldown, now, level) {
@@ -654,14 +685,17 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 		st.firedLevel = level
 
 		var msg string
+		var msgEn string
 		if isCritical {
 			msg = fmt.Sprintf("CPU温度が%.1f°Cになっています！至急確認してください。", tempC)
+			msgEn = fmt.Sprintf("CPU temperature is %.1f°C! Check immediately.", tempC)
 		} else {
 			msg = fmt.Sprintf("CPU温度が%.1f°Cに達しました。", tempC)
+			msgEn = fmt.Sprintf("CPU temperature reached %.1f°C.", tempC)
 		}
 		return &notify.Alert{
 			Type: "cpu_temp", Level: level, Icon: iconForLevel(level), Title: title,
-			Message: msg, Timestamp: now,
+			Message: msg, Timestamp: now, TitleEN: titleEn, MessageEN: msgEn,
 		}
 	}
 
@@ -690,6 +724,8 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 		Title:     "CPU温度復旧",
 		Message:   fmt.Sprintf("CPU温度が正常範囲に戻りました。（現在: %.1f°C）", tempC),
 		Timestamp: now,
+		TitleEN:   "CPU temperature recovered",
+		MessageEN: fmt.Sprintf("CPU temperature returned to the normal range. (current: %.1f°C)", tempC),
 	}
 }
 
@@ -719,15 +755,18 @@ func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.
 		st.firedLevel = notify.LevelCritical
 
 		var msg string
+		var msgEn string
 		if len(badDisks) == 1 {
 			msg = fmt.Sprintf("ディスク（%s）に異常が発生しています。至急確認してください。", badDisks[0])
+			msgEn = fmt.Sprintf("Disk (%s) has a failure. Check immediately.", badDisks[0])
 		} else {
 			msg = fmt.Sprintf("複数のディスク（%s）に異常が発生しています。至急確認してください。", strings.Join(badDisks, ", "))
+			msgEn = fmt.Sprintf("Multiple disks (%s) have failures. Check immediately.", strings.Join(badDisks, ", "))
 		}
 		return &notify.Alert{
 			Type: "disk_health", Level: notify.LevelCritical, Icon: "💀",
 			Title:   "ディスク異常",
-			Message: msg, Timestamp: now,
+			Message: msg, Timestamp: now, TitleEN: "Disk failure", MessageEN: msgEn,
 		}
 	}
 
@@ -756,6 +795,8 @@ func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.
 		Title:     "ディスク復旧",
 		Message:   "ディスクの異常が解消されました。",
 		Timestamp: now,
+		TitleEN:   "Disk recovered",
+		MessageEN: "The disk failure has been resolved.",
 	}
 }
 

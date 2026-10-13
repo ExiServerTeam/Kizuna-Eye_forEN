@@ -313,14 +313,19 @@ func (l *LogHandler) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	const initialLines = 200
 	tail, endPos, err := l.readLastLines(logPath, initialLines)
 	if err != nil {
-		fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+		// エラー本文の改行も SSE の行終端になるため除去する。
+		msg := strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error())
+		fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
 		return
 	}
 	for _, line := range strings.Split(tail, "\n") {
 		if line == "" {
 			continue
 		}
-		fmt.Fprintf(w, "data: %s\n\n", line)
+		// A bare CR is an SSE line terminator too, so an embedded '\r'
+		// in a log line could split it and inject a forged "data:" line
+		// into the viewer. Strip CR so each log line stays one SSE event.
+		fmt.Fprintf(w, "data: %s\n\n", strings.ReplaceAll(strings.TrimRight(line, "\r"), "\r", ""))
 	}
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
@@ -340,7 +345,9 @@ func (l *LogHandler) handleLogStream(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			currentPosition, err := l.sendFileFromPosition(w, logPath, lastPosition)
 			if err != nil {
-				fmt.Fprintf(w, "event: error\ndata: %s\n\n", err.Error())
+				// エラー本文の改行も SSE の行終端になるため除去する。
+				msg := strings.NewReplacer("\r", " ", "\n", " ").Replace(err.Error())
+				fmt.Fprintf(w, "event: error\ndata: %s\n\n", msg)
 				return
 			}
 			lastPosition = currentPosition
@@ -461,7 +468,10 @@ func (l *LogHandler) sendFileFromPosition(w http.ResponseWriter, filePath string
 		// EOF is left for the next poll, otherwise its tail would be sent
 		// twice: once now and again as part of the completed line later.
 		if readErr == nil && len(line) > 0 {
-			text := strings.TrimRight(string(line), "\r\n")
+			// Strip CR anywhere in the line (a bare CR is an SSE line
+			// terminator; leaving one in would let a log line inject a
+			// forged "data:" event into the viewer).
+			text := strings.ReplaceAll(strings.TrimRight(string(line), "\r\n"), "\r", "")
 			fmt.Fprintf(w, "data: %s\n\n", text)
 			newPosition += int64(len(line))
 			continue

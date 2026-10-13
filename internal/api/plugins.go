@@ -19,6 +19,7 @@ import (
 
 	"Kizuna-Eye/internal/pluginsig"
 	"Kizuna-Eye/pkg/config"
+	"Kizuna-Eye/pkg/fsutil"
 	kelog "Kizuna-Eye/pkg/logger"
 	"Kizuna-Eye/pkg/module"
 )
@@ -71,18 +72,21 @@ type PluginManager struct {
 
 	// audit, when set, receives security-relevant plugin actions (upload /
 	// delete) so they are recorded in the alert history, not only logged.
-	audit func(kind, detail string)
+	// detail is Japanese, detailEN English.
+	audit func(kind, detail, detailEN string)
 }
 
-// SetAuditHook installs the callback for plugin audit events.
-func (p *PluginManager) SetAuditHook(fn func(kind, detail string)) {
+// SetAuditHook installs the callback for plugin audit events. detail is the
+// Japanese rendering, detailEN the English one; the alert history stores both
+// so the UI can be switched between languages.
+func (p *PluginManager) SetAuditHook(fn func(kind, detail, detailEN string)) {
 	p.audit = fn
 }
 
 // reportAudit invokes the audit hook, if any.
-func (p *PluginManager) reportAudit(kind, detail string) {
+func (p *PluginManager) reportAudit(kind, detail, detailEN string) {
 	if p.audit != nil {
-		p.audit(kind, detail)
+		p.audit(kind, detail, detailEN)
 	}
 }
 
@@ -616,7 +620,8 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 					kelog.LogError(p.logger, "api.plugin_sig_failed", name, embErr)
 				}
 				p.reportAudit("plugin_upload_rejected",
-					"埋め込み署名の検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr))
+					"埋め込み署名の検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr),
+					"Rejected plugin \""+name+"\": embedded signature verification failed. From: "+remoteIP(r.RemoteAddr))
 				writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+embErr.Error())
 				return
 			}
@@ -629,7 +634,8 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 					kelog.LogError(p.logger, "api.plugin_sig_failed", name, verr)
 				}
 				p.reportAudit("plugin_upload_rejected",
-					"署名検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr))
+					"署名検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr),
+					"Rejected plugin \""+name+"\": signature verification failed. From: "+remoteIP(r.RemoteAddr))
 				writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+verr.Error())
 				return
 			}
@@ -765,7 +771,11 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(sigBytes) > 0 {
-		if err := os.WriteFile(sigPath, sigBytes, 0o644); err != nil {
+		// fsutil.WriteFileAtomic: pluginsDir は agent ユーザーが書き込めるため、
+		// 事前に <name>.so.sig をシンボリックリンクに差し替えておくと
+		// os.WriteFile が任意ファイルへ書き込んでしまう。atomic write は
+		// 最終要素の symlink を拒否し、fsync してから rename する。
+		if err := fsutil.WriteFileAtomic(sigPath, sigBytes, 0o644); err != nil {
 			_ = os.Remove(soPath)
 			writeJSONError(w, http.StatusInternalServerError, "署名ファイルの書き込み失敗: "+err.Error())
 			return
@@ -773,8 +783,14 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
-	// meta.json includes the uploader IP; keep it owner-only.
-	if err := os.WriteFile(metaPath, metaBytes, 0o600); err != nil {
+	// A-4: the AGENT (kizuna-eye) reads this meta.json to decide whether an
+	// unsigned plugin was approved as third-party (isThirdPartyApproved).
+	// The dashboard writes it as the login user, so 0600 would make it
+	// unreadable for the agent and a confirmed third-party plugin would be
+	// refused on load. 0644 matches the installed .so and keeps the file
+	// readable by both. fsutil.WriteFileAtomic rejects a symlink target and
+	// fsyncs before rename.
+	if err := fsutil.WriteFileAtomic(metaPath, metaBytes, 0o644); err != nil {
 		_ = os.Remove(soPath)
 		_ = os.Remove(sigPath)
 		writeJSONError(w, http.StatusInternalServerError, "meta.json 書き込み失敗: "+err.Error())
@@ -804,11 +820,14 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	// 純正かサードパーティーかで前置きを切り替える。
 	prefix := "純正プラグイン"
+	prefixEn := "Official plugin"
 	if origin == "third_party" {
 		prefix = "サードパーティー製プラグイン"
+		prefixEn = "Third-party plugin"
 	}
 	p.reportAudit("plugin_upload",
-		prefix+"「"+displayName+"」が追加されました。追加元: "+remoteIP(r.RemoteAddr))
+		prefix+"「"+displayName+"」が追加されました。追加元: "+remoteIP(r.RemoteAddr),
+		prefixEn+" \""+displayName+"\" was added. From: "+remoteIP(r.RemoteAddr))
 
 	writeJSON(w, http.StatusOK, meta)
 }
@@ -913,7 +932,8 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audit: removing a plugin is a code-execution boundary change.
 	p.reportAudit("plugin_delete",
-		"プラグイン「"+deleteLabel+"」が削除されました。削除元: "+remoteIP(r.RemoteAddr))
+		"プラグイン「"+deleteLabel+"」が削除されました。削除元: "+remoteIP(r.RemoteAddr),
+		"Plugin \""+deleteLabel+"\" was deleted. From: "+remoteIP(r.RemoteAddr))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
@@ -967,13 +987,11 @@ func (p *PluginManager) handleRenameLabel(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusInternalServerError, "メタ情報の生成に失敗しました: "+err.Error())
 		return
 	}
-	tmp := metaPath + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "メタ情報の書き込みに失敗しました: "+err.Error())
-		return
-	}
-	if err := os.Rename(tmp, metaPath); err != nil {
-		_ = os.Remove(tmp)
+	// fsutil.WriteFileAtomic: シンボリックリンクを拒否し、一時ファイルに
+	// mode を適用して fsync してから rename する（L-12: ここだけ手書きの
+	// temp+rename が残っていた）。A-4: agent がこの meta.json を読んで
+	// サードパーティ承認を判定するため、0644（.so と同じ）にする。
+	if err := fsutil.WriteFileAtomic(metaPath, out, 0o644); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "メタ情報の保存に失敗しました: "+err.Error())
 		return
 	}

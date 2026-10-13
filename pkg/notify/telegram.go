@@ -8,7 +8,6 @@ import (
 	"html"
 	"io"
 	"net/http"
-	"time"
 )
 
 // ============================================================
@@ -24,7 +23,7 @@ func NewTelegramNotifier(botToken, chatID string) *TelegramNotifier {
 	return &TelegramNotifier{
 		botToken: botToken,
 		chatID:   chatID,
-		client:   &http.Client{Timeout: 10 * time.Second},
+		client:   newNotifyHTTPClient(),
 	}
 }
 
