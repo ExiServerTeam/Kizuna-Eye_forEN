@@ -760,6 +760,13 @@
                 : '--';
             const monitorState = mod.enabled ? t('security.state_active') : t('security.state_inactive');
 
+            // A reason-specific hint. "already_loaded" is not a fault: it
+            // just means the Agent must be restarted to re-load the .so (Go
+            // plugins cannot be unloaded). Showing the generic hint there made
+            // a normal disable→enable look like a broken module.
+            const failHint = (runtime && runtime.reason_code === 'already_loaded')
+                ? t('modules.fail_hint_already_loaded')
+                : t('modules.fail_hint');
             const failBody = `
                     <div class="module-info-row">
                         <span class="label">${t('security.label_state')}</span>
@@ -771,7 +778,7 @@
                     </div>
                     <div class="module-info-row">
                         <span class="label"></span>
-                        <span class="value">${escapeHtml(t('modules.fail_hint'))}</span>
+                        <span class="value">${escapeHtml(failHint)}</span>
                     </div>
                 `;
 

@@ -530,7 +530,13 @@ func classifyLoadError(err error) (code, message string) {
 	}
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "plugin already loaded"):
+	case strings.Contains(msg, "plugin already loaded"),
+		strings.Contains(msg, "既に一度ロードされています"):
+		// Two sources of the same fact: plugin.Open's English message, and the
+		// agent's own pre-check (loadedPlugins.openedPaths), which returns a
+		// Japanese message. Only the English one was matched before, so a
+		// disable→enable cycle produced reason_code="unknown" and the UI hid
+		// the "restart the Agent" guidance behind a generic failure text.
 		return "already_loaded", "このモジュールは既に読み込まれています。設定を変えた場合は Agent の再起動が必要です。"
 	case strings.Contains(msg, "no such file or directory"):
 		return "no_such_file", ".so ファイルが見つかりません。パスを確認してください。"
