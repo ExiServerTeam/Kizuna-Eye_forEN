@@ -13,7 +13,7 @@
 | 2. 認証 | C | ロール/ bcrypt / セッション / 最終管理者保護 | `auth.enabled` 既定 false、`public_viewer` 既定 true、`agent_token` 既定 空 → セキュアデフォルト化 |
 | 3. プラグイン（設計書第5章の将来構想） | B- | 別プロセス検査、Ed25519 署名検証（任意）、bwrap 分離（任意） | `require_signature` 既定 false → 既定 true 化、共有型の最小化 |
 | 4. ログ | B+ | HMAC チェーン＋定期検証、alert_history 整合性、inode 追跡、FIM | リモート転送、alert_history への HMAC 署名 |
-| 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities） | systemd 保護の他ユニットへの横展開、HMAC 鍵ローテーション自動化 |
+| 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、dashboard unit にも部分適用（ワンクリック対処と両立する範囲） | ワンクリック対処の特権ヘルパーサービス化（dashboard を strict 化するため）、HMAC 鍵ローテーション自動化 |
 | 6. 運用 | C+ | CONTRIBUTING 受入範囲、CI(go test/-race) | SECURITY.md 拡充(済)、govulncheck CI(済)、ROADMAP(本書)、脆弱性開示ポリシー |
 
 ## 0.1 実装済み / 未実装 / やらないこと
@@ -174,7 +174,16 @@
 
 **対応**
 - ✅ プラグイン `.so` の署名検証（`plugins.require_signature` で有効化。install/update が再署名）。
-- ✅ インストーラは systemd 保護（ProtectSystem / NoNewPrivileges / AmbientCapabilities）で最小権限動作。
+- ✅ インストーラは systemd で最小権限動作。
+  - **agent**（`kizuna-eye-agent.service`）: 専用ユーザー `kizuna-eye` + `ProtectSystem=strict` /
+    `NoNewPrivileges=yes` / `AmbientCapabilities`（CAP_DAC_READ_SEARCH・CAP_SYS_RAWIO・CAP_NET_ADMIN）。
+    ケーパビリティで直接実行するため `NoNewPrivileges` を維持できる。
+  - **dashboard**（`kizuna-dashboard.service`）: 管理者向け「ワンクリック対処」が検証済みの
+    NOPASSWD ヘルパーを `sudo -n` で実行するため、`NoNewPrivileges`（sudo を不能化）・
+    `ProtectSystem=strict`（cron spool 書き込みを不能化）・`PrivateTmp`（実 /tmp 復元を不能化）は
+    **適用しない**。`ProtectHome` / `ProtectKernelTunables` / `ProtectControlGroups` /
+    `RestrictRealtime` / `RestrictSUIDSGID` は適用する。
+  - 完全な保護は「ワンクリック対処の特権ヘルパーサービス化」で実現する（下記 5. の残課題）。
 
 ---
 
