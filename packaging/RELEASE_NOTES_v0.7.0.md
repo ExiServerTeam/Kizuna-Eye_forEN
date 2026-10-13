@@ -2,7 +2,7 @@
 
 A lightweight server monitoring tool written in Go, designed for low-spec machines.
 
-This release focuses on **a simpler installation experience** and **APT package distribution**.
+This release focuses on **a simpler installation experience**, **APT package distribution**, and a **pre-release security audit pass**.
 
 ## Features
 
@@ -57,23 +57,31 @@ See README.md for details.
 - **Plugin signing**: `install.sh` / `update.sh` sign official plugins (Ed25519)
 - **UI default language (EN/JA)**: selected at install time (default EN), served via `/lang.js`
 - **EN/JA logs** for install / uninstall / migrate / start / stop
+- **Secret scanner** (`scripts/check_secrets.sh`) and a static-analysis CI job
+- **Static analysis CI**: shellcheck / XSS / i18n / secret checks run on every push
 
 ### Changed
 - `install.sh` is now idempotent (re-run restarts instead of re-migrating)
 - `update.sh` / `safe_update.sh` detect and restart both dashboard and agent
 - Dedicated agent user unified to `kizuna-eye` (`kizuna-eye-agent.service`)
 - `systemd/kizuna-dashboard.service` gains `SupplementaryGroups=kizuna-eye`
+- Executable bits normalized across the tree (`.sh` = 100755, everything else = 100644)
 
 ### Fixed
 - Build failure on Ubuntu 26.04+ where `. /etc/os-release` overwrote `VERSION`
 - cron / action helper install skipped when run as root
 - `update.sh` plugin re-signing looked for keys under `/root/.kizuna-eye`
 - Agent binary exec permission (203/EXEC) now re-applied on every install
+- `check_i18n.js` failed with ENOENT when run from the repository root
+- shellcheck warnings in `apt-repo.sh` / `safe_update.sh`
 
 ### Security
 - Agent runs as a dedicated user (H-1); keys and state live under `/var/lib/kizuna-eye` (0700)
 - cron monitoring reads crontabs directly via `CAP_DAC_READ_SEARCH` (no sudo/sudoers)
 - Plugin `.so` Ed25519 signature verification (fail-closed with `require_signature`)
+- `restore_file` helper rejects symlinked restore targets and backups (parent verified via `realpath`)
+- Agent systemd unit backup uses `mktemp` instead of a predictable `/tmp` name (CWE-59)
+- `SECURITY.md`: documents the default `listen_addr`, forbids `git push --mirror`, and defines the secret-rotation policy
 
 ## Changelog
 
