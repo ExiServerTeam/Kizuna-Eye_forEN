@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -74,6 +75,25 @@ type PluginManager struct {
 	// delete) so they are recorded in the alert history, not only logged.
 	// detail is Japanese, detailEN English.
 	audit func(kind, detail, detailEN string)
+
+	// pubKey caches the parsed Ed25519 public key. loadPublicKey parses it at
+	// most once; the key file is read-only after startup.
+	pubKeyOnce sync.Once
+	pubKey     ed25519.PublicKey
+	pubKeyErr  error
+}
+
+// loadPublicKey returns the configured plugin-signing public key, or (nil,
+// nil) when no key file is configured. The result is cached; a load failure
+// is cached too so it is not retried on every upload.
+func (p *PluginManager) loadPublicKey() (ed25519.PublicKey, error) {
+	if strings.TrimSpace(p.policy.PublicKeyFile) == "" {
+		return nil, nil
+	}
+	p.pubKeyOnce.Do(func() {
+		p.pubKey, p.pubKeyErr = pluginsig.LoadPublicKey(p.policy.PublicKeyFile)
+	})
+	return p.pubKey, p.pubKeyErr
 }
 
 // SetAuditHook installs the callback for plugin audit events. detail is the
@@ -702,31 +722,46 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "検疫ファイルの読み込みに失敗: "+rerr.Error())
 		return
 	}
+	// Verify a signature whenever a public key is configured, even when
+	// plugins.require_signature is false.
+	//
+	// require_signature decides whether an UNSIGNED upload is acceptable; it
+	// must not also disable verification of a signature that IS present.
+	// Previously the whole block was wrapped in `if WantSignature()`, so with
+	// the default (false) every upload was recorded as third_party — a
+	// genuinely signed Kizuna plugin got the red "third-party" audit alert,
+	// was marked untrusted in the alert history, and its bundled web UI was
+	// served through the sandboxed iframe. Origin is a property of the file,
+	// not of the policy.
 	origin := "third_party"
 	sigSource := ""
-	if p.policy.WantSignature() {
-		pub, kerr := pluginsig.LoadPublicKey(p.policy.PublicKeyFile)
-		if kerr != nil {
-			writeJSONError(w, http.StatusInternalServerError, "公開鍵の読み込みに失敗: "+kerr.Error())
-			return
-		}
+	pub, keyErr := p.loadPublicKey()
+	if keyErr != nil {
+		// A configured-but-unusable key is a hard error: the policy is
+		// validated at startup, so this means the key file changed or
+		// disappeared. Refuse rather than silently treat every upload as
+		// unsigned (which would downgrade every plugin to third_party).
+		writeJSONError(w, http.StatusInternalServerError, "公開鍵の読み込みに失敗: "+keyErr.Error())
+		return
+	}
+	if pub != nil {
 		// 1) embedded trailer (preferred). embOK=false means there is no
 		//    trailer at all; then we try the detached .sig below.
 		embOK, embErr := pluginsig.VerifyEmbedded(data, pub)
-		if embOK {
-			if embErr != nil {
-				if p.logger != nil {
-					kelog.LogError(p.logger, "api.plugin_sig_failed", name, embErr)
-				}
-				p.reportAudit("plugin_upload_rejected",
-					"埋め込み署名の検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr),
-					"Rejected plugin \""+name+"\": embedded signature verification failed. From: "+remoteIP(r.RemoteAddr))
-				writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+embErr.Error())
-				return
+		switch {
+		case embOK && embErr != nil:
+			if p.logger != nil {
+				kelog.LogError(p.logger, "api.plugin_sig_failed", name, embErr)
 			}
+			p.reportAudit("plugin_upload_rejected",
+				"埋め込み署名の検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr),
+				"Rejected plugin \""+name+"\": embedded signature verification failed. From: "+remoteIP(r.RemoteAddr))
+			writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+embErr.Error())
+			return
+		case embOK:
 			origin = "official"
 			sigSource = "embedded"
-		} else if len(sigBytes) > 0 {
+		case len(sigBytes) > 0:
 			// 2) detached .sig (legacy path).
 			if verr := pluginsig.VerifyBytes(data, sigBytes, pub, name+".so"); verr != nil {
 				if p.logger != nil {
@@ -740,9 +775,13 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 			}
 			origin = "official"
 			sigSource = "detached"
-		} else {
-			// 3) no signature at all -> third-party candidate.
-			if !isUnsignedConfirmed(r) {
+		default:
+			// 3) no signature at all -> third-party candidate. When the policy
+			//    requires a signature, the operator must explicitly confirm the
+			//    risk; the recorded origin is that approval. When it does not,
+			//    the upload is accepted as third_party (the agent still refuses
+			//    to load it unless meta.json records the approval).
+			if p.policy.WantSignature() && !isUnsignedConfirmed(r) {
 				writeJSON(w, http.StatusConflict, map[string]interface{}{
 					"error":              "このプラグインは署名がありません。純正か確認が取れませんでした。",
 					"needs_confirmation": true,
@@ -754,7 +793,6 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 			if p.logger != nil {
 				kelog.LogWarn(p.logger, "api.plugin_sig_missing", name)
 			}
-			origin = "third_party"
 		}
 		if sigSource != "" && p.logger != nil {
 			kelog.LogInfo(p.logger, "api.plugin_sig_ok", name+" ("+sigSource+")")

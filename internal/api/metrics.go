@@ -17,11 +17,27 @@ type StatusHub interface {
 // MetricHandler serves Prometheus metrics.
 type MetricHandler struct {
 	hub StatusHub
+
+	// sanitizeFor, when set, reports whether the request must be served the
+	// viewer-sanitized status (public-viewer mode with no session).
+	//
+	// /api/status already applies this filter, but /api/metrics did not: an
+	// unauthenticated guest could read kizuna_process_count and the per-disk
+	// S.M.A.R.T values (health / temperature / mount paths) that /api/status
+	// deliberately hides from the public view. Applying the same predicate
+	// keeps the two endpoints consistent.
+	sanitizeFor func(*http.Request) bool
 }
 
 // NewMetricHandler creates a MetricHandler.
 func NewMetricHandler(hub StatusHub) *MetricHandler {
 	return &MetricHandler{hub: hub}
+}
+
+// SetSanitizer installs the predicate that decides whether a request must be
+// served the viewer-sanitized status. Call once during startup.
+func (m *MetricHandler) SetSanitizer(fn func(*http.Request) bool) {
+	m.sanitizeFor = fn
 }
 
 // RegisterRoutes registers the metrics route.
@@ -39,6 +55,13 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprintln(w, "# No status available")
 		return
+	}
+	// Mirror /api/status: an unauthenticated client in public-viewer mode must
+	// not see the process list or the S.M.A.R.T metadata through the metrics
+	// endpoint either.
+	viewer := m.sanitizeFor != nil && m.sanitizeFor(r)
+	if viewer {
+		s = s.SanitizeForViewer()
 	}
 
 	ts := time.Now().Unix()
@@ -113,10 +136,16 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 				}
 			}
 		}
-		fmt.Fprintf(&b, "# HELP kizuna_disk_health_status Disk S.M.A.R.T health (1=PASSED, 0=FAILED, -1=unknown)\n")
-		fmt.Fprintf(&b, "# TYPE kizuna_disk_health_status gauge\n")
-		for _, d := range s.Disks {
-			fmt.Fprintf(&b, "kizuna_disk_health_status{mount=\"%s\"} %d %d\n", escapeLabel(d.Path), healthValue(d.Health), ts)
+		// Disk health is S.M.A.R.T-derived, so a public viewer must not see it
+		// at all (not even as "unknown"). SanitizeForViewer clears Health, but
+		// emitting the series would still confirm the check exists and leak
+		// the mount list under this metric name. Skip the block entirely.
+		if !viewer {
+			fmt.Fprintf(&b, "# HELP kizuna_disk_health_status Disk S.M.A.R.T health (1=PASSED, 0=FAILED, -1=unknown)\n")
+			fmt.Fprintf(&b, "# TYPE kizuna_disk_health_status gauge\n")
+			for _, d := range s.Disks {
+				fmt.Fprintf(&b, "kizuna_disk_health_status{mount=\"%s\"} %d %d\n", escapeLabel(d.Path), healthValue(d.Health), ts)
+			}
 		}
 	}
 

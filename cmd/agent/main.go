@@ -699,9 +699,12 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 		}
 		st.modTime = info.ModTime()
 		st.size = info.Size()
-		if fi, ok := info.Sys().(*syscall.Stat_t); ok {
-			st.inode = fi.Ino
-		}
+		// fileInode is platform-split: syscall.Stat_t exists only on
+		// Unix-like systems, and referencing it here unconditionally broke
+		// the Windows build (and therefore `go test ./...` on a developer
+		// machine). The non-Unix fallback returns 0, leaving size+mtime as
+		// the change signal.
+		st.inode = fileInode(info)
 		return st, true
 	}
 

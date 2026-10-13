@@ -493,6 +493,30 @@ func (c *ConfigHandler) saveJSONFile(filePath string, data interface{}) error {
 	return fsutil.WriteFileAtomic(filePath, jsonData, mode)
 }
 
+// validatePluginsBlock rejects an unusable plugin-security policy before it is
+// persisted. A nil / non-object value means "no plugins block" and is allowed
+// (the defaults apply).
+//
+// The rule mirrors config.PluginSecurityConfig.Validate, which the loaders run
+// at startup: require_signature=true without a public_key_file is unusable, so
+// saving it would leave a config that the agent (and dashboard) refuse to start
+// with. Catching it here turns a silent, delayed outage into an immediate 400.
+func validatePluginsBlock(v interface{}) error {
+	plugins, ok := v.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	requireSig, _ := plugins["require_signature"].(bool)
+	if !requireSig {
+		return nil
+	}
+	pub, _ := plugins["public_key_file"].(string)
+	if strings.TrimSpace(pub) == "" {
+		return fmt.Errorf("plugins: require_signature=true には public_key_file が必須です（Ed25519 公開鍵のパス）")
+	}
+	return nil
+}
+
 // validateNotificationChannels validates the notifications block the same way
 // LoadDashboardConfig does, so the API rejects configs that would otherwise
 // fail to load on restart. A nil / non-object value is treated as "no
@@ -578,6 +602,14 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 				return fmt.Errorf("disk_path は空にできません")
 			}
 		}
+		// The plugins block decides whether an unsigned .so may load. Saving a
+		// self-contradictory policy here (require_signature=true with no
+		// public_key_file) would be accepted, and then the agent would refuse
+		// to start on the next restart (fail-closed). Reject it at save time so
+		// the failure is a clear 400 instead of a dead service.
+		if err := validatePluginsBlock(cfgMap["plugins"]); err != nil {
+			return err
+		}
 	case "dashboard":
 		// Validate dashboard config against the same rules LoadDashboardConfig
 		// uses. In particular, an enabled notification channel missing its
@@ -591,6 +623,10 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 			return fmt.Errorf("listen_addr is required")
 		}
 		if err := validateNotificationChannels(cfgMap["notifications"]); err != nil {
+			return err
+		}
+		// See the agent branch: an unusable signature policy must not be saved.
+		if err := validatePluginsBlock(cfgMap["plugins"]); err != nil {
 			return err
 		}
 		// Guard the agent token: when auth is enabled, an empty agent_token

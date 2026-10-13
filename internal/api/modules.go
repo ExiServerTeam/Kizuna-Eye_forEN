@@ -440,6 +440,19 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Type is what the agent uses to decide whether to load the entry at
+		// all (only type="plugin" is loaded; anything else is skipped). So an
+		// operator changing it from "plugin" to another value silently stops
+		// the module exactly like disabling it, which is the same protection
+		// downgrade. Gate it the same way. An omitted/empty type keeps the
+		// stored one (see ModulesStorage.Update), so this only fires on a real
+		// change.
+		if mod.Type != "" && mod.Type != cur.Type {
+			if h.adminChecker == nil || !h.adminChecker(r) {
+				writeJSONError(w, http.StatusForbidden, "モジュール種別の変更には管理者権限が必要です")
+				return
+			}
+		}
 		if field := changedAdminOnlyField(cur.Config, mod.Config); field != "" {
 			if h.adminChecker == nil || !h.adminChecker(r) {
 				writeJSONError(w, http.StatusForbidden, "設定「"+field+"」の変更には管理者権限が必要です")

@@ -31,6 +31,7 @@ import (
 	"strings"
 
 	"Kizuna-Eye/internal/pluginsig"
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 const usage = `plugin-sign - Kizuna-Eye プラグイン署名ツール (A-3)
@@ -146,10 +147,14 @@ func generateKeyPair(dir string, force bool) error {
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(privPath, []byte(pluginsig.EncodePrivateKey(priv)+"\n"), 0o600); err != nil {
+	// The private key is the root of trust for every plugin signature, so it
+	// is never written with a plain os.WriteFile: that follows a symlink at
+	// the final path component, so a link planted at privPath would redirect
+	// the key into a file the attacker chose (CWE-59).
+	if err := writeKeyFile(privPath, []byte(pluginsig.EncodePrivateKey(priv)+"\n"), 0o600, force); err != nil {
 		return fmt.Errorf("秘密鍵の書き込みに失敗 (%s): %w", privPath, err)
 	}
-	if err := os.WriteFile(pubPath, []byte(pluginsig.EncodePublicKey(pub)+"\n"), 0o644); err != nil {
+	if err := fsutil.WriteFileAtomic(pubPath, []byte(pluginsig.EncodePublicKey(pub)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("公開鍵の書き込みに失敗 (%s): %w", pubPath, err)
 	}
 
@@ -157,6 +162,33 @@ func generateKeyPair(dir string, force bool) error {
 		privPath, pubPath)
 	fmt.Printf("  公開鍵 (base64): %s\n", pluginsig.EncodePublicKey(pub))
 	return nil
+}
+
+// writeKeyFile writes a key file without ever following a symlink.
+//
+// force=false uses O_CREATE|O_EXCL, which refuses an existing path (including
+// a symlink) and closes the TOCTOU window between the existence check and the
+// write. force=true uses the shared atomic writer, which also rejects a
+// symlink target but allows replacing an existing file.
+func writeKeyFile(path string, data []byte, perm os.FileMode, force bool) error {
+	if force {
+		return fsutil.WriteFileAtomic(path, data, perm)
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	return f.Close()
 }
 
 // printPublicKey derives and prints the public key from a private key file.

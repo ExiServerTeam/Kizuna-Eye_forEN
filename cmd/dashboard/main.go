@@ -1222,6 +1222,13 @@ func main() {
 
 	// ---- Metrics API ----
 	metricHandler := api.NewMetricHandler(hub)
+	// Keep /api/metrics consistent with /api/status: in public-viewer mode an
+	// unauthenticated client gets the sanitized view (no process list, no
+	// S.M.A.R.T metadata). authHandler is created later in startup, so it is
+	// resolved at request time.
+	metricHandler.SetSanitizer(func(r *http.Request) bool {
+		return cfg.Auth.Enabled && cfg.Auth.IsPublicViewer() && (authHandler == nil || !authHandler.Authenticated(r))
+	})
 	metricHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_metrics")
 

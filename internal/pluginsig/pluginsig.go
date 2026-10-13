@@ -415,7 +415,17 @@ func SignFile(soPath, sigPath string, priv ed25519.PrivateKey) error {
 		return fmt.Errorf("署名対象の読み込みに失敗 (%s): %w", soPath, err)
 	}
 	sig := ed25519.Sign(priv, data)
-	if err := os.WriteFile(sigPath, []byte(EncodeSignature(sig)+"\n"), 0o600); err != nil {
+	// fsutil.WriteFileAtomic rejects a symlink at the final path component and
+	// writes via temp+fsync+rename. The previous os.WriteFile followed a
+	// symlink, so a link planted at sigPath (the plugins directory is
+	// writable by the agent user) redirected the signature into an arbitrary
+	// file the attacker chose (CWE-59). The dashboard's upload path already
+	// used the atomic writer; only this CLI path was left behind.
+	//
+	// 0644, not 0600: the signature is public data, and after the A-4
+	// separation the agent (kizuna-eye) must be able to read it to verify a
+	// plugin. This matches the mode the upload path already writes.
+	if err := fsutil.WriteFileAtomic(sigPath, []byte(EncodeSignature(sig)+"\n"), 0o644); err != nil {
 		return fmt.Errorf("署名ファイルの書き込みに失敗 (%s): %w", sigPath, err)
 	}
 	return nil
