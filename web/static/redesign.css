@@ -140,13 +140,30 @@ body {
    背景だけが遅れて先に変わり、カード等の切り替えとズレて「背景から先に
    切り替わる」ように見えていた。テーマ変更時にだけ遷移を止める。
    ボタン等のホバー遷移はそのまま残す。 */
-html.theme-switching *,
-html.theme-switching *::before,
-html.theme-switching *::after {
-    transition: none !important;
-}
-body {
-    transition: none !important;
+/* テーマ切替のアニメーション。
+   以前は body だけ 0.35s、カード等は 0.2〜0.3s とバラバラで、背景だけが
+   先に変わって見えた。テーマで色が変わる要素を同じ長さ・同じイージングに
+   揃え、同時に滑らかに切り替わるようにする。 */
+body,
+.header,
+.gauge-card,
+.backup-section, .history-section, .alerts-section,
+.plugin-card,
+.alert-item,
+.modal,
+.theme-toggle,
+.status-badge,
+.version-badge,
+.nav-tab,
+.temp-badge, .free-badge,
+.cpu-core-item,
+.process-search,
+.sort-btn,
+.config-file-btn,
+.mode-btn,
+.btn-primary, .btn-secondary, .auth-btn,
+input, select, textarea {
+    transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
 }
 
 /* ============================================================
