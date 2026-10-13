@@ -245,6 +245,13 @@ Webダッシュボードの「モジュール管理」タブから `.so` をア�
 
 Kizuna-Backup LITE: アーカイブ / 同期モード、SSH経由のrsync転送、SHA-256検証を備えたバックアッププラグイン（別プロジェクト）。
 
+## ドキュメント
+
+- [操作手順書](docs/PROCEDURE.md) - 導入・設定・運用・検証の手順
+- [ロードマップ](docs/ROADMAP.md) - 未対応の課題と優先度
+- [作業記録](docs/WORK_RECORD_2026-09-27_28.md) - バグ修正の記録
+- [変更履歴](CHANGELOG.md)
+
 ## テスト
 
     go test ./...

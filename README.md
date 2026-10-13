@@ -245,6 +245,13 @@ Optionally implement `DisplayName()` to show a friendly name in the UI badge; ot
 
 Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project).
 
+## Documentation
+
+- [Procedure manual](docs/PROCEDURE.md) - setup, configuration, operation, and verification
+- [Project roadmap](docs/ROADMAP.md) - open issues and priorities
+- [Work record](docs/WORK_RECORD_2026-09-27_28.md) - bug-fix log
+- [Changelog](CHANGELOG.md)
+
 ## Testing
 
     go test ./...
