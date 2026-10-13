@@ -246,7 +246,12 @@
             modEnabled.checked = data.enabled !== false;
 
             const type = data.config?.type || 'pro';
-            const radio = document.querySelector(`input[name="modType"][value="${type}"]`);
+            // セレクタ文字列へ値を連結すると、値次第で別要素にマッチし得る。
+            // 候補を走査して value を直接比較する。
+            const radio = Array.prototype.find.call(
+                document.querySelectorAll('input[name="modType"]'),
+                r => r.value === type
+            ) || null;
             if (radio) radio.checked = true;
             toggleConfigPath(type);
         } else {
@@ -602,7 +607,7 @@
                     <div class="module-info-row">
                         <span class="label">${t('modules.label_status')}</span>
                         <span class="value">
-                            <span class="status-dot ${statusDotClass}"></span>${escapeHtml(statusLabel)}
+                            <span class="status-dot ${cssClass(statusDotClass)}"></span>${escapeHtml(statusLabel)}
                         </span>
                     </div>
                     <div class="module-info-row">
@@ -627,7 +632,7 @@
                 <div class="module-card">
                     <div class="module-card-header">
                         <div class="module-card-row">
-                            <span class="badge ${versionBadge}">${escapeHtml(versionLabel)}</span>
+                            <span class="badge ${cssClass(versionBadge)}">${escapeHtml(versionLabel)}</span>
                             <span class="module-name" title="${escapeAttr(displayLabel)}">${escapeHtml(displayLabel)}</span>
                             <span class="badge ${mod.enabled ? 'badge-enabled' : 'badge-disabled'}">
                                 ${mod.enabled ? t('modules.badge_enabled') : t('modules.badge_disabled')}
