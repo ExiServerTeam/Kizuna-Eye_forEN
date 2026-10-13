@@ -2230,12 +2230,25 @@
         let pointerId = null;
 
         function onDown(e, item) {
-            // つまみを掴んだ場合、またはカード本体の余白部分を掴んだ場合に
-            // ドラッグを開始する。ボタン・リンク・入力など操作可能な要素の上では
-            // 開始しない（クリックを奪わないため）。
+            // つまみを掴んだ場合、または（マウスのときだけ）カード本体の
+            // 余白部分を掴んだ場合にドラッグを開始する。
+            //
+            // タッチ/ペンでは「つまみだけ」をドラッグ開始点にする。
+            // 以前はカード本体のどこを触っても即 preventDefault +
+            // setPointerCapture していたため、スマホでカードの余白を
+            // 触るとページがスクロールできなくなる（指を動かすと並べ替えが
+            // 始まる）問題があった。modules.js の onDown と同じく、
+            // タッチではハンドル以外ではドラッグを開始しない。
             const fromHandle = e.target.closest && e.target.closest('.drag-handle');
-            const interactive = e.target.closest && e.target.closest('button, a, input, select, textarea, [role="button"]');
-            if (!fromHandle && interactive) return;
+            const isMouse = e.pointerType === 'mouse' || e.pointerType === undefined;
+            if (!fromHandle) {
+                // マウス以外（タッチ/ペン）はハンドル必須。
+                if (!isMouse) return;
+                // マウスでもボタン・リンク・入力など操作可能な要素の上では
+                // 開始しない（クリックを奪わないため）。
+                const interactive = e.target.closest && e.target.closest('button, a, input, select, textarea, [role="button"]');
+                if (interactive) return;
+            }
             // 左ボタン以外（右クリック・中クリック）では開始しない。
             if (typeof e.button === 'number' && e.button !== 0) return;
             e.preventDefault();
