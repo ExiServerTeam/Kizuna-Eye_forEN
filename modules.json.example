@@ -1,0 +1,23 @@
+[
+  {
+    "name": "kizuna_backup_lite",
+    "type": "plugin",
+    "config": {
+      "plugin_path": "/opt/kizuna-eye/bin/plugins/kizuna_backup_lite.so",
+      "mode": "archive",
+      "target_dir": "/path/to/backup/target",
+      "interval_sec": 3600,
+      "run_on_start": true,
+      "local_temp_dir": "/tmp/kizuna-backups",
+      "log_path": "./logs/kizuna-backup-lite.log",
+      "keep_local": false,
+      "rotation_keep": 3,
+      "dry_run": false,
+      "remote_dest": "user@localhost",
+      "remote_dir": "/srv/kizuna-backup-test",
+      "ssh_port": 22,
+      "ssh_key": ""
+    },
+    "enabled": true
+  }
+]

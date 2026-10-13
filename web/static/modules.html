@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kizuna-Eye - モジュール管理</title>
+    <link rel="stylesheet" href="/style.css">
+    <link rel="stylesheet" href="/modules.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">Kizuna-Eye</h1>
+                <nav class="nav-tabs">
+                    <a href="/" class="nav-tab">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab active">モジュール管理</a>
+                </nav>
+            </div>
+            <div class="header-right">
+                <span class="version-badge">v0.6.0</span>
+                <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                    <span class="theme-icon" id="themeIcon">🌙</span>
+                    <span class="theme-track"><span class="theme-thumb"></span></span>
+                    <span class="theme-label" id="themeLabel">ダーク</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="main">
+            <div class="page-header">
+                <div class="page-header-left">
+                    <h2>モジュール管理</h2>
+                    <p class="page-desc">モジュールを追加・編集・削除できます。</p>
+                </div>
+                <div class="page-header-right">
+                    <div class="file-actions">
+                        <!-- ファイル入力は label で紐付け -->
+                        <label for="fileInput" class="btn-secondary" role="button" tabindex="0">
+                            JSON読み込み
+                        </label>
+                        <input type="file" id="fileInput" accept=".json" hidden>
+
+                        <label for="pluginInput" class="btn-secondary" role="button" tabindex="0">
+                            プラグイン追加
+                        </label>
+                        <input type="file" id="pluginInput" accept=".so" hidden>
+
+                        <button type="button" id="exportFileBtn" class="btn-secondary">
+                            書き出し
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="module-list-container">
+                <div class="module-stats">
+                    <span class="stat-item">全モジュール: <strong id="totalCount">0</strong></span>
+                    <span class="stat-item">有効: <strong id="enabledCount" class="stat-enabled">0</strong></span>
+                    <span class="stat-item">無効: <strong id="disabledCount" class="stat-disabled">0</strong></span>
+                </div>
+
+                <div class="module-grid" id="moduleGrid">
+                    <div class="loading-spinner">読み込み中...</div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <p>Kizuna-Eye v0.6.0 &middot; リアルタイムシステムモニタリング</p>
+        </footer>
+    </div>
+
+    <!-- モジュール編集モーダル（既存・手動編集用） -->
+    <div class="modal-overlay" id="moduleModal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="modalTitle">モジュール編集</h3>
+                <button class="modal-close" id="modalCloseBtn">×</button>
+            </div>
+            <div class="modal-body">
+                <form id="moduleForm" novalidate>
+                    <div class="form-group">
+                        <label for="modName">モジュール名 <span class="required">*</span></label>
+                        <input type="text" id="modName" placeholder="例: backup_production" required>
+                        <small class="form-hint">英数字とアンダースコア（_）が使えます</small>
+                        <div class="form-error" id="modNameError"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>バックアップ種類 <span class="required">*</span></label>
+                        <div class="radio-group">
+                            <label class="radio-label">
+                                <input type="radio" name="modType" value="pro" checked>
+                                <span class="radio-badge pro">PRO</span>
+                                <span class="radio-desc">設定ファイル（INI）あり・cron対応</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="modType" value="lite">
+                                <span class="radio-badge lite">LITE</span>
+                                <span class="radio-desc">シンプル・CLI引数方式</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="configPathGroup">
+                        <label for="modConfigPath">設定ファイルパス</label>
+                        <input type="text" id="modConfigPath" placeholder="/etc/backup/config.ini">
+                        <small class="form-hint">PRO版のみ必要です。空の場合は自動検出を試みます</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="modLogPath">ログファイルパス</label>
+                        <input type="text" id="modLogPath" placeholder="/var/log/backup.log">
+                        <small class="form-hint">空の場合は自動で検出します</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="modInterval">チェック間隔（秒） <span class="required">*</span></label>
+                        <input type="number" id="modInterval" value="60" min="10" max="3600" required>
+                        <small class="form-hint">10〜3600秒（1時間）の範囲で指定してください</small>
+                        <div class="form-error" id="modIntervalError"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="modTargetDir">対象ディレクトリ（表示用）</label>
+                        <input type="text" id="modTargetDir" placeholder="/var/www">
+                        <small class="form-hint">バックアップ対象ディレクトリ（監視画面に表示されます）</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="modRemoteDest">リモート接続先（表示用）</label>
+                        <input type="text" id="modRemoteDest" placeholder="backup@192.168.1.100:/backup">
+                        <small class="form-hint">バックアップ送信先（監視画面に表示されます）</small>
+                    </div>
+
+                    <div class="form-group checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="modEnabled" checked>
+                            <span class="checkmark"></span>
+                            このモジュールを有効にする
+                        </label>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="modalCancelBtn">キャンセル</button>
+                <button class="btn-primary" id="modalSaveBtn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Phase 8-6: 動的プラグイン設定モーダル -->
+    <div class="modal-overlay" id="pluginConfigModal" style="display:none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="pluginConfigTitle">プラグイン設定</h3>
+                <button class="modal-close" id="pluginConfigCloseBtn">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="pluginConfigBody">
+                    <!-- 動的フォームがここに入る -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="pluginConfigCancelBtn">キャンセル</button>
+                <button class="btn-primary" id="pluginConfigSaveBtn">保存</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 削除確認モーダル -->
+    <div class="modal-overlay" id="deleteModal" style="display:none;">
+        <div class="modal modal-sm">
+            <div class="modal-header">
+                <h3>モジュール削除</h3>
+                <button class="modal-close" id="deleteCloseBtn">×</button>
+            </div>
+            <div class="modal-body">
+                <p id="deleteMessage">本当にこのモジュールを削除しますか？</p>
+                <p class="delete-warning">この操作は元に戻せません。</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="deleteCancelBtn">キャンセル</button>
+                <button class="btn-danger" id="deleteConfirmBtn">削除する</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toastContainer"></div>
+
+    <script src="/modules.js"></script>
+</body>
+</html>
