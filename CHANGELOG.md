@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `kizuna-dashboard.service` の `StartLimitIntervalSec` / `StartLimitBurst` が `[Service]` にあり systemd に無視されていたため `[Unit]` へ移動（再起動の暴走制限が効いていなかった）
 - 配備固有の絶対パス（`/samba/share/...`）を除去。プラグイン設定の既定値は作業ディレクトリ基準の相対パス、agent ユニットの `ReadWritePaths` は `__DIR__/logs`（`-` 付きで不在でも起動可）へ変更
 - `install.sh` / `update.sh` / `scripts/build-plugin.sh` の外部プラグイン（Kizuna-Backup LITE）ソース位置を `KIZUNA_LITE_PLUGIN_DIR` による opt-in に統一（他のリポジトリを前提にしたパスを持たない）
+- 移行済み環境（`ALREADY_INSTALLED`）では `migrate-agent-user.sh` をスキップするため agent unit が再生成されず、テンプレート修正が既存環境へ伝わらなかった問題を修正。`install.sh` が起動前に最新テンプレートで unit を再生成（旧版は `/tmp` に退避、未置換プレースホルダが残る場合は更新を中止）するようにした
 
 ### Changed
 - スクリプトの shellcheck 指摘を解消（`ls | grep` の廃止、未使用ループ変数、`cd ... || exit`、`/proc` の PID 列挙を glob 化）
