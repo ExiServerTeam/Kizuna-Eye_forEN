@@ -84,6 +84,22 @@ find "$STAGE/usr/share/kizuna-eye" -type d -exec chmod 0755 {} +
 find "$STAGE/usr/share/kizuna-eye" -type f -exec chmod 0644 {} +
 find "$STAGE/usr/share/doc/kizuna-eye" -type f -exec chmod 0644 {} + 2>/dev/null || true
 
+# --- 特権ヘルパー ---
+# ワンクリック対処 (kizuna-action.sh) と cron 読み取り (kizuna-cron-read.sh)
+# は root 権限で動くため /usr/local/bin に置き、sudoers で「このスクリプトだけ」
+# を許可する。パッケージでは /usr/share 配下に同梱し、postinst が配置する
+# （dpkg が追跡できる場所に置くことで、削除時に確実に消せる）。
+#
+# 以前はこの同梱が無く、apt 経路で導入すると両ヘルパーが存在せず、
+#   - ワンクリック対処が全て失敗 (sudo: /usr/local/bin/kizuna-action.sh: not found)
+#   - cron 監視が sudo フォールバック不能
+# という無言の機能欠落が起きていた。
+install -d "$STAGE/usr/share/kizuna-eye/helpers"
+cp scripts/kizuna-action.sh scripts/kizuna-cron-read.sh \
+   "$STAGE/usr/share/kizuna-eye/helpers/"
+chmod 0755 "$STAGE/usr/share/kizuna-eye/helpers/kizuna-action.sh" \
+           "$STAGE/usr/share/kizuna-eye/helpers/kizuna-cron-read.sh"
+
 # --- ドキュメント ---
 install -d "$STAGE/usr/share/doc/$PKG"
 cp README.md CHANGELOG.md LICENSE "$STAGE/usr/share/doc/$PKG/" 2>/dev/null || true

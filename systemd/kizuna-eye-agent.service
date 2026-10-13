@@ -12,6 +12,11 @@
 #     読めるようにし、A-2 の「権限不足 INFO」も解消する（agent 全体は非 root）。
 #   - この capability により、cron 監視 (cronmon.go) は sudo ヘルパーを使わず
 #     /var/spool/cron/crontabs を直接読める（NoNewPrivileges=yes と両立）。
+#   - CAP_SYS_RAWIO は S.M.A.R.T の ATA パススルー (SG_IO) に必要。
+#     実機で確認: CAP_DAC_READ_SEARCH だけでは `smartctl -H /dev/sda` が
+#     「Read Device Identity failed: Operation not permitted」で失敗し、
+#     ディスク健康状態・温度・書込量・通電時間（設計書 4.2 / 4.3）が
+#     無言で欠落していた。CAP_SYS_RAWIO を併せて付与すると PASSED が読める。
 #
 # 前提（systemd/migrate-agent-user.sh が作る）:
 #   - ユーザー kizuna-eye (system/nologin, home /var/lib/kizuna-eye)
@@ -58,8 +63,11 @@ ExecStart=__BIN__/agent_linux -config __DATA__/agent_config.json -modules __DATA
 
 # ---- 権限分離 ----
 # /etc/shadow 等を読みつつ、agent プロセス自体は非 root のまま。
-AmbientCapabilities=CAP_DAC_READ_SEARCH
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+# CAP_DAC_READ_SEARCH: DAC を迂回した読み取り（/etc/shadow, crontabs）。
+# CAP_SYS_RAWIO      : S.M.A.R.T の ATA パススルー（smartctl の SG_IO）。
+# どちらも最小限で、書き込み系の権限は与えない。
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO
 NoNewPrivileges=yes
 # ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
 ProtectSystem=strict

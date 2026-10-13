@@ -605,6 +605,13 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 				if ch.WebhookURL == "" {
 					return fmt.Errorf("通知設定: discord には webhook_url が必須です")
 				}
+				// An unedited sample URL must not brick startup on an existing
+				// install (the shipped example had it enabled). Warn and let the
+				// notifier skip the channel instead of failing to load.
+				if IsPlaceholderWebhookURL(ch.WebhookURL) {
+					fmt.Printf("[CONFIG] 警告: discord の webhook_url がサンプルのままです。このチャンネルは無効として扱われます\n")
+					continue
+				}
 				if err := ValidateWebhookURL(ch.WebhookURL); err != nil {
 					return fmt.Errorf("通知設定: discord の webhook_url が不正です: %w", err)
 				}
@@ -619,6 +626,10 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 			case "slack":
 				if ch.WebhookURL == "" {
 					return fmt.Errorf("通知設定: slack には webhook_url が必須です")
+				}
+				if IsPlaceholderWebhookURL(ch.WebhookURL) {
+					fmt.Printf("[CONFIG] 警告: slack の webhook_url がサンプルのままです。このチャンネルは無効として扱われます\n")
+					continue
 				}
 				if err := ValidateWebhookURL(ch.WebhookURL); err != nil {
 					return fmt.Errorf("通知設定: slack の webhook_url が不正です: %w", err)

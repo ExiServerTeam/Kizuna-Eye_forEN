@@ -73,6 +73,37 @@ case "$1" in
     # --- 5. プラグインディレクトリ ---
     install -d -o "$PKG_USER" -g "$PKG_USER" -m 0755 "$BIN_DIR/plugins"
 
+    # --- 5b. 特権ヘルパーと sudoers ---
+    # ダッシュボードは非 root (kizuna-eye) で動くため、kill / ファイアウォール /
+    # cron 削除は root ヘルパー経由でしか実行できない。ヘルパーを配置し、
+    # sudoers で「そのスクリプトだけ」に NOPASSWD を与える。
+    #
+    # install.sh には元からあったが deb には無く、apt で入れるとワンクリック
+    # 対処が無言で全滅していた（ヘルパー不在 + sudoers 不在）。ここで揃える。
+    HELPERS_SRC="$SHARE_DIR/helpers"
+    if [ -d "$HELPERS_SRC" ]; then
+      install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-action.sh" /usr/local/bin/kizuna-action.sh 2>/dev/null || true
+      install -m 0755 -o root -g root "$HELPERS_SRC/kizuna-cron-read.sh" /usr/local/bin/kizuna-cron-read.sh 2>/dev/null || true
+
+      if [ -d /etc/sudoers.d ] && command -v visudo >/dev/null 2>&1; then
+        # 引数付きで許可するのは action のみ（検証はスクリプト内）。cron は
+        # 引数なしの実行だけを許可し、任意パス読み取りに使われないようにする。
+        ACTION_TMP="$(mktemp)"
+        printf '%s ALL=(root) NOPASSWD: /usr/local/bin/kizuna-action.sh\n' "$PKG_USER" > "$ACTION_TMP"
+        if visudo -cf "$ACTION_TMP" >/dev/null 2>&1; then
+          install -m 0440 -o root -g root "$ACTION_TMP" /etc/sudoers.d/kizuna-security-action
+        fi
+        rm -f "$ACTION_TMP"
+
+        CRON_TMP="$(mktemp)"
+        printf '%s ALL=(root) NOPASSWD: /usr/local/bin/kizuna-cron-read.sh ""\n' "$PKG_USER" > "$CRON_TMP"
+        if visudo -cf "$CRON_TMP" >/dev/null 2>&1; then
+          install -m 0440 -o root -g root "$CRON_TMP" /etc/sudoers.d/kizuna-security-cron
+        fi
+        rm -f "$CRON_TMP"
+      fi
+    fi
+
     # --- 6. systemd unit のプレースホルダを実値に置換 ---
     for u in kizuna-eye-agent kizuna-dashboard; do
       if [ -f "$SHARE_DIR/systemd/$u.service" ]; then

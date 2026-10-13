@@ -410,7 +410,18 @@ func (m *SystemModule) Init(ctx context.Context) error {
 			m.logger.Info("smartctl 検出: ディスクS.M.A.R.T 情報を取得します")
 		}
 	} else {
-		if m.logger != nil {
+		// Distinguish "not installed" from "installed but every read fails".
+		// The second case is the A-4 trap: the agent runs as a non-root user
+		// and, without CAP_SYS_RAWIO, smartctl finds the devices (--scan
+		// succeeds) but every ATA passthrough read is denied. Reporting only
+		// "not detected" hid a silent loss of disk health / temperature /
+		// write-bytes / power-on-hours (design 4.2 / 4.3), which is exactly
+		// the failure operators cannot see on the dashboard.
+		if _, lerr := exec.LookPath("smartctl"); lerr == nil {
+			if m.logger != nil {
+				m.logger.Warn("smartctl は存在しますが S.M.A.R.T を取得できません（権限不足の可能性）。agent の権限を確認してください")
+			}
+		} else if m.logger != nil {
 			m.logger.Info("smartctl 未検出: ディスク温度・健康状態は取得しません")
 		}
 	}

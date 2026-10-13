@@ -139,6 +139,16 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 		// space or capital does not silently drop the channel.
 		switch strings.ToLower(strings.TrimSpace(ch.Type)) {
 		case "discord":
+			// A channel left at the shipped sample URL can never succeed:
+			// Discord answers 400 and the retry loop makes noise forever.
+			// Skip it (the config loader warns) instead of shipping a
+			// notifier that is guaranteed to fail.
+			if config.IsPlaceholderWebhookURL(ch.WebhookURL) {
+				if log != nil {
+					log.WarnT("notify.placeholder_skipped", "discord")
+				}
+				continue
+			}
 			m.notifiers = append(m.notifiers, NewDiscordNotifierWithOptions(ch.WebhookURL, retries, backoffMax, loggerAdapter{log}))
 			if log != nil {
 				log.InfoT("notify.discord_reg", retries, backoffMax)
@@ -154,6 +164,12 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 				log.InfoT("notify.line_reg")
 			}
 		case "slack":
+			if config.IsPlaceholderWebhookURL(ch.WebhookURL) {
+				if log != nil {
+					log.WarnT("notify.placeholder_skipped", "slack")
+				}
+				continue
+			}
 			m.notifiers = append(m.notifiers, NewSlackNotifier(ch.WebhookURL))
 			if log != nil {
 				log.InfoT("notify.slack_reg")

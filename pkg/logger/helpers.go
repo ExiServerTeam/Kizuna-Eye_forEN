@@ -32,7 +32,12 @@ func LogInfo(l infoLogger, key string, args ...interface{}) {
 		t.InfoT(key, args...)
 		return
 	}
-	l.Info(key, args...)
+	// key is a catalog KEY, not a format string: the %-verbs live in the
+	// catalog value. Passing key + args straight to Info() made fmt.Sprintf
+	// see no verbs and append the arguments literally, so production logs
+	// read "api.plugin_sig_missing%!(EXTRA string=unsigned_demo)". Render
+	// through the catalog so a minimal logger still gets a readable line.
+	l.Info("%s", msg("ja", key, args...))
 }
 
 func LogWarn(l warnLogger, key string, args ...interface{}) {
@@ -43,7 +48,8 @@ func LogWarn(l warnLogger, key string, args ...interface{}) {
 		t.WarnT(key, args...)
 		return
 	}
-	l.Warn(key, args...)
+	// See LogInfo: render the catalog value, never the key.
+	l.Warn("%s", msg("ja", key, args...))
 }
 
 func LogError(l errorLogger, key string, args ...interface{}) {
@@ -54,7 +60,8 @@ func LogError(l errorLogger, key string, args ...interface{}) {
 		t.ErrorT(key, args...)
 		return
 	}
-	l.Error(key, args...)
+	// See LogInfo: render the catalog value, never the key.
+	l.Error("%s", msg("ja", key, args...))
 }
 
 func LogDebug(l debugLogger, key string, args ...interface{}) {
@@ -65,5 +72,6 @@ func LogDebug(l debugLogger, key string, args ...interface{}) {
 		t.DebugT(key, args...)
 		return
 	}
-	l.Debug(key, args...)
+	// See LogInfo: render the catalog value, never the key.
+	l.Debug("%s", msg("ja", key, args...))
 }

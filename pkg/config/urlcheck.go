@@ -25,6 +25,50 @@ func ValidateWebhookURL(raw string) error {
 	if s == "" {
 		return fmt.Errorf("webhook_url が空です")
 	}
+	// Reject an unedited placeholder. The example config ships a Discord URL
+	// containing YOUR_WEBHOOK_ID / YOUR_WEBHOOK_TOKEN; it parses as a valid
+	// URL, passes the scheme/host checks below, and is only refused by Discord
+	// at send time (HTTP 400). The dashboard then silently never notifies the
+	// operator while logging a retry storm. Failing here turns that into a
+	// clear validation error at save/load.
+	if IsPlaceholderWebhookURL(s) {
+		return fmt.Errorf("webhook_url がサンプルのままです（YOUR_... を実際の値に置き換えてください）")
+	}
+	if err := validateWebhookURLShape(s); err != nil {
+		return err
+	}
+	return nil
+}
+
+// IsPlaceholderWebhookURL reports whether a URL still contains an obvious
+// template marker that means the operator never edited it.
+//
+// It is exported so the notification manager can skip such a channel at
+// runtime (instead of retrying a placeholder forever) and the config loaders
+// can warn instead of refusing to start.
+func IsPlaceholderWebhookURL(s string) bool {
+	u := strings.ToUpper(s)
+	// Keep the markers specific to the templates this project ships. Broad
+	// tokens ("XXX", "EXAMPLE.COM") are deliberately NOT matched: example.com
+	// is a legitimate host for tests and self-hosted setups, and flagging it
+	// would reject a real webhook whose host merely contains it.
+	for _, marker := range []string{
+		"YOUR_WEBHOOK",       // discord example (ID / TOKEN)
+		"YOUR/SLACK/WEBHOOK", // slack example
+		"CHANGE_ME",          // agent_token / generic template
+		"REPLACE_ME",         // generic template
+		"PLACEHOLDER",        // generic template
+	} {
+		if strings.Contains(u, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// validateWebhookURLShape performs the scheme/host/SSRF checks.
+func validateWebhookURLShape(raw string) error {
+	s := strings.TrimSpace(raw)
 	u, err := url.Parse(s)
 	if err != nil {
 		return fmt.Errorf("webhook_url を解析できません: %w", err)

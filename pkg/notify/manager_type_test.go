@@ -12,7 +12,7 @@ func TestFromConfigNormalizesChannelType(t *testing.T) {
 	cfg := config.NotificationsConfig{
 		Enabled: true,
 		Channels: []config.NotificationChannel{
-			{Type: "Discord", Enabled: true, WebhookURL: "https://example.com/hook"},
+			{Type: "Discord", Enabled: true, WebhookURL: "https://discord.com/api/webhooks/1234567890/abcdef"},
 			{Type: "  telegram ", Enabled: true, BotToken: "t", ChatID: "c"},
 		},
 	}
