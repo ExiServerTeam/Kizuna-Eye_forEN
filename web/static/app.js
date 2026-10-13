@@ -2038,6 +2038,13 @@
             // A newly inserted card needs its drag handle and pointerdown
             // listener; re-run the section reorder setup (idempotent).
             setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
+            // The access-mode check ran before the module list was known, so
+            // loadInsight() returned early (insightModulePresent was false).
+            // Now that the declaration has arrived, fetch immediately instead
+            // of waiting for the 60s interval.
+            if (insight && insightAllowed) {
+                loadInsight();
+            }
         }
     }
 

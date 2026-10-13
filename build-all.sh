@@ -46,11 +46,27 @@ log "1/3 host binaries"
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
+# メモリ最適化: -s -w -trimpath でバイナリを約3割縮める（RSS の大半は
+# バイナリのファイルマップページ）。ソースレベルデバッグが要るときは
+# KIZUNA_DEBUG_BUILD=1 を付ける。
+# NOTE: -trimpath is intentionally NOT used (see build.sh): it makes the
+# host and plugin ABI hashes differ, so the agent would refuse to load the
+# plugins. -s -w alone is safe.
+TRIMPATH=""
+if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
+    : # keep LDFLAGS as-is
+else
+    LDFLAGS="-s -w $LDFLAGS"
+fi
+PLUGIN_LDFLAGS="-s -w"
+if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
+    PLUGIN_LDFLAGS=""
+fi
 mkdir -p "$BIN_DIR"
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 log "    host OK (version=${VERSION})"
 
 build_plugin() {
@@ -64,7 +80,7 @@ build_plugin() {
         return 1
     fi
     log "2/3 plugin $name ($dir)"
-    ( cd "$dir" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildmode=plugin -o "$name.so" . )
+    ( cd "$dir" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$PLUGIN_LDFLAGS" -buildmode=plugin -o "$name.so" . )
     if [ ! -r "$SIGNING_KEY" ]; then
         log "WARN signing key not readable ($SIGNING_KEY); leaving $name.so unsigned"
     else

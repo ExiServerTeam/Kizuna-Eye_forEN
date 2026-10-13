@@ -19,11 +19,21 @@ VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.0)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 
-echo "[build] version=${VERSION} bin=${BIN_DIR} go=${PINNED_GO}"
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+# メモリ最適化（低スペック機向け）: -s -w でシンボルを削る。
+# -trimpath は使わない（ホストとプラグインの ABI ハッシュがずれて
+# プラグインがロードできなくなるため）。
+TRIMPATH=""
+if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
+    : # keep LDFLAGS as-is
+else
+    LDFLAGS="-s -w $LDFLAGS"
+fi
+
+echo "[build] version=${VERSION} bin=${BIN_DIR} go=${PINNED_GO} debug=${KIZUNA_DEBUG_BUILD:-0}"
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
 # A-3: Ed25519 プラグイン署名ツール（CGO 不要だが他と揃えて CGO_ENABLED=1）。
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 echo "[build] done"
 ls -la "$BIN_DIR"

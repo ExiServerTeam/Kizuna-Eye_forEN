@@ -49,6 +49,7 @@ Environment=GOGC=50
 Environment=GOMEMLIMIT=64MiB
 # SIGSEGV/SIGABRT 時に全 goroutine のスタックを出力する。
 Environment=GOTRACEBACK=crash
+Environment=GODEBUG=madvdontneed=1
 
 # コアダンプを確実に残す（kernel.core_pattern が apport のままでも
 # systemd 経由なら systemd-coredump が拾う。詳細は systemd/setup-coredump.sh）。

@@ -90,7 +90,16 @@ SIG="$NAME.so.sig"
 
 # --- 1) ビルド ---
 log "1/4 ビルド (GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin)"
-if ( cd "$PLUGIN_DIR" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildmode=plugin -o "$SO" . ); then
+# メモリ最適化: プラグインも -s -w -trimpath で縮める（agent にマップされ
+# RSS に効く）。デバッグ時は KIZUNA_DEBUG_BUILD=1。
+# -trimpath は使わない（ホストとプラグインの ABI ハッシュがずれて
+# plugin.Open が "different version of package" で失敗する）。
+PLUGIN_TRIMPATH=""
+PLUGIN_LDFLAGS="-s -w"
+if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
+    PLUGIN_LDFLAGS=""
+fi
+if ( cd "$PLUGIN_DIR" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${PLUGIN_TRIMPATH} -ldflags "${PLUGIN_LDFLAGS}" -buildmode=plugin -o "$SO" . ); then
     ok "ビルド成功: $PLUGIN_DIR/$SO"
 else
     ng "ビルド失敗"

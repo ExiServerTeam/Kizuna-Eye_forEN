@@ -1156,6 +1156,104 @@ input, select, textarea {
     .insight-source-tech, .insight-source-meta { grid-column: 1 / -1; }
 }
 
+/* ============================================================
+   スマホ最適化（〜600px）
+   ------------------------------------------------------------
+   低スペック機のスマホでも操作できるよう、はみ出しを無くし、
+   タップ領域を確保する。
+   ============================================================ */
+@media (max-width: 600px) {
+    /* --- ヘッダー / ナビ --- */
+    /* タブが折り返して2段になると本文を圧迫するので、1行のまま
+       横スクロールさせる（指でスワイプ）。 */
+    .nav-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        max-width: 100%;
+    }
+    .nav-tabs::-webkit-scrollbar { display: none; }
+    .nav-tab { flex: 0 0 auto; white-space: nowrap; }
+    .header-main { flex-wrap: wrap; gap: 8px; }
+    .header-controls { flex-wrap: wrap; gap: 6px; }
+
+    /* --- タップ領域（指で押しやすい最小サイズ） --- */
+    .nav-tab,
+    .theme-toggle,
+    .btn-primary,
+    .btn-secondary,
+    .btn-run,
+    .btn-edit,
+    .btn-delete,
+    .btn-open,
+    .alerts-clear-btn,
+    .backup-toggle-btn,
+    .modal-close {
+        min-height: 40px;
+    }
+    /* つまみはドラッグ専用なので、指で掴めるよう少し大きくする。 */
+    .drag-handle {
+        width: 36px;
+        height: 36px;
+        opacity: 0.7;
+    }
+
+    /* --- ゲージカード --- */
+    /* canvas は width/height 属性で固定されているため、CSS で
+       親幅に合わせて縮める（縮めないと横に溢れる）。 */
+    .gauge-container {
+        width: 100%;
+        height: auto;
+    }
+    .gauge-container canvas {
+        width: 100%;
+        height: auto;
+        max-width: 320px;
+        display: block;
+        margin: 0 auto;
+    }
+    /* ヘッダーの型番は折り返してよいが、つまみと重ならない余白は残す。 */
+    .cpu-model { max-width: 100%; font-size: 0.6rem; }
+
+    /* --- セキュリティ状況 --- */
+    /* 2カラムの指標カードを1カラムにし、数値を読みやすくする。 */
+    .insight-grid { grid-template-columns: 1fr; }
+    .insight-risk { font-size: 1.6rem; }
+    .insight-check { font-size: 0.82rem; }
+
+    /* --- アラート履歴 --- */
+    /* 1行に バッジ/時刻/本文 を詰めると本文が縦折れするため、
+       本文を2行目に落とす。 */
+    .alert-item {
+        flex-wrap: wrap;
+        row-gap: 4px;
+    }
+    .alert-item-body { flex: 1 1 100%; order: 3; }
+    .alert-item-time { order: 2; margin-left: auto; }
+
+    /* --- セクション / 本文の余白を詰める --- */
+    .main { gap: 14px; }
+    .backup-header, .backup-body { padding: 10px 12px; }
+    .plugin-card { padding: 12px 14px; }
+
+    /* --- モーダル（プロセス/ストレージ/アラート詳細） --- */
+    /* 画面いっぱいに近い幅で開き、内部はスクロールさせる。 */
+    .modal, .modal-box, .modal.modal-lg {
+        width: 96vw;
+        max-width: 96vw;
+        max-height: 90vh;
+        overflow: auto;
+    }
+    .process-controls { flex-direction: column; align-items: stretch; }
+}
+
+/* 横向きスマホ・小型タブレット（〜820px）: 2カラムを維持しつつ余白を詰める。 */
+@media (max-width: 820px) and (min-width: 601px) {
+    .gauge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .gauge-container canvas { width: 100%; height: auto; }
+}
+
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
 }
