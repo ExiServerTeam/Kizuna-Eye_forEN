@@ -191,27 +191,43 @@
         insertIntoHeader(anchor, wrap);
     }
 
-    // clampDropdown keeps an absolutely-positioned dropdown on screen.
-    // The dropdown is anchored with right:0 to the avatar; on a narrow
-    // phone the avatar can sit near the LEFT edge (the header wraps), so a
-    // 260px-wide menu would extend past the left edge and get clipped. After
-    // it is laid out, if its left edge is off-screen, flip the anchor to the
-    // left (left:0 / right:auto) and clamp the width to the viewport.
+    // clampDropdown keeps an absolutely-positioned dropdown inside the
+    // viewport on BOTH edges. The dropdown is anchored right:0 to the avatar;
+    // on a narrow phone the avatar can sit near the LEFT edge (the header
+    // wraps) and a 260px menu reaches past the left edge. If it also sits
+    // near the RIGHT edge it can reach past the right. We therefore clamp the
+    // final box to [margin, innerWidth-margin]: flip the anchor when the
+    // default right:0 position would leave the viewport, and cap the width.
+    // Measured in rAF so the just-un-hidden element has been laid out.
     function clampDropdown(dropdown) {
-        // Reset to the default anchor before measuring so repeated opens do
-        // not accumulate offsets.
+        // Reset to the default anchor first so repeated opens do not
+        // accumulate offsets.
         dropdown.style.left = '';
         dropdown.style.right = '';
         dropdown.style.maxWidth = '';
-        const rect = dropdown.getBoundingClientRect();
-        const margin = 8;
-        if (rect.left < margin) {
-            dropdown.style.right = 'auto';
-            dropdown.style.left = '0';
-            // Keep it within the viewport even after flipping.
-            const maxW = Math.max(180, window.innerWidth - margin * 2);
-            dropdown.style.maxWidth = maxW + 'px';
-        }
+        requestAnimationFrame(function () {
+            const margin = 8;
+            const vw = window.innerWidth || document.documentElement.clientWidth;
+            const rect = dropdown.getBoundingClientRect();
+            // Cap the width to the viewport regardless of anchor.
+            const maxW = Math.max(180, vw - margin * 2);
+            if (rect.width > maxW) {
+                dropdown.style.maxWidth = maxW + 'px';
+            }
+            // If the default right-anchored box overflows the left edge, flip
+            // to left-anchored (and clamp so it cannot overflow the right).
+            if (rect.left < margin) {
+                dropdown.style.right = 'auto';
+                dropdown.style.left = '0';
+            }
+            // Re-measure after any flip/width change and, if it still spills
+            // past the right edge, pin it to the right edge.
+            const r2 = dropdown.getBoundingClientRect();
+            if (r2.right > vw - margin) {
+                dropdown.style.left = 'auto';
+                dropdown.style.right = '0';
+            }
+        });
     }
 
     // menuItem builds a dropdown row backed by a button.

@@ -1080,7 +1080,11 @@ body.card-dragging {
         padding-top: 8px;
     }
 
-    .module-card-actions button {
+    /* button だけでなく .btn-open（<a> タグ）も同じセル寸法にする。
+       .btn-open はアンカーなので button セレクタにマッチせず、
+       デスクトップ用の大きい見た目のまま残って「開く」だけ崩れていた。 */
+    .module-card-actions button,
+    .module-card-actions .btn-open {
         width: 100%;
         text-align: center;
         white-space: nowrap;
@@ -1088,6 +1092,10 @@ body.card-dragging {
         font-size: 0.78rem;
         background: var(--bg-card);
         border-radius: 8px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
     }
 
     /* 並べ替えハンドルも同じグリッドセルに収める。 */
