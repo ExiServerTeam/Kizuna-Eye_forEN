@@ -2044,8 +2044,12 @@
         let pointerId = null;
 
         function onDown(e, item) {
-            // Only start a drag from the handle.
-            if (!e.target.classList.contains('drag-handle')) return;
+            // つまみを掴んだ場合、または（つまみ非表示のカードでは）カード本体の
+            // 余白部分を掴んだ場合にドラッグを開始する。ボタン・リンク・入力など
+            // 操作可能な要素の上では開始しない（クリックを奪わないため）。
+            const fromHandle = e.target.classList.contains('drag-handle');
+            const interactive = e.target.closest('button, a, input, select, textarea, [role="button"]');
+            if (!fromHandle && interactive) return;
             e.preventDefault();
             dragging = item;
             pointerId = e.pointerId;
@@ -2086,13 +2090,11 @@
         document.addEventListener('pointercancel', onUp);
     }
 
-    // セクション（履歴/プラグイン/アラート）は .main 直下で並べ替えられる。
-    //
-    // 一番上のカード（CPU/メモリ/ストレージ/稼働時間）の並べ替えは無効にした。
-    // カード右上のつまみ（⣿）を出さない。順序は HTML の並びで固定。
-    // 有効に戻す場合は下の 1 行を復活させる:
-    //   setupReorderIn(document.querySelector('.gauge-grid'), REORDER_CARD_SELECTOR);
+    // カードは .gauge-grid 内、セクションは .main 直下で、それぞれ独立に
+    // 並べ替えられるようにする（カードとセクションは跨がない）。
+    // 一番上のカードの「つまみ」表示は CSS で消す（並べ替え自体は生きている）。
     function setupCardReorder() {
+        setupReorderIn(document.querySelector('.gauge-grid'), REORDER_CARD_SELECTOR);
         setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
     }
 

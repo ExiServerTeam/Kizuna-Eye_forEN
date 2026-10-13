@@ -351,6 +351,13 @@ input, select, textarea {
     gap: 24px;
 }
 
+/* 一番上のカードの「つまみ」は表示しない。
+   並べ替え機能自体は残っており、カード本体をドラッグすれば入れ替えられる
+   （app.js の onDown はつまみ非表示時はカード余白からのドラッグを許可する）。 */
+.gauge-grid > .gauge-card > .drag-handle {
+    display: none !important;
+}
+
 /* ===== カード ===== */
 .gauge-card {
     border-radius: var(--radius-lg);
