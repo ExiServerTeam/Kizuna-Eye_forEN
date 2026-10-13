@@ -7,18 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- Discord 通知の再送既定値が `0`（再送なし）として読まれ、HTTP 429 のアラートが黙って捨てられていた問題を修正。`discord_max_retries` を未設定（既定 5）と明示的な `0` で区別し、送信タイムアウトを再送回数に応じて延伸（15 秒でバックオフを打ち切っていた）
-- `install.sh` / `systemd/migrate-agent-user.sh` が、`/opt/kizuna-eye` の**親ディレクトリのモード**を正規化していなかったため、root の umask 077 で作られた 0700 のまま非 root サービスユーザーが本体を exec できず `status=203/EXEC` で起動不能になる問題を修正（モードを明示的に `o+rx` へ）。systemd ユニット起動後に `is-active` を確認し、落ちていれば journal の見方と復旧コマンドを案内するようにした
-- `kizuna-dashboard.service` の `StartLimitIntervalSec` / `StartLimitBurst` が `[Service]` にあり systemd に無視されていたため `[Unit]` へ移動（再起動の暴走制限が効いていなかった）
-- 配備固有の絶対パス（`/samba/share/...`）を除去。プラグイン設定の既定値は作業ディレクトリ基準の相対パス、agent ユニットの `ReadWritePaths` は `__DIR__/logs`（`-` 付きで不在でも起動可）へ変更
-- `install.sh` / `update.sh` / `scripts/build-plugin.sh` の外部プラグイン（Kizuna-Backup LITE）ソース位置を `KIZUNA_LITE_PLUGIN_DIR` による opt-in に統一（他のリポジトリを前提にしたパスを持たない）
-- 移行済み環境（`ALREADY_INSTALLED`）では `migrate-agent-user.sh` をスキップするため agent unit が再生成されず、テンプレート修正が既存環境へ伝わらなかった問題を修正。`install.sh` が起動前に最新テンプレートで unit を再生成（旧版は `/tmp` に退避、未置換プレースホルダが残る場合は更新を中止）するようにした
-
-### Changed
-- スクリプトの shellcheck 指摘を解消（`ls | grep` の廃止、未使用ループ変数、`cd ... || exit`、`/proc` の PID 列挙を glob 化）
-
-## [0.7.0] - 2026-10-05
+## [0.7.0] - 2026-10-06
 
 ### Added
 - ログイン画面に「ゲストとしてログイン」ボタンを追加。`auth.public_viewer` 有効時のみ表示され、viewer 権限（読み取り専用）でダッシュボードに入れる
@@ -28,27 +17,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - WebSocket 切断時に「切断されました」ポップアップ、再接続時に「再接続しました」を表示
 - 自動更新チェック（`internal/updater`）。GitHub Releases を監視し、新バージョン検知時に `safe_update.sh` を実行
 - `install.sh` / `update.sh` / `safe_update.sh` を追加。必要なパッケージ（rsync / smartmontools / git / curl）を差分で確認・導入し、更新失敗時はロールバック
-
-### Changed
-- バージョン表記を v0.7.0 に統一（web 全体・Makefile・build.sh）
-- アカウントメニューの絵文字を削除（アイコン変更 / パスワード変更 / ユーザー管理）
-- CPUカードはCPU温度のみ、メモリカードは空き容量のみ、ストレージカードは温度＋空き容量のみを表示
-
-### Security
-- `auth.public_viewer` を追加。有効時は未ログインでもダッシュボード・`/ws`・`/api/status` のみ閲覧可能（履歴・アラート・ログ・管理系はログイン必須）
-- エージェント起動時に rsync / smartctl の有無を確認し、ログと標準エラーに警告
-
-### Added
 - `uninstall.sh`: `install.sh` が導入した systemd サービス・unit・sudoers・ヘルパー・/etc/kizuna-eye・sysctl 設定を撤去する。`--purge` でデータ・鍵・バイナリ・専用ユーザーまで完全削除、`--dry-run` で内容確認のみ
 - `install.sh` にプラグイン署名ステップを追加（純正プラグインのみ。署名鍵が無ければ生成し `plugin-sign -sign-all`）
 - `install.sh` に systemd 登録（dashboard + agent）を内蔵。`--no-systemd` で手動管理に切替可
 - `update.sh` にプラグイン再署名ステップを追加（再ビルド後に `plugin-sign -sign-all`）
-
-### Removed
-- 内部記録（作業記録・計画書・プラグイン監査記録）を `Kizunaシリーズ　資料/` へ退避し、公開リポジトリから削除。`docs/` は `PROCEDURE.md` / `ROADMAP.md` のみに整理
-- 作業用スクリプト `.py` を全削除（`scripts/archive/patch_*.py`, `scan_emoji.py`, `ssh_run.py`, `test_ssh_fail.py`）
+- `cmd/plugin-sign`: Ed25519 鍵対生成 / `.so` への分離署名 / 検証 / 一括署名（`-gen-key` `-sign` `-sign-all` `-verify` `-print-public-key`）。`build.sh`・`install.sh`・`update.sh`・`safe_update.sh`・`scripts/build.sh`・`scripts/verify.sh` のビルド/ロールバック対象へ組み込み
+- `install.sh` の必須パッケージに `bubblewrap` を追加（A-3 の隔離検査で使用。無い場合は検査が fail-closed で失敗するため）
+- ログイン / 初期セットアップ / ユーザー管理画面にダーク・ライトテーマ切替を追加（ダッシュボードと同じ `kizuna-theme` を共有、OS 設定にも追従）
+- 認証・ユーザー管理（任意、`auth.enabled` で有効化）
+- Agent の WebSocket トークン認証（`auth.agent_token` と `agent_config.json` の `token`）
+- ヘッダー右上にユーザー名とログアウト、管理者には「ユーザー」リンクを表示
+- `dashboard_config.json` の `log_level` を反映（`debug` / `info` / `warn` / `error`、未設定時は従来どおり `debug`）
+- 全ページのヘッダーに接続ステータスバッジを追加（状態に応じて緑/黄/赤の色ドットで表示）
 
 ### Changed
+- スクリプトの shellcheck 指摘を解消（`ls | grep` の廃止、未使用ループ変数、`cd ... || exit`、`/proc` の PID 列挙を glob 化）
+- バージョン表記を v0.7.0 に統一（web 全体・Makefile・build.sh）
+- アカウントメニューの絵文字を削除（アイコン変更 / パスワード変更 / ユーザー管理）
+- CPUカードはCPU温度のみ、メモリカードは空き容量のみ、ストレージカードは温度＋空き容量のみを表示
 - `install.sh` 一本で初期セットアップが完結（systemd 登録まで自動）。agent は専用ユーザー `kizuna-eye` で起動
 - `update.sh` / `safe_update.sh` の systemd 検出を `kizuna-eye-agent` / `kizuna-dashboard` 対応にし、再起動・ロールバックを検出 unit で実施
 - `start.sh` / `stop.sh` の案内メッセージを `kizuna-eye-agent` に統一
@@ -60,15 +46,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - plugin `kizuna_security` の cron 監視を sudo ヘルパーから直接読み取りへ変更（`AmbientCapabilities=CAP_DAC_READ_SEARCH` で `/var/spool/cron/crontabs` を直接読む。sudo/sudoers 不要。sudo 失敗時は従来のヘルパーへフォールバック）
 - `LoadOrCreateAlertHistoryKey` の鍵作成モードを 0640、keys ディレクトリを 0750 に変更（A-4/H-1 で agent ユーザーが署名鍵を読めるように）
 - `start.sh` / `stop.sh` の systemd 検出を `kizuna-eye-agent` / 旧 `kizuna-agent` の両対応に更新
+- `.gitattributes` を追加して改行コードを LF に正規化（gofmt の安定化）
+- README（英/日）を実装に合わせて全面的に整理（壊れていたコードフェンスと古い設定例を修正）
+- `scripts/verify.sh` は gcc 未検出時に `-race` を「失敗」ではなく「スキップ」に変更
+- `start.sh` / `stop.sh` に操作対象の引数（`all` / `dashboard` / `agent`、省略時は従来どおり両方）を追加。agent が systemd 管理下（`kizuna-eye-agent` / 旧 `kizuna-agent` が active または enabled）のときは agent を起動・停止しない（A-4 移行後の二重起動防止。強制する場合は `KIZUNA_FORCE_MANUAL=1`）
+- `stop.sh` が kill の完了を確認せず「停止しました」と表示していた問題を修正。停止できなかった場合は警告を出して終了コード 1 を返す（別ユーザー所有のプロセスは EPERM で kill できないため）
+
+### Removed
+- 内部記録（作業記録・計画書・プラグイン監査記録）を `Kizunaシリーズ　資料/` へ退避し、公開リポジトリから削除。`docs/` は `PROCEDURE.md` / `ROADMAP.md` のみに整理
+- 作業用スクリプト `.py` を全削除（`scripts/archive/patch_*.py`, `scan_emoji.py`, `ssh_run.py`, `test_ssh_fail.py`）
+- 未使用の `parseSize` 関数（`cmd/agent`）
+- 未使用パッケージ `internal/transport`・`internal/collector`・`internal/render`（本番コードから参照なし。Agent/Dashboard は `cmd/*/main.go` に直接実装）
+- `notify.EmailNotifier` の未使用フィールド `useTLS`（`smtp.SendMail` が STARTTLS を自動交渉するため不要）
 
 ### Fixed
+- Discord 通知の再送既定値が `0`（再送なし）として読まれ、HTTP 429 のアラートが黙って捨てられていた問題を修正。`discord_max_retries` を未設定（既定 5）と明示的な `0` で区別し、送信タイムアウトを再送回数に応じて延伸（15 秒でバックオフを打ち切っていた）
+- `install.sh` / `systemd/migrate-agent-user.sh` が、`/opt/kizuna-eye` の**親ディレクトリのモード**を正規化していなかったため、root の umask 077 で作られた 0700 のまま非 root サービスユーザーが本体を exec できず `status=203/EXEC` で起動不能になる問題を修正（モードを明示的に `o+rx` へ）。systemd ユニット起動後に `is-active` を確認し、落ちていれば journal の見方と復旧コマンドを案内するようにした
+- `kizuna-dashboard.service` の `StartLimitIntervalSec` / `StartLimitBurst` が `[Service]` にあり systemd に無視されていたため `[Unit]` へ移動（再起動の暴走制限が効いていなかった）
+- 配備固有の絶対パス（`/samba/share/...`）を除去。プラグイン設定の既定値は作業ディレクトリ基準の相対パス、agent ユニットの `ReadWritePaths` は `__DIR__/logs`（`-` 付きで不在でも起動可）へ変更
+- `install.sh` / `update.sh` / `scripts/build-plugin.sh` の外部プラグイン（Kizuna-Backup LITE）ソース位置を `KIZUNA_LITE_PLUGIN_DIR` による opt-in に統一（他のリポジトリを前提にしたパスを持たない）
+- 移行済み環境（`ALREADY_INSTALLED`）では `migrate-agent-user.sh` をスキップするため agent unit が再生成されず、テンプレート修正が既存環境へ伝わらなかった問題を修正。`install.sh` が起動前に最新テンプレートで unit を再生成（旧版は `/tmp` に退避、未置換プレースホルダが残る場合は更新を中止）するようにした
 - `kizuna-watchdog.service`（systemd user unit, Type=oneshot）が service 終了時に cgroup 内の agent を道連れに SIGTERM で殺し、agent が約2秒で停止を繰り返す問題を修正（`KillMode=none` を追加）
 - `install.sh` / `update.sh` のビルドが Ubuntu 26.04 以降で失敗する問題を修正。先頭で `. /etc/os-release` を読むため `VERSION` が OS バージョン文字列（例 `26.04.1 LTS ...`）で上書きされ、ldflags に空白入りの不正値が渡っていた。os-release はサブシェルで必要値のみ取得し、ビルド用の変数を `KVERSION` に分離
 - `install.sh` を root 実行したとき cron 読み取りヘルパー / ワンクリック対処ヘルパーの導入が誤ってスキップされる問題を修正（`[ -z "$SUDO" ]` は root で真になるため、`id -u -ne 0` を併せて判定）
 - `update.sh` のプラグイン再署名が sudo 実行時に `/root/.kizuna-eye/...` の鍵を探して失敗する問題を修正（`SUDO_USER` のホーム基準で鍵を解決）
 - `update.sh` / `safe_update.sh` が systemd 管理下で agent しか再起動せず、dashboard が古いバイナリのまま動き続ける問題を修正（dashboard + agent の両 unit を検出して再起動）
+- 手動バックアップ実行の二重起動ガードを `request_id` 照合に変更（定期実行の結果で誤って解除されない）
+- 無効化したプラグインを停止する `ModuleManager.Unregister` を追加（Agent 再起動まで動き続ける問題を修正）
+- エージェント切断時のセキュリティイベント消失を修正（送信失敗時は未送信分を再キュー）
+- 通知プール飽和時に critical 通知まで失われる問題を修正（critical は最大5秒スロット解放を待つ）
+- ログのローテーション失敗時に以降のログが失われる問題を修正（ハンドルを再オープン）
+- ログ読み取り（`readLastLines`）のメモリ使用量に上限（4MiB）を設け、改行の少ない巨大ファイルによる枯渇を防止
+- `Hub` のエージェントコールバック（status / disconnect / event）を hub ロックで保護（データ競合を解消）
+- アラート設定の同時 PUT によるデータ競合を解消（mutex で直列化）
+- `handleDashboardCommand` / `sendBackupResult` の nil ロガー参照を修正
+- 通知チャンネル `type` の大文字小文字・空白を正規化（`"Discord"` 等を受理）
+- 設定ファイル（agent / dashboard / modules / users）を読み込み時に 0600 へ締め付け
+- 認証有効時に `style.css` と `auth-theme.js` が公開パスに無く、ログイン / セットアップ画面で読めずテーマが正しく表示されない問題（公開パスに追加）
+- 設定エディタ（GUI）で通知チャンネルを開くと、Discord 以外のチャンネル（Slack / Telegram / LINE / Email）の `type` を `discord` に上書きしてしまい、保存すると他チャンネル設定が失われる問題（GUI が編集できるのは Discord のみとし、他種別は変更せず保持するよう修正）
+- Email 通知の `smtp.SendMail` が context/タイムアウトを尊重せず、SMTP サーバー無応答時に goroutine がハングして通知セマフォを枯渇させる問題（`net.Dialer.DialContext` + `smtp.NewClient` に置換し、STARTTLS を維持しつつ deadline を適用）
+- **重大**: `Hub.Remove` がロック保持中に `onAgentDisconnect` を呼んでおり、デッドロックの危険があった問題（ロック解放後に呼ぶよう修正）
+- **重大**: `updateStatus` がネットワークの前回値（`prevNetUp` 等）をロック外で読み書きし、データ競合していた問題（ロック下に移動）
+- **セキュリティ**: `users.json` が破損していると `NeedsSetup()` が true になり、`/setup` から誰でも管理者を作成できてしまう問題（破損時はセットアップを拒否し、手動修正を要求するよう修正）
+- **重大**: 認証有効時、Agent の WebSocket 接続が認証ミドルウェアに遮断され接続できなかった問題（`/ws?role=agent` + 正トークンはミドルウェアを通過し、`/ws` ハンドラでトークン検証するよう修正）
+- 認証無効時に `/api/auth/status` が `needs_setup: true` を返し、`/login.html` から `/setup.html` へ誤リダイレクトされる問題（`auth_enabled` を返し、フロントで判定）
+- プラグインアップロード制限（`plugins_upload_enabled`）が機能していなかった問題（未設定/`false` 時は `POST /api/plugins/upload` を 403 で拒否）
+- `plugins_dir` 設定が無視され、常に実行ファイル隣接の `plugins/` を参照していた問題（`ResolvePluginsDir` / `EnsurePluginsDir` を使用）
+- gorilla/websocket の同時書き込み禁止違反（Agent: `wsWriter`、Dashboard: `writeMu` で書き込みを直列化）
+- `Start()` 後に登録されたモジュール（ホットリロードされたプラグイン）が実行されなかった問題（`Register` で実行ループを起動）
+- CPU温度センサーが取得できない場合にアラートの復旧状態が固まり、復旧通知が出なくなる問題
+- ログ SSE の読み取り位置が、末尾に改行がない最終行で 1 文字ずれる問題
+- ダッシュボードのバックアップ表示がステータスを三重に上書きしていた問題（表示処理を統合、未定義だった CSS クラス `error` を `failed` に統一）
+- i18n キー整合性チェッカーが `data-i18n-*` と `t("key")` を検出できていなかった問題
 
 ### Security
+- `auth.public_viewer` を追加。有効時は未ログインでもダッシュボード・`/ws`・`/api/status` のみ閲覧可能（履歴・アラート・ログ・管理系はログイン必須）
+- エージェント起動時に rsync / smartctl の有無を確認し、ログと標準エラーに警告
 - エージェントから受信したステータスを範囲検証（`CPUUsage` / `MemPercent` / `DiskPercent` が 0〜100 の範囲外なら破棄）。不正値がメトリクス履歴・`/api/metrics` に流れ込むのを防止
 - プラグインアップロードをトランザクション化。検査失敗・`meta.json` 書き込み失敗・`modules.json` 登録失敗のいずれでも孤児 `.so` / `meta.json` を残さない
 - プラグイン削除で `.so` の削除に失敗した場合は 500 を返す（実行可能な孤児 `.so` を残したまま「削除成功」を返さない）
@@ -95,49 +128,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - FIM の「監視ディレクトリの一部を走査できません」判定を全体走査のときだけ行うようにした。イベント走査（上限や深さで落ちたパスしか見ていない）の結果で状態を戻していたため、周期走査のたびに 16 件 → 0 件 → 16 件と振動し、変化のたびに同じ warning が出ていた
 - FIM の差分検知に inode を追加した（`fim_watch_inode_linux.go` / `_other.go`）。同一パス・同一サイズ・同一 mtime（秒精度）で置き換えられても inode の変化で検知できる（非 Linux は size+mtime に縮退）
 - `fim_watch_ignore` のパターンを、除外ディレクトリの配下のファイルにも適用するようにした。`systemd-private-*` のようなディレクトリ名指定が中のファイルまで届かず、`/tmp` の監視が正当な一時ファイルで埋まっていた
-
-### Fixed
-- 手動バックアップ実行の二重起動ガードを `request_id` 照合に変更（定期実行の結果で誤って解除されない）
-- 無効化したプラグインを停止する `ModuleManager.Unregister` を追加（Agent 再起動まで動き続ける問題を修正）
-- エージェント切断時のセキュリティイベント消失を修正（送信失敗時は未送信分を再キュー）
-- 通知プール飽和時に critical 通知まで失われる問題を修正（critical は最大5秒スロット解放を待つ）
-- ログのローテーション失敗時に以降のログが失われる問題を修正（ハンドルを再オープン）
-- ログ読み取り（`readLastLines`）のメモリ使用量に上限（4MiB）を設け、改行の少ない巨大ファイルによる枯渇を防止
-- `Hub` のエージェントコールバック（status / disconnect / event）を hub ロックで保護（データ競合を解消）
-- アラート設定の同時 PUT によるデータ競合を解消（mutex で直列化）
-- `handleDashboardCommand` / `sendBackupResult` の nil ロガー参照を修正
-- 通知チャンネル `type` の大文字小文字・空白を正規化（`"Discord"` 等を受理）
-- 設定ファイル（agent / dashboard / modules / users）を読み込み時に 0600 へ締め付け
-
-### Changed
-- `.gitattributes` を追加して改行コードを LF に正規化（gofmt の安定化）
-- README（英/日）を実装に合わせて全面的に整理（壊れていたコードフェンスと古い設定例を修正）
-- `scripts/verify.sh` は gcc 未検出時に `-race` を「失敗」ではなく「スキップ」に変更
-- `start.sh` / `stop.sh` に操作対象の引数（`all` / `dashboard` / `agent`、省略時は従来どおり両方）を追加。agent が systemd 管理下（`kizuna-eye-agent` / 旧 `kizuna-agent` が active または enabled）のときは agent を起動・停止しない（A-4 移行後の二重起動防止。強制する場合は `KIZUNA_FORCE_MANUAL=1`）
-- `stop.sh` が kill の完了を確認せず「停止しました」と表示していた問題を修正。停止できなかった場合は警告を出して終了コード 1 を返す（別ユーザー所有のプロセスは EPERM で kill できないため）
-
-### Added
-- `cmd/plugin-sign`: Ed25519 鍵対生成 / `.so` への分離署名 / 検証 / 一括署名（`-gen-key` `-sign` `-sign-all` `-verify` `-print-public-key`）。`build.sh`・`install.sh`・`update.sh`・`safe_update.sh`・`scripts/build.sh`・`scripts/verify.sh` のビルド/ロールバック対象へ組み込み
-- `install.sh` の必須パッケージに `bubblewrap` を追加（A-3 の隔離検査で使用。無い場合は検査が fail-closed で失敗するため）
-- ログイン / 初期セットアップ / ユーザー管理画面にダーク・ライトテーマ切替を追加（ダッシュボードと同じ `kizuna-theme` を共有、OS 設定にも追従）
-- 認証・ユーザー管理（任意、`auth.enabled` で有効化）
-  - 初回アクセスで `/setup.html` に誘導し、最初のユーザーを管理者として作成
-  - ロール（admin / operator / viewer）に応じたページ表示制御と API 認可
-  - パスワードは bcrypt でハッシュ化して `users.json` に保存
-  - セッション Cookie（HttpOnly / SameSite=Lax / Secure 対応、ログイン時の再生成）
-  - 最後の管理者の削除・降格を防止
-  - ログイン試行の IP 単位レート制限（10回/5分でロックアウト）
-- Agent の WebSocket トークン認証（`auth.agent_token` と `agent_config.json` の `token`）
-- ヘッダー右上にユーザー名とログアウト、管理者には「ユーザー」リンクを表示
-
-### Fixed
-- 認証有効時に `style.css` と `auth-theme.js` が公開パスに無く、ログイン / セットアップ画面で読めずテーマが正しく表示されない問題（公開パスに追加）
-- 設定エディタ（GUI）で通知チャンネルを開くと、Discord 以外のチャンネル（Slack / Telegram / LINE / Email）の `type` を `discord` に上書きしてしまい、保存すると他チャンネル設定が失われる問題（GUI が編集できるのは Discord のみとし、他種別は変更せず保持するよう修正）
-
-### Fixed
-- Email 通知の `smtp.SendMail` が context/タイムアウトを尊重せず、SMTP サーバー無応答時に goroutine がハングして通知セマフォを枯渇させる問題（`net.Dialer.DialContext` + `smtp.NewClient` に置換し、STARTTLS を維持しつつ deadline を適用）
-
-### Security
 - WebSocket の読み取りメッセージサイズを制限（Dashboard 8MiB / Agent 1MiB。巨大フレームによるメモリ枯渇を防止）
 - プラグイン Web UI（`/plugins/{name}/`）にセキュリティヘッダ（`X-Content-Type-Options` / `X-Frame-Options` / `Referrer-Policy`）を追加（専用ハンドラのため静的配信のヘッダが適用されていなかった）
 - 設定・ログ・プラグインの各ディレクトリを 0700（所有者のみ）で作成するよう統一（秘密情報・実行ファイル・ログを含むため）
@@ -160,30 +150,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /api/config*` が秘密情報（`agent_token` / `webhook_url` / `bot_token` / `smtp_password` / LINE `token` 等）を平文で返していた問題を修正。マスク（`***`）を返し、マスクのまま保存しても既存の秘密を保持する
 - ログファイル・アラート履歴ファイルを 0600（所有者のみ）で作成し、既存ファイルの権限も起動時に 0600 へ締めるよう修正（ユーザー名・IP 等の漏洩防止）
 - アラート履歴ディレクトリを 0700 に変更
-
-### Fixed
-- **重大**: `Hub.Remove` がロック保持中に `onAgentDisconnect` を呼んでおり、デッドロックの危険があった問題（ロック解放後に呼ぶよう修正）
-- **重大**: `updateStatus` がネットワークの前回値（`prevNetUp` 等）をロック外で読み書きし、データ競合していた問題（ロック下に移動）
-- **セキュリティ**: `users.json` が破損していると `NeedsSetup()` が true になり、`/setup` から誰でも管理者を作成できてしまう問題（破損時はセットアップを拒否し、手動修正を要求するよう修正）
-- **重大**: 認証有効時、Agent の WebSocket 接続が認証ミドルウェアに遮断され接続できなかった問題（`/ws?role=agent` + 正トークンはミドルウェアを通過し、`/ws` ハンドラでトークン検証するよう修正）
-- 認証無効時に `/api/auth/status` が `needs_setup: true` を返し、`/login.html` から `/setup.html` へ誤リダイレクトされる問題（`auth_enabled` を返し、フロントで判定）
-- プラグインアップロード制限（`plugins_upload_enabled`）が機能していなかった問題（未設定/`false` 時は `POST /api/plugins/upload` を 403 で拒否）
-- `plugins_dir` 設定が無視され、常に実行ファイル隣接の `plugins/` を参照していた問題（`ResolvePluginsDir` / `EnsurePluginsDir` を使用）
-- gorilla/websocket の同時書き込み禁止違反（Agent: `wsWriter`、Dashboard: `writeMu` で書き込みを直列化）
-- `Start()` 後に登録されたモジュール（ホットリロードされたプラグイン）が実行されなかった問題（`Register` で実行ループを起動）
-- CPU温度センサーが取得できない場合にアラートの復旧状態が固まり、復旧通知が出なくなる問題
-- ログ SSE の読み取り位置が、末尾に改行がない最終行で 1 文字ずれる問題
-- ダッシュボードのバックアップ表示がステータスを三重に上書きしていた問題（表示処理を統合、未定義だった CSS クラス `error` を `failed` に統一）
-- i18n キー整合性チェッカーが `data-i18n-*` と `t("key")` を検出できていなかった問題
-
-### Added
-- `dashboard_config.json` の `log_level` を反映（`debug` / `info` / `warn` / `error`、未設定時は従来どおり `debug`）
-- 全ページのヘッダーに接続ステータスバッジを追加（状態に応じて緑/黄/赤の色ドットで表示）
-
-### Removed
-- 未使用の `parseSize` 関数（`cmd/agent`）
-- 未使用パッケージ `internal/transport`・`internal/collector`・`internal/render`（本番コードから参照なし。Agent/Dashboard は `cmd/*/main.go` に直接実装）
-- `notify.EmailNotifier` の未使用フィールド `useTLS`（`smtp.SendMail` が STARTTLS を自動交渉するため不要）
 
 ## [0.6.1] - 2026-09-26
 
