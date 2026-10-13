@@ -121,7 +121,7 @@ func (h *History) AddSourced(a *notify.Alert, source string, trusted bool) {
 	h.trimLocked()
 
 	if h.path != "" {
-		f, err := os.OpenFile(h.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		f, err := openAppendNoFollow(h.path)
 		if err != nil {
 			logf("アラート履歴の永続化: open に失敗 (%s): %v", h.path, err)
 		} else {

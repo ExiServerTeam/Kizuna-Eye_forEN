@@ -855,10 +855,9 @@ func main() {
 		// send role=agent, so this cannot be used to bypass login.
 		isAgentRole := r.URL.Query().Get("role") == "agent"
 		if hub.agentToken != "" && isAgentRole {
+			// G-2: トークンはヘッダでのみ受け取る。クエリ文字列（?token=）は
+			// アクセスログ・Referer・ブラウザ履歴に残るため受け付けない。
 			token := r.Header.Get("X-Kizuna-Agent-Token")
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
 			if subtle.ConstantTimeCompare([]byte(token), []byte(hub.agentToken)) != 1 {
 				http.Error(w, "invalid agent token", http.StatusUnauthorized)
 				lg.Warn("Agent トークン不一致の接続を拒否: %s", r.RemoteAddr)
