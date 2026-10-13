@@ -390,7 +390,7 @@ func (h *Hub) SendToAgent(payload map[string]interface{}) error {
 	h.RUnlock()
 
 	if agentConn == nil {
-		return fmt.Errorf("Agent が接続されていません")
+		return fmt.Errorf("agent が接続されていません")
 	}
 
 	data, err := json.Marshal(payload)

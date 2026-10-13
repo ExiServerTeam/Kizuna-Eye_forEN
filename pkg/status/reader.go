@@ -59,7 +59,7 @@ func (s *SystemStatus) Validate() error {
 		return fmt.Errorf("ステータスが nil です")
 	}
 	if s.Timestamp < 0 {
-		return fmt.Errorf("Timestamp が不正です: %d", s.Timestamp)
+		return fmt.Errorf("timestamp が不正です: %d", s.Timestamp)
 	}
 	if s.CPUUsage < 0 || s.CPUUsage > 100 {
 		return fmt.Errorf("CPUUsage が範囲外です: %.2f", s.CPUUsage)
