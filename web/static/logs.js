@@ -1,5 +1,6 @@
 // ============================================================
 // Kizuna-Eye - ログビューア
+// Kizuna-Eye - log viewer
 // ============================================================
 (function () {
     'use strict';
@@ -20,9 +21,11 @@
     const matchCount = document.getElementById('logMatchCount');
 
     // i18n 翻訳ヘルパー
+    // i18n translation helper
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
     // 表示は最大 500 行。超えたら古い行から捨てる。
+    // At most 500 lines shown; older lines are dropped when exceeded.
     const MAX_VIEW_LINES = 500;
     const FOLLOW_KEY = 'kizuna-logs-follow';
     const FORMAT_KEY = 'kizuna-logs-format';
@@ -30,6 +33,9 @@
     // 自動更新は常に ON で開始する。運用者がページを開いた時点で
     // リアルタイム表示になっているのが期待動作で、前回の OFF を
     // 引き継ぐと「新しい行が出ない」と誤解される。
+    // Auto-follow always starts ON. The expected behaviour is that opening
+    // the page shows live output; inheriting a previous OFF would be
+    // misread as "new lines are not appearing".
     let follow = true;
 
     let formatMode = 'pretty';
@@ -43,14 +49,17 @@
     let followTimer = null;
     let eventSource = null;
     // 生ログ行のバッファ（検索/フィルタで再描画するため保持）。
+    // Raw log-line buffer (kept so search/filter can re-render).
     let rawLines = [];
     // イベント候補の蓄積（eventフィールドの値）。
+    // Accumulated event candidates (values of the event field).
     const seenEvents = new Set();
 
     const dynamicTypeButtons = new Map();
 
     // ============================================================
     // ログの整形（JSON Lines を人間向けに変換）
+    // Log formatting (turn JSON Lines into human-readable text)
     // ============================================================
     const SKIP_KEYS = new Set(['hash', 'prev_hash', 'ts', 'level', 'message', 'message_en', 'prefix', 'event', 'icon']);
 
@@ -64,6 +73,7 @@
                `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
     }
 
+    // parseLogLine はパース済みオブジェクト（または null）と生テキストを返す。
     // parseLogLine returns the parsed object (or null) and the raw text.
     function parseLogLine(line) {
         const trimmed = (line || '').trim();
@@ -75,11 +85,14 @@
         } catch (e) { return null; }
     }
 
+    // logLang は現在の UI 言語を返し、既定は ja だ。
     // logLang returns the current UI language, defaulting to ja.
     function logLang() {
         return window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
     }
 
+    // pickLogMessage は UI が英語でキーが存在すれば message_en を、
+    // そうでなければ基底の message を選ぶ（タスク9）。
     // pickLogMessage chooses message_en when the UI is English and the key
     // exists, otherwise the base message (task 9).
     function pickLogMessage(obj) {
@@ -118,6 +131,7 @@
 
     // ============================================================
     // 検索 / フィルタ
+    // Search / filter
     // ============================================================
     function getLevelOf(line) {
         const obj = parseLogLine(line);
@@ -131,6 +145,7 @@
         return String(obj.event || '');
     }
 
+    // buildMatcher は検索ボックスの述語を返し、空なら null を返す。
     // buildMatcher returns a predicate for the search box, or null when empty.
     function buildMatcher() {
         const q = searchInput ? searchInput.value.trim() : '';
@@ -140,7 +155,7 @@
                 const re = new RegExp(q, 'i');
                 return (line) => re.test(line);
             } catch (e) {
-                return null; // 不正な正規表現はマッチなし扱い（下で0件表示）
+                return null; // 不正な正規表現はマッチなし扱い（下で0件表示） / invalid regexp: treat as no match (0 shown below)
             }
         }
         const lower = q.toLowerCase();
@@ -158,6 +173,7 @@
         return out;
     }
 
+    // highlight は検索一致の周りに <mark> を付ける（大文字小文字を区別しない）。
     // highlight applies <mark> around search matches (case-insensitive).
     function highlight(text) {
         const q = searchInput ? searchInput.value.trim() : '';
@@ -167,6 +183,8 @@
         if (searchRegex && searchRegex.checked) {
             // 正規表現でハイライト。ユーザー入力をそのまま使うため、
             // キャプチャ崩れを避けて全体を1グループで囲む。
+            // Highlight with a regexp. The user input is used as-is, so wrap
+            // the whole match in one group to avoid broken captures.
             try {
                 const re = new RegExp(q, 'gi');
                 return escaped.replace(re, (m) => `<mark>${m}</mark>`);
@@ -179,6 +197,7 @@
         } catch (e) { return escaped; }
     }
 
+    // collectEvents は event フィルタのドロップダウン用に event 値を蓄積する。
     // collectEvents accumulates event values for the event filter dropdown.
     function collectEvents(lines) {
         let added = false;
@@ -192,6 +211,7 @@
         if (added && eventFilter) {
             const current = eventFilter.value;
             // 既存の選択肢をクリアして再構築（「すべて」は残す）。
+            // Clear and rebuild the existing options (keeping "all").
             while (eventFilter.options.length > 1) eventFilter.remove(1);
             Array.from(seenEvents).sort().forEach(ev => {
                 const opt = document.createElement('option');
@@ -203,6 +223,7 @@
         }
     }
 
+    // render はフィルタを再適用しビューアを描画する。
     // render re-applies filters and paints the viewer.
     function render() {
         if (!logViewer) return;
@@ -219,12 +240,15 @@
         }
         // 最新が上に来るよう逆順（降順）で表示する。末尾に追記された
         // 行が一番上に現れ、下に行くほど古い。
+        // Render newest-first (descending). A line appended at the end appears
+        // at the top, and older lines go downward.
         const html = shown.slice().reverse().map(line => {
             const pretty = formatMode === 'pretty' ? formatJSONLine(line) : line;
             return highlight(pretty);
         }).join('\n');
         logViewer.innerHTML = html;
         // 追従中は最新（先頭）が見えるようトップへスクロールする。
+        // While following, scroll to the top so the newest (first) line is visible.
         if (follow) logViewer.scrollTop = 0;
     }
 
@@ -255,6 +279,7 @@
 
     // ============================================================
     // テーマ
+    // Theme
     // ============================================================
     const themeToggle = document.getElementById('themeToggle');
     const themeIcon = document.getElementById('themeIcon');
@@ -264,6 +289,7 @@
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
         // アイコンは CSS が data-theme に応じて出し分ける（SVG）。触らない。
+        // The icon is toggled by CSS based on data-theme (SVG). Do not touch it.
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 
@@ -292,6 +318,7 @@
     function setType(type) {
         currentType = type;
         // 種別を変えたらイベント候補をリセット。
+        // Reset the event candidates when the type changes.
         seenEvents.clear();
         if (eventFilter) {
             while (eventFilter.options.length > 1) eventFilter.remove(1);
@@ -300,6 +327,9 @@
         startStream();
     }
 
+    // capitalizeLabel は type id を表示ラベルへ変換する。"kizuna-security"
+    // -> "Kizuna-Security"、"agent" -> "Agent"。他所の dashboard/製品名は
+    // 大文字始まりなので、ログ種別ボタンも合わせる。
     // capitalizeLabel renders a type id as a display label: "kizuna-security"
     // -> "Kizuna-Security", "agent" -> "Agent". The dashboard/product names
     // elsewhere start with a capital, so the log type buttons should match.
@@ -331,7 +361,7 @@
                 dynamicTypeButtons.set(item.id, btn);
             }
             updateTypeButtons();
-        } catch (e) { /* 種別取得失敗は致命的ではない */ }
+        } catch (e) { /* 種別取得失敗は致命的ではない / failing to fetch types is not fatal */ }
     }
 
     function updateFollowLabel() {
@@ -339,6 +369,10 @@
         // ON のときは CSS（#logFollowBtn.follow-on）が緑背景と点滅ドットを
         // 付ける。テキストだけでは現在の状態が一目で分からず、更新が
         // 止まっているように見えるという指摘への対応。
+        // When ON, CSS (#logFollowBtn.follow-on) adds a green background and a
+        // blinking dot. This addresses the complaint that text alone does not
+        // make the current state obvious at a glance, making it look as if
+        // updates have stopped.
         followBtn.textContent = follow ? t('logs.follow_on') : t('logs.follow_off');
         followBtn.classList.toggle('active', follow);
         followBtn.classList.toggle('follow-on', follow);
@@ -353,6 +387,9 @@
     // 取得: 初回は /api/logs（tail）、以降は SSE /api/logs/stream で
     // 追記をリアルタイム受信する。SSE が使えない環境では従来どおり
     // ポーリングへフォールバックする。
+    // Fetch: the first read uses /api/logs (tail); afterwards SSE
+    // /api/logs/stream delivers appended lines in real time. Environments
+    // without SSE fall back to polling as before.
     // ============================================================
     async function loadInitial() {
         const lines = logLines ? logLines.value : '100';
@@ -390,12 +427,14 @@
     function startStream() {
         closeStream();
         // まず tail を読み込む。
+        // First read the tail.
         loadInitial().then(() => {
             if (!window.EventSource) {
                 if (follow) startPollingFallback();
                 return;
             }
             // SSE で追記を受信。
+            // Receive appends via SSE.
             try {
                 const url = `/api/logs/stream?type=${encodeURIComponent(currentType)}`;
                 const es = new EventSource(url);
@@ -405,6 +444,7 @@
                 };
                 es.onerror = () => {
                     // SSE が切れた/使えない: ポーリングへフォールバック。
+                    // SSE dropped/unavailable: fall back to polling.
                     closeStream();
                     if (follow) startPollingFallback();
                 };
@@ -424,6 +464,7 @@
         if (follow) {
             if (eventSource || followTimer) {
                 // 既に動いている
+                // Already running
             } else {
                 startStream();
             }
@@ -447,6 +488,7 @@
     if (logLines) logLines.addEventListener('change', () => startStream());
 
     // 検索・フィルタは再描画のみ（再取得しない）。
+    // Search/filter only re-render (no re-fetch).
     if (searchInput) searchInput.addEventListener('input', render);
     if (searchRegex) searchRegex.addEventListener('change', render);
     if (levelFilter) levelFilter.addEventListener('change', render);
@@ -460,6 +502,7 @@
     });
 
     // 初期化
+    // Initialise
     loadLogTypes();
     updateFollowLabel();
     updateFormatLabel();

@@ -5,6 +5,12 @@
 // - data-role-min を持つ要素のうち、権限が足りないものを非表示
 // - ログイン済み（ゲスト含む）: 右上にアバター + ログアウトメニュー
 // - 未ログイン（公開ビューア）: 右上に「ログイン」リンク
+// Kizuna-Eye - role-based nav visibility and account menu
+// Loaded just before </body> on each page.
+// - Fetch the current state from /api/auth/status
+// - Hide elements with data-role-min when the role is insufficient
+// - Logged in (incl. guest): avatar + logout menu at top right
+// - Not logged in (public viewer): a "Log in" link at top right
 // ============================================================
 (function () {
     'use strict';
@@ -16,6 +22,7 @@
     }
 
     // i18n 翻訳ヘルパー
+    // i18n translation helper
     function t(key, fallback) {
         if (window.KizunaI18n && window.KizunaI18n.t) {
             const v = window.KizunaI18n.t(key);
@@ -30,10 +37,11 @@
             return r.json();
         })
         .then(function (st) {
-            if (!st) return;                 // 判定失敗
-            if (st.auth_enabled === false) return; // 認証無効: 何もしない
+            if (!st) return;                 // 判定失敗 / lookup failed
+            if (st.auth_enabled === false) return; // 認証無効: 何もしない / auth disabled: do nothing
             if (!st.authenticated) {
                 // 公開ビューア（未ログイン）: ログイン導線を出す。
+                // Public viewer (not logged in): show the login entry point.
                 addLoginLink();
                 return;
             }
@@ -47,6 +55,8 @@
             || document.querySelector('.header-right');
     }
 
+    // insertIntoHeader はヘッダへ要素を配置する。version バッジがあればその前に
+    // 挿入し、順序を [lang][theme][user][version] にする。
     // insertIntoHeader places an element in the header. When a version badge
     // exists, insert before it so the order is [lang][theme][user][version].
     function insertIntoHeader(anchor, el) {
@@ -58,6 +68,8 @@
         }
     }
 
+    // addLoginLink は公開 viewer がログインページ（そしてゲストログイン /
+    // ログアウト）へ到達できるようログイン入口を追加する。
     // addLoginLink adds a login entry so a public viewer can reach the
     // login page (and then guest-login / log out).
     function addLoginLink() {
@@ -77,12 +89,15 @@
 
         // ページ全体に必要な権限（<body data-role-min>）を満たさない場合は
         // ダッシュボードへ戻す。
+        // If the page-wide minimum role (<body data-role-min>) is not met,
+        // send the user back to the dashboard.
         const pageMin = document.body && document.body.getAttribute('data-role-min');
         if (pageMin && myRank < rank(pageMin)) {
             location.replace('/');
             return;
         }
 
+        // アクセスできないナビタブを隠す。
         // Hide nav tabs the user cannot access.
         document.querySelectorAll('[data-role-min]').forEach(function (el) {
             const need = rank(el.getAttribute('data-role-min'));
@@ -96,6 +111,8 @@
         buildAvatarMenu(anchor, me);
     }
 
+    // buildAvatarMenu は、アカウント情報と操作を含むドロップダウンを開く
+    // アバターボタンを描画する。ゲストアカウントはログアウトのみだ。
     // buildAvatarMenu renders an avatar button that opens a dropdown with
     // account information and actions. Guest accounts only get logout.
     function buildAvatarMenu(anchor, me) {
@@ -138,6 +155,7 @@
 
         // --- account settings (avatar upload / password) ---
         // ゲストは資格情報を持たないので、これらは表示しない。
+        // Guests have no credentials, so do not show these.
         if (!isGuest) {
             const settings = document.createElement('div');
             settings.className = 'account-section';
@@ -191,6 +209,13 @@
         insertIntoHeader(anchor, wrap);
     }
 
+    // clampDropdown は絶対配置のドロップダウンを「両端」でビューポート内に保つ。
+    // ドロップダウンはアバターに right:0 で固定される。狭いスマホではアバターが
+    // 左端近くに来ることがあり（ヘッダが折り返す）、260px のメニューが左端を
+    // 超える。右端近くでも右を超え得る。そこで最終ボックスを
+    // [margin, innerWidth-margin] にクランプする。既定の right:0 がビューポートを
+    // 外すときはアンカーを反転し、幅も制限する。ちょうど hidden 解除された要素が
+    // レイアウトされるよう rAF で計測する。
     // clampDropdown keeps an absolutely-positioned dropdown inside the
     // viewport on BOTH edges. The dropdown is anchored right:0 to the avatar;
     // on a narrow phone the avatar can sit near the LEFT edge (the header
@@ -200,6 +225,8 @@
     // default right:0 position would leave the viewport, and cap the width.
     // Measured in rAF so the just-un-hidden element has been laid out.
     function clampDropdown(dropdown) {
+        // まず既定のアンカーへ戻し、繰り返し開いてもオフセットが蓄積しない
+        // ようにする。
         // Reset to the default anchor first so repeated opens do not
         // accumulate offsets.
         dropdown.style.left = '';
@@ -208,6 +235,11 @@
         requestAnimationFrame(function () {
             const margin = 8;
             const vw = window.innerWidth || document.documentElement.clientWidth;
+            // ドロップダウンは .account-menu（最も近い位置指定祖先 = アバターボタン）
+            // を基準に配置される。左/右の反転は（アバターが狭い画面の中央にあると
+            // どちらの端も広いメニューに収まらず）失敗するため、代わりにメニュー幅を
+            // ビューポートに収まるよう計算し、アバターからの明示的な左オフセットで
+            // 配置して常に [margin, vw-margin] 内に着地させる。
             // The dropdown is positioned relative to .account-menu (the
             // nearest positioned ancestor = the avatar button). Rather than
             // flipping left/right (which fails when the avatar sits in the
@@ -219,6 +251,8 @@
                 dropdown.parentElement.querySelector('.account-avatar');
             if (!anchor) return;
             const b = anchor.getBoundingClientRect();
+            // 希望幅: 自然な min-width（260px）を優先しつつ、ビューポートより
+            // 広くしない。
             // Desired width: prefer the natural min-width (260px) but never
             // wider than the viewport.
             let width = 260;
@@ -227,12 +261,15 @@
             if (width > maxW) width = maxW;
             dropdown.style.width = width + 'px';
             dropdown.style.maxWidth = maxW + 'px';
+            // 既定ではアバターの下に右揃えし、左端をビューポート内へクランプする。
+            // それで右端が外れるなら、ボックス全体が画面に残るよう戻す。
             // Right-align under the avatar by default, then clamp the LEFT
             // edge into the viewport; if that pushes the right edge out,
             // shift back so the whole box stays on screen.
             let desiredLeft = b.right - width;
             if (desiredLeft < margin) desiredLeft = margin;
             if (desiredLeft + width > vw - margin) desiredLeft = vw - margin - width;
+            // 位置指定祖先を基準のオフセットへ変換する。
             // Convert to an offset relative to the positioned ancestor.
             const offset = desiredLeft - b.left;
             dropdown.style.right = 'auto';
@@ -240,6 +277,7 @@
         });
     }
 
+    // menuItem はボタンを裏に持つドロップダウン行を作る。
     // menuItem builds a dropdown row backed by a button.
     function menuItem(label, onClick) {
         const b = document.createElement('button');
@@ -250,6 +288,7 @@
         return b;
     }
 
+    // renderAvatar は要素をユーザーのアバター画像またはイニシャルで埋める。
     // renderAvatar fills an element with the user's avatar image or initials.
     function renderAvatar(el, me) {
         while (el.firstChild) el.removeChild(el.firstChild);
@@ -271,6 +310,7 @@
         return (name || '?').slice(0, 1).toUpperCase();
     }
 
+    // uploadAvatar は選択された画像を送り、アバターを更新する。
     // uploadAvatar sends the selected image and refreshes the avatar.
     function uploadAvatar(file, wrap, me) {
         const fd = new FormData();
@@ -285,6 +325,7 @@
             .catch(function () { alert(t('account.err_network', 'Network error')); });
     }
 
+    // changeOwnPassword は現在と新しいパスワードを尋ねる。
     // changeOwnPassword prompts for the current and new password.
     function changeOwnPassword() {
         const current = prompt(t('account.prompt_current_pw', 'Current password'));
@@ -305,12 +346,14 @@
             .catch(function () { alert(t('account.err_network', 'Network error')); });
     }
 
+    // closeAllAccountMenus は開いている全ドロップダウンを隠す。
     // closeAllAccountMenus hides every open dropdown.
     function closeAllAccountMenus() {
         document.querySelectorAll('.account-dropdown').forEach(function (d) { d.hidden = true; });
         document.querySelectorAll('.account-avatar[aria-expanded]').forEach(function (b) { b.setAttribute('aria-expanded', 'false'); });
     }
 
+    // 外側クリックまたは Escape で閉じる。
     // Close on outside click or Escape.
     document.addEventListener('click', function () { closeAllAccountMenus(); });
     document.addEventListener('keydown', function (e) {
