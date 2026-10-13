@@ -554,6 +554,18 @@ input, select, textarea {
     -webkit-backdrop-filter: none;
     box-shadow: none;
     overflow: hidden;
+    /* 並べ替えのつまみ(.drag-handle)は position:absolute なので、基準を
+       このセクション自身にする。position:relative が無いと基準が body に
+       なり、つまみがページ右上（ヘッダーの上）に飛んで描画される。 */
+    position: relative;
+}
+
+/* つまみはヘッダー領域に被らないよう、セクション内の右上に収める。 */
+.backup-section > .drag-handle,
+.history-section > .drag-handle,
+.alerts-section > .drag-handle {
+    top: 14px;
+    right: 14px;
 }
 .backup-header {
     padding: 12px 16px;
