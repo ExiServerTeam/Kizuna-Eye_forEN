@@ -121,6 +121,37 @@ func TestForwardWriterNonBlocking(t *testing.T) {
 	}
 }
 
+// TestForwardWriterConcurrentCloseWrite: Write racing with Close must not
+// panic (send on a closed channel). The closed-flag-only version had a TOCTOU
+// window between the check and the send; run with -race and many iterations to
+// exercise the interleaving.
+func TestForwardWriterConcurrentCloseWrite(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+
+	for i := 0; i < 200; i++ {
+		fw, err := newForwardWriter(srv.URL, 50*time.Millisecond)
+		if err != nil {
+			t.Fatalf("newForwardWriter: %v", err)
+		}
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				_, _ = fw.Write([]byte("line\n"))
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			_ = fw.Close()
+		}()
+		// A panic in either goroutine crashes the test process; the race
+		// detector also flags the unsynchronized close/send.
+		wg.Wait()
+	}
+}
+
 // TestForwardWriterWriteAfterClose: Write after Close must not panic
 // (send on a closed channel).
 func TestForwardWriterWriteAfterClose(t *testing.T) {

@@ -39,6 +39,15 @@ type forwardWriter struct {
 	closeOnce sync.Once
 	closed    atomic.Bool
 	dropped   atomic.Uint64
+
+	// sendMu closes the race between Write and Close. The closed flag alone
+	// is a TOCTOU check: a Write could pass closed.Load()==false, then Close
+	// could run (set closed + close(ch)), then the Write would send on a
+	// closed channel and panic. Write holds the read lock for the whole
+	// check-and-send, and Close holds the write lock while closing, so no
+	// send can interleave with the close. Write never blocks under the lock
+	// (select with default), so Close cannot be starved.
+	sendMu sync.RWMutex
 }
 
 // newForwardWriter validates rawURL and starts the background sender. An
@@ -109,9 +118,11 @@ func (fw *forwardWriter) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 	// Refuse writes after Close: the sender channel is closed then, and a send
-	// would panic. The logger already serializes Write/Close under its own
-	// mutex, but this keeps the writer safe on its own (a future caller could
-	// Close and keep logging).
+	// would panic. Hold the read lock across both the closed check and the
+	// send so Close (which takes the write lock before closing) cannot
+	// interleave between them (send-on-closed-channel).
+	fw.sendMu.RLock()
+	defer fw.sendMu.RUnlock()
 	if fw.closed.Load() {
 		return len(p), nil
 	}
@@ -132,8 +143,13 @@ func (fw *forwardWriter) Dropped() uint64 { return fw.dropped.Load() }
 // Close stops the sender and waits (bounded) for the in-flight line.
 func (fw *forwardWriter) Close() error {
 	fw.closeOnce.Do(func() {
+		// Take the write lock so no Write is mid-send while we close the
+		// channel (see sendMu). Set closed before closing ch so a Write that
+		// acquires the read lock after this returns sees closed==true.
+		fw.sendMu.Lock()
 		fw.closed.Store(true)
 		close(fw.ch)
+		fw.sendMu.Unlock()
 	})
 	select {
 	case <-fw.done:
