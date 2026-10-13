@@ -92,7 +92,6 @@ dashboard は `kizuna-dashboard.service` で動く。
 
 agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./start.sh` を使う
 （systemd 側は `systemctl disable --now kizuna-eye-agent` で止めておくこと）。
-移行の設計と適用手順は `docs/H1_PLAN.md` を参照。
 
 移行後は agent がアラート履歴 `logs/alert_history.jsonl` を整合性検証（V2-B）で読む
 ため、ファイルにはグループ `kizuna-eye` の読み取り（0640）を与える。ダッシュボードは
