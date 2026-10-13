@@ -128,8 +128,13 @@ func (h *Handler) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "保存に失敗しました")
 		return
 	}
-	// Remove the previous avatar file, if any.
-	if old != "" && old != name {
+	// Remove the previous avatar file, if any. Only a bare file name
+	// (no path separators) is accepted: a corrupted or tampered users.json
+	// could hold a value such as "../../etc/passwd", and joining that with
+	// the avatar directory would make the remove escape it. The upload
+	// path always writes a sanitized "<user>-<hex>.<ext>" name, so a
+	// legitimate value always passes.
+	if old != "" && old != name && safeAvatarBaseName(old) {
 		_ = os.Remove(filepath.Join(dir, old))
 	}
 
@@ -151,7 +156,7 @@ func (h *Handler) handleAvatarDelete(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "削除に失敗しました")
 		return
 	}
-	if old != "" {
+	if old != "" && safeAvatarBaseName(old) {
 		if dir, err := h.avatarDir(); err == nil {
 			_ = os.Remove(filepath.Join(dir, old))
 		}
@@ -176,12 +181,45 @@ func (h *Handler) handleAvatarServe(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	path := filepath.Join(dir, filepath.Base(name))
-	if _, err := os.Stat(path); err != nil {
+	// Resolve symlinks and re-check containment, the same way logs.go and
+	// plugins.go serve files. http.ServeFile follows symlinks, so a symlink
+	// planted in a writable avatar directory (evil.png -> /etc/passwd) would
+	// leak the target's contents to any client, and this endpoint is
+	// intentionally public so <img> tags can load it. The directory is
+	// created 0700 today, but the check belongs on the read path regardless
+	// of how it was configured. Reject non-regular files as well, so devices
+	// and directories cannot be served.
+	realDir, derr := filepath.EvalSymlinks(dir)
+	if derr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	realPath, perr := filepath.EvalSymlinks(filepath.Join(realDir, filepath.Base(name)))
+	if perr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if realPath != realDir && !strings.HasPrefix(realPath, realDir+string(os.PathSeparator)) {
+		http.NotFound(w, r)
+		return
+	}
+	info, ierr := os.Stat(realPath)
+	if ierr != nil || !info.Mode().IsRegular() {
 		http.NotFound(w, r)
 		return
 	}
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, max-age=300")
-	http.ServeFile(w, r, path)
+	http.ServeFile(w, r, realPath)
+}
+
+// safeAvatarBaseName reports whether filename is a bare base name that is
+// safe to filepath.Join with the avatar directory: non-empty, no separators,
+// not "."/"..". An attacker who can tamper users.json (or a corrupted file)
+// must not be able to make the delete path remove an arbitrary file.
+func safeAvatarBaseName(filename string) bool {
+	if filename == "" || filename == "." || filename == ".." {
+		return false
+	}
+	return filename == filepath.Base(filename) && !strings.ContainsAny(filename, "/\\")
 }

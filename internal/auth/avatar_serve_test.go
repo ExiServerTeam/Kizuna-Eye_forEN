@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,35 @@ func TestHandleAvatarServeAllowsDottedName(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("dotted avatar name: status = %d, want 200", rec.Code)
+	}
+}
+
+// Regression: a symlink planted in the avatar directory must not be served
+// (it would leak the target file through this public endpoint). The same
+// EvalSymlinks + containment check logs.go / plugins.go apply is required
+// here too.
+func TestHandleAvatarServeRejectsSymlink(t *testing.T) {
+	dir := t.TempDir()
+	secret := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(secret, []byte("TOP SECRET"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "evil.png")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	h := &Handler{avatarsDir: dir}
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/avatar/evil.png", nil)
+	req.SetPathValue("name", "evil.png")
+	rec := httptest.NewRecorder()
+	h.handleAvatarServe(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("symlink avatar: status = %d, want 404", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "TOP SECRET") {
+		t.Fatal("symlink target leaked through avatar endpoint")
 	}
 }
 
