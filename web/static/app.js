@@ -185,14 +185,8 @@
         return Math.min(Math.max(Number(value) || 0, min), max);
     }
 
-    function escapeHtml(value) {
-        return String(value)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
-    }
+    // escapeHtml / escapeAttr は escape.js（共有ユーティリティ）で定義される。
+    // プラグイン・ログ由来の文字列を innerHTML へ入れる前に必ず通すこと。
 
     // ============================================================
     // フォーマット

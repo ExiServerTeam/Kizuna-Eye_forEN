@@ -1075,15 +1075,8 @@
     // ============================================================
     // ユーティリティ
     // ============================================================
-    function escapeHtml(s) {
-        return String(s ?? '')
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
-    function escapeAttr(s) { return escapeHtml(s); }
+    // escapeHtml / escapeAttr は escape.js（共有ユーティリティ）で定義される。
+    // プラグイン由来の文字列（meta.fields / options / hint など）は必ず通すこと。
 
     // fieldElementId builds a DOM id from a plugin-provided config key.
     // Only [A-Za-z0-9_-] is kept so the value is safe inside id="..." and
