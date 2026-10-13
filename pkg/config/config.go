@@ -40,6 +40,11 @@ type AgentConfig struct {
 	// a newer version is found, safe_update.sh is executed (which backs up the
 	// binaries, rebuilds host + plugins, and rolls back on failure).
 	AutoUpdate AutoUpdateConfig `json:"auto_update"`
+
+	// ConfigVersion is the config schema version. It is stamped by the
+	// installer for new configs. 0 (absent) keeps the legacy behavior so an
+	// upgrade never changes an existing installation. See CurrentConfigVersion.
+	ConfigVersion int `json:"config_version,omitempty"`
 }
 
 // AutoUpdateConfig configures the automatic update check.
@@ -364,6 +369,13 @@ type DashboardConfig struct {
 	// resolved against the config directory. Empty disables signing
 	// (backward compatible).
 	AlertHistoryKeyPath string `json:"alert_history_key_path"`
+
+	// ConfigVersion is the config schema version. New configs are stamped by
+	// the installer; the loader uses it to decide whether secure defaults
+	// apply to keys that are absent. 0 (absent) keeps the legacy defaults so
+	// an upgrade never changes an existing installation. See
+	// CurrentConfigVersion.
+	ConfigVersion int `json:"config_version,omitempty"`
 }
 
 // IsUploadEnabled reports whether plugin uploads are enabled.
@@ -492,9 +504,26 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 	return cfg, nil
 }
 
-// LoadDashboardConfig reads the dashboard config file.
-func LoadDashboardConfig(path string) (*DashboardConfig, error) {
-	cfg := &DashboardConfig{
+// CurrentConfigVersion is the config schema version that opts into the secure
+// defaults. A config without config_version (or with an older value) keeps the
+// legacy defaults so upgrading never changes an existing installation; a
+// brand-new config (no file) and configs that declare this version get the
+// secure defaults for keys they leave unset.
+const CurrentConfigVersion = 2
+
+// defaultDashboardConfig returns the built-in defaults. When secure is true,
+// the hardened defaults are used for keys a config leaves unset
+// (public_viewer=false: the read-only viewer endpoints stay behind login).
+// secure is false for legacy configs so their absent keys keep the historical
+// behavior. listen_addr is intentionally left as ":8080" in both cases: this
+// is a LAN monitoring tool and binding to all interfaces is its normal,
+// documented deployment; operators who want loopback-only set it explicitly.
+func defaultDashboardConfig(secure bool) *DashboardConfig {
+	publicViewer := true
+	if secure {
+		publicViewer = false
+	}
+	return &DashboardConfig{
 		ListenAddr: ":8080",
 		LogFile:    "",
 		StaticDir:  "./web/static",
@@ -513,20 +542,43 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 			CPUTempCriticalC:    85,
 			NotifyRecovery:      true,
 		},
-		// 公開ビューア（ゲストログイン）は標準で有効。
-		// 設定エディタの「認証」からオフにできる。
-		Auth: AuthConfig{PublicViewer: boolPtr(true)},
+		Auth: AuthConfig{PublicViewer: boolPtr(publicViewer)},
 	}
+}
 
+// LoadDashboardConfig reads the dashboard config file.
+func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// A brand-new install (no config) gets the secure defaults, and is
+			// stamped with the current version so a later hand-edit that omits
+			// a key still resolves to the secure value.
+			cfg := defaultDashboardConfig(true)
+			cfg.ConfigVersion = CurrentConfigVersion
 			fmt.Printf("[CONFIG] 設定ファイル %s が見つからないためデフォルト設定で起動します\n", path)
 			return cfg, nil
 		}
 		return nil, fmt.Errorf("設定ファイル読み取りエラー: %w", err)
 	}
 
+	// Peek at config_version before applying defaults: a legacy config (no
+	// version) must keep its historical defaults, while a config that declares
+	// CurrentConfigVersion opts into the secure defaults for absent keys. The
+	// raw map is used because a value pre-filled into the struct cannot be told
+	// apart from an explicitly provided one after Unmarshal.
+	secure := false
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(data, &raw) == nil {
+		if v, ok := raw["config_version"]; ok {
+			var ver int
+			if json.Unmarshal(v, &ver) == nil && ver >= CurrentConfigVersion {
+				secure = true
+			}
+		}
+	}
+
+	cfg := defaultDashboardConfig(secure)
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("JSONパースエラー: %w", err)
 	}

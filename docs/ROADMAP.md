@@ -9,10 +9,10 @@
 
 | 層 | 現状評価 | 実装済み | 未実装 / 要強化 |
 |---|---|---|---|
-| 1. ネットワーク | B | リバースプロキシ前提、agent_token、CSWSH/CSRF 対策、レート制限 | `listen_addr` 既定が全IF、`secure_cookies` 既定 false → セキュアデフォルト化 |
-| 2. 認証 | C | ロール/ bcrypt / セッション / 最終管理者保護 | `auth.enabled` 既定 false、`public_viewer` 既定 true、`agent_token` 既定 空 → セキュアデフォルト化 |
-| 3. プラグイン（設計書第5章の将来構想） | B- | 別プロセス検査、Ed25519 署名検証（任意）、bwrap 分離（任意） | `require_signature` 既定 false → 既定 true 化、共有型の最小化 |
-| 4. ログ | B+ | HMAC チェーン＋定期検証、alert_history 整合性、inode 追跡、FIM | リモート転送、alert_history への HMAC 署名 |
+| 1. ネットワーク | B | リバースプロキシ前提、agent_token、CSWSH/CSRF 対策、レート制限 | `listen_addr` 既定が全IF（LAN 監視ツールのため意図的）、`secure_cookies` 既定 false（HTTP 直アクセス対応、HTTPS 運用時のみ true） |
+| 2. 認証 | B | ロール/ bcrypt / セッション / 最終管理者保護。新規インストール（`config_version` 付き）は `public_viewer` 既定 false（secure default）、`auth.enabled` は install.sh が true、`agent_token` は install.sh がランダム生成 | `secure_cookies` の既定 true 化は HTTP 運用を壊すため対象外（HTTPS 運用時のみ設定） |
+| 3. プラグイン（設計書第5章の将来構想） | B | 別プロセス検査、Ed25519 署名検証、bwrap 分離。配布 example / install.sh は `require_signature=true`・`inspect_isolation=bwrap` を既定にする（コードのゼロ値ではなく実配備で fail-closed） | 共有型の最小化、コード既定での require_signature=true 化（鍵未設定時に起動不能になるため example 経由に留める） |
+| 4. ログ | A- | HMAC チェーン＋定期検証、alert_history 整合性＋行単位 HMAC 署名（`alert_history_key_path`）、inode 追跡、FIM | リモート転送（ローカル保存のみ） |
 | 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、dashboard unit にも部分適用（ワンクリック対処と両立する範囲） | ワンクリック対処の特権ヘルパーサービス化（dashboard を strict 化するため）、HMAC 鍵ローテーション自動化 |
 | 6. 運用 | C+ | CONTRIBUTING 受入範囲、CI(go test/-race) | SECURITY.md 拡充(済)、govulncheck CI(済)、ROADMAP(本書)、脆弱性開示ポリシー |
 
@@ -30,7 +30,7 @@
 - **H-1 agent 専用ユーザー化（権限分離）完了**（2026-10-05）。agent は専用ユーザー `kizuna-eye`、unit は `kizuna-eye-agent.service`、dashboard は `kizuna-dashboard.service`。`install.sh` だけで systemd 登録まで完結。`uninstall.sh` で撤去可能。
 
 ### 未実装 / 要強化（優先度順）
-- P1: セキュアデフォルト化（層1/2/3）、ログのリモート転送、alert_history の HMAC 署名。
+- P1: ~~セキュアデフォルト化~~（`config_version` 導入済み。新規は `public_viewer=false`、既存は現状維持）、ログのリモート転送、~~alert_history の HMAC 署名~~（実装済み）。
 - P2: 共有型の最小化、HMAC 鍵の自動ローテーション。
 - P3: E2E 自動化、Docker 再現手順。
 - 完了: 作業記録のサニタイズ（内部記録を資料フォルダへ退避して repo から削除）。

@@ -1,4 +1,5 @@
 {
+    "config_version": 2,
     "listen_addr": ":8080",
     "language": "en",
     "log_file": "dashboard.log",
@@ -20,7 +21,7 @@
         "session_file": "sessions.json",
         "session_ip_bind": false,
         "agent_token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
-        "public_viewer": true
+        "public_viewer": false
     },
     "notifications": {
         "enabled": true,
