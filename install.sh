@@ -455,6 +455,18 @@ if [ "$DO_BUILD" -eq 1 ]; then
     build_one agent_linux     ./cmd/agent
     # A-3: plugin-sign は .so の分離署名（Ed25519）を作る運用ツール。
     build_one plugin-sign     ./cmd/plugin-sign
+
+    # ビルドは root (sudo) で走るため、生成物は root 所有になる。
+    # Section 4 の chown はビルド前なので効かない。ここで実行ユーザーへ
+    # 戻さないと、User=<運用ユーザー> の dashboard unit が 203/EXEC で
+    # 起動できなくなる（実機で発生）。
+    # build runs as root (sudo), so the outputs are root-owned; the chown in
+    # Section 4 happens BEFORE this, so a post-build chown is required or the
+    # dashboard unit (User=operator) fails with 203/EXEC (seen on a real host).
+    if [ "$(id -u)" -eq 0 ]; then
+        chown "$TARGET_UID:$TARGET_GID" "$BIN_DIR"/plugin-inspect "$BIN_DIR"/dashboard_linux "$BIN_DIR"/agent_linux "$BIN_DIR"/plugin-sign 2>/dev/null || true
+        chmod 0755 "$BIN_DIR"/plugin-inspect "$BIN_DIR"/dashboard_linux "$BIN_DIR"/agent_linux "$BIN_DIR"/plugin-sign 2>/dev/null || true
+    fi
 fi
 
 # ---- 6. プラグイン ----

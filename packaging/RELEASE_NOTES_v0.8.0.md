@@ -2,51 +2,75 @@
 
 Released: 2026-10-13
 
-## Highlights / ハイライト
+## Highlights
 
-- **Plugin ABI safety**: host and every plugin must be built under one combined go.work with -trimpath, so a host-only rebuild cannot break plugin.Open with "different version of package". build-all.sh makes this the default path.
-- **Security hardening**: avatar serving no longer follows symlinks (CWE-59), the privileged action helper resolves the sudo binary by absolute path, and the plugin inspector runs under bubblewrap by default (fail-closed).
-- **Secure defaults for new installs**: install.sh and the .deb enable authentication (auth.enabled: true, public_viewer: false) on a brand-new config. Existing installs are left unchanged.
-- **One-command install**: apt install kizuna-eye performs the whole setup (user, config, systemd, action socket).
-- **Bilingual comments**: every comment is now plain Japanese + English, enforced by scripts/check_comments.cjs in CI.
+- **Plugin ABI safety**: the host and every plugin must be built under one combined go.work with -trimpath. A host-only rebuild can no longer break plugin.Open with "plugin was built with a different version of package". build-all.sh makes this the default path, and update.sh / scripts/build-plugin.sh follow the same rule.
+
+- **Security hardening**: avatar serving refuses symlinks (CWE-59); the privileged action helper resolves the sudo binary by absolute path; plugin inspection runs under bubblewrap by default (fail-closed).
+
+- **Secure defaults for new installs**: install.sh and the .deb (apt install) enable authentication on a brand-new config (auth.enabled: true, public_viewer: false) and generate a random agent_token. Existing installs are left unchanged (config_version keeps legacy behavior).
+
+- **One-command install**: sudo apt install kizuna-eye performs the entire setup — system user, config generation, systemd units, and the privileged action socket.
+
+- **Bilingual comments**: every comment is now plain Japanese followed by English, across Go, shell, JS/CSS, and systemd units. scripts/check_comments.cjs enforces the convention in CI.
+
+## Added
+
+- Security posture API and dashboard "Security status" section (pkg/insight, GET /api/insight): risk index, source-IP trends, and a config-hardening check. Operator+ only.
+- Weekly security report (pkg/report + dashboard scheduler): Markdown briefing from the last 7 days of alert history, sent to a chosen channel (default: email). Opt-in.
+- Config snapshots / time travel (pkg/configsnap): GFS-style generations with list and restore endpoints.
+- build-all.sh for one-shot host + all-plugin rebuilds.
+- scripts/check_comments.cjs bilingual comment checker.
+- packaging/release.sh: one command from source to a verified APT repository.
+
+## Changed
+
+- Plugin ABI build model unified to a single combined go.work (host + every plugin) with -trimpath always on.
+- Plugins are no longer bundled; install.sh / update.sh treat them as opt-in via KIZUNA_SEC_PLUGIN_DIR / KIZUNA_LITE_PLUGIN_DIR.
+- Module card iframes carry the current theme (&theme=dark|light).
+- Notification placeholder webhooks fail validation on save and are skipped with a warning on load.
+- Repository name references unified to Kizuna-Eye.
+
+## Removed
+
+- Old installer leftovers (install.sh.bak-*) and stale documentation (v0.7.0 release notes, old work records).
+
+## Fixed
+
+- Dashboard unit confinement that made one-click remediation unusable (NoNewPrivileges / ProtectSystem=strict / PrivateTmp are no longer applied to the dashboard only).
+- install.sh granted the one-click helper sudoers to the wrong user on the source-install path.
+- Plugin Name() / Interval() / RequeueSecurityEvents panics could crash the whole agent process.
+- Log forwarding (pkg/logger/forward.go) Close/Write race (send-on-closed-channel).
+- Backup plugin running state could get stuck permanently after a panic (6-hour stale timeout added).
+
+## Security
+
+- Avatar serving symlink fix (CWE-59).
+- Privileged action helper sudo absolute-path resolution.
+- Webhook placeholder / fake-Discord detection (12+ repeated characters).
+- X-Content-Type-Options: nosniff on the log SSE stream.
+- Go toolchain pinned to go1.27.2 (fixes 10 reachable net/http HTTP/2 vulnerabilities in go1.27.1).
+- Secure defaults via config_version for new installs.
+- Admin-only gating for code-execution-boundary module fields and alert-history clearing.
+
+## Breaking changes
+
+- None. config_version keeps existing configuration working as-is; new installs get the secure defaults.
+
+## Supported
+
+- Ubuntu Server 20.04 LTS and later / Debian 11 and later (amd64).
+
+## Install
+
+    # Register the signing key
+    curl -fsSL https://exiserverteam.github.io/Kizuna-Eye/kizuna.gpg | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
+    # Add the repository
+    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye stable main" | sudo tee /etc/apt/sources.list.d/kizuna.list
+    sudo apt update && sudo apt install kizuna-eye
+
+First access: http://<host>:8080 -> create an admin at /setup.html.
 
 ---
-
-## 日本語
-
-### 主な変更
-
-- **プラグイン ABI の安全化**: ホストと全プラグインを 1 つの combined go.work の下、-trimpath 付きでビルド。ホストだけ再ビルドしても plugin.Open が壊れない。
-- **セキュリティ強化**: アバター配信の symlink 追従を廃止（CWE-59）、特権ヘルパーの sudo を絶対パス解決、プラグイン検査を既定で bubblewrap 分離。
-- **新規インストールのセキュア既定**: install.sh / .deb は新規設定で認証を有効化。既存環境は変更しない。
-- **apt 一発導入**: apt install kizuna-eye だけでセットアップ完結。
-- **コメントの日英バイリンガル化**: コード全体を「日本語（常体）→英語」に統一、CI で回帰検出。
-
-### 破壊的変更
-
-- なし（config_version により既存設定はそのまま動作）。
-
-### 対応環境
-
-- Ubuntu Server 20.04 LTS 以降 / Debian 11 以降（amd64）。
-
----
-
-## English
-
-### Highlights
-
-- **Plugin ABI safety**: build the host and every plugin under one combined go.work with -trimpath.
-- **Security hardening**: avatar serving refuses symlinks (CWE-59); privileged helper resolves sudo by absolute path; plugin inspection runs under bubblewrap by default.
-- **Secure defaults for new installs**; existing installs are untouched.
-- **One-command install**; **bilingual comments** enforced in CI.
-
-### Breaking changes
-
-- None (config_version keeps existing configs working).
-
-### Supported
-
-- Ubuntu Server 20.04 LTS+ / Debian 11+ (amd64).
 
 See CHANGELOG.md for the full list of changes.
