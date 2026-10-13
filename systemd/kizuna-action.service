@@ -6,6 +6,8 @@ After=kizuna-action.socket
 [Service]
 Type=simple
 ExecStart=/usr/lib/kizuna-eye/kizuna-action-server
+# ヘルパーは他ユーザーのプロセス kill、cron スプールの編集、nftables の管理に
+# root を必要とする。それ以外は下で全て封じる。
 # The helper needs root to kill other users' processes, edit the cron spool,
 # and manage nftables. Everything else is locked down below.
 User=root
@@ -13,6 +15,8 @@ NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
 PrivateTmp=no
+# ヘルパーが書き込むのは cron スプール（delete_cron）と監視対象ディレクトリ
+# （restore_file）のみ。nft/kill は2つの capability を必要とする。
 # The helper writes only to the cron spool (delete_cron) and the monitored
 # dirs (restore_file); nft/kill need the two capabilities.
 ReadWritePaths=/var/spool/cron/crontabs /tmp /var/tmp /dev/shm /run

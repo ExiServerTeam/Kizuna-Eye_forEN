@@ -3,11 +3,13 @@ Description=Kizuna-Eye privileged action socket
 Documentation=man:kizuna-action(8)
 
 [Socket]
+# ユーザー kizuna-eye として動く dashboard と共有する Unix ソケット。
 # A Unix socket shared with the dashboard, which runs as user kizuna-eye.
 ListenStream=/run/kizuna-eye/action.sock
 SocketMode=0660
 SocketUser=root
 SocketGroup=kizuna-eye
+# 接続ごとに新プロセスを起動しない。サーバーはループ内で accept する。
 # Do not start a new process per connection; the server accepts in a loop.
 Accept=no
 

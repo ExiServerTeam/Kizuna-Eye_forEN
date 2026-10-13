@@ -35,6 +35,7 @@ const CONF = {
   go: { skip: ['.git', 'vendor', 'node_modules'], file: (n) => n.endsWith('.go') },
   js: { skip: ['.git', 'node_modules', 'vendor'], file: (n) => n.endsWith('.js') || n.endsWith('.css') },
   sh: { skip: ['.git', '.gnupg-apt', 'apt-repo', 'node_modules', 'vendor', 'tmp', 'dist'], file: (n) => n.endsWith('.sh') },
+  systemd: { skip: ['.git', 'node_modules', 'vendor'], file: (n) => /.(service|socket|timer|conf)$/.test(n) },
 };
 const cfg = CONF[lang];
 if (!cfg) { console.error('unknown --lang ' + lang + ' (go|js|sh)'); process.exit(2); }
@@ -61,6 +62,8 @@ function analyze(lines) {
         const b = t.slice(1).trimStart();
         ex[i] = b.startsWith('!') || b.startsWith('shellcheck');
       }
+    } else if (lang === 'systemd') {
+      if (t.startsWith('#')) { isC[i] = true; const b = t.slice(1).trimStart(); ex[i] = b === '' || b.startsWith('!'); }
     } else {
       if (inBlock) {
         isC[i] = true;
@@ -76,7 +79,7 @@ function analyze(lines) {
   return { isC, ex };
 }
 
-const search = roots.length ? roots : (lang === 'js' ? ['web/static'] : lang === 'sh' ? ['.'] : ['cmd', 'internal', 'pkg']);
+const search = roots.length ? roots : (lang === 'js' ? ['web/static'] : lang === 'sh' ? ['.'] : lang === 'systemd' ? ['systemd'] : ['cmd', 'internal', 'pkg']);
 
 function walk(dir, out) {
   let ents;

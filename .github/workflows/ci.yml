@@ -88,6 +88,7 @@ jobs:
           node scripts/check_comments.cjs --strict --no-tests cmd internal pkg
           node scripts/check_comments.cjs --strict --lang js web/static
           node scripts/check_comments.cjs --strict --lang sh .
+          node scripts/check_comments.cjs --strict --lang systemd systemd
 
       - name: Check that no secrets are committed
         run: bash scripts/check_secrets.sh
