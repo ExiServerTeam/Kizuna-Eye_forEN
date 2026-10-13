@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>設定エディタ - Kizuna-Eye</title>
+    <link rel="stylesheet" href="style.css?v=0.7.1">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="config-editor.css?v=0.7.1">
+</head>
+<body>
+    <div class="app">
+        <header class="header">
+            <div class="header-left">
+                <h1 class="logo">Kizuna-Eye</h1>
+                <nav class="nav-tabs">
+                    <a href="/" class="nav-tab" data-i18n="nav.dashboard">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab" data-role-min="operator" data-i18n="nav.modules">モジュール管理</a>
+                    <a href="/config-editor.html" class="nav-tab active" data-role-min="admin" data-i18n="nav.config">設定エディタ</a>
+                    <a href="/logs.html" class="nav-tab" data-i18n="nav.logs">ログ</a>
+                </nav>
+                <span class="status-badge" id="connectionStatus">接続中</span>
+            </div>
+            <div class="header-right">
+                <span class="version-badge">v0.6.1</span>
+                <button id="langToggle" class="theme-toggle" aria-label="言語切り替え" data-i18n-aria-label="lang.toggle">
+                    <span class="theme-icon" id="langIcon">🌐</span>
+                    <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
+                </button>
+                <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                    <span class="theme-icon" id="themeIcon">🌙</span>
+                    <span class="theme-track"><span class="theme-thumb"></span></span>
+                    <span class="theme-label" id="themeLabel">ダーク</span>
+                </button>
+            </div>
+        </header>
+
+        <main class="config-main">
+            <div class="config-container">
+                <div class="config-sidebar">
+                    <h2 class="sidebar-title" data-i18n="config.sidebar_title">設定ファイル</h2>
+                    <div class="config-file-list">
+                        <button class="config-file-btn active" data-type="agent">
+                            <span class="file-name" data-i18n="config.file_agent">エージェントの設定</span>
+                        </button>
+                        <button class="config-file-btn" data-type="dashboard">
+                            <span class="file-name" data-i18n="config.file_dashboard">ダッシュボードの設定</span>
+                        </button>
+                        <button class="config-file-btn" data-type="alerts">
+                            <span class="file-name" data-i18n="config.alerts_title">アラートの設定</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="config-editor-area">
+                    <div class="editor-header">
+                        <h2 class="editor-title" id="editorTitle" data-i18n="config.file_agent">エージェントの設定</h2>
+                        <div class="editor-mode" id="editorMode">
+                            <button class="mode-btn active" id="modeGuiBtn" data-i18n="config.mode_gui">GUI</button>
+                            <button class="mode-btn" id="modeJsonBtn" data-i18n="config.mode_json">JSON</button>
+                        </div>
+                        <div class="editor-actions" id="editorActions">
+                            <button class="btn-secondary" id="templateBtn" data-i18n="config.insert_template">ひな形を挿入</button>
+                            <button class="btn-secondary" id="formatBtn" data-i18n="config.format">フォーマット</button>
+                            <button class="btn-secondary" id="validateBtn" data-i18n="config.validate">検証</button>
+                            <button class="btn-primary" id="saveBtn" data-i18n="config.save">保存</button>
+                        </div>
+                    </div>
+
+                    <div class="editor-body">
+                        <textarea 
+                            id="configEditor" 
+                            class="config-textarea" 
+                            spellcheck="false"
+                            data-i18n-placeholder="config.placeholder"
+                            placeholder="設定ファイルのJSONをここに編集..."
+                        ></textarea>
+                    </div>
+
+                    <div class="editor-footer">
+                        <div class="validation-status" id="validationStatus">
+                            <span class="status-text" data-i18n="config.valid_json">有効なJSON</span>
+                        </div>
+                        <div class="editor-info">
+                            <span id="charCount">0 文字</span>
+                            <span id="lineCount">0 行</span>
+                        </div>
+                    </div>
+
+                    <!-- GUI 設定フォーム -->
+                    <div class="gui-panel" id="guiPanel" style="display:none;">
+                        <div class="gui-body" id="guiBody"></div>
+                        <div class="gui-footer">
+                            <button class="btn-primary" id="guiSaveBtn" data-i18n="config.save">保存</button>
+                        </div>
+                    </div>
+
+                    <!-- アラート閾値エディタ -->
+                    <div class="alert-config-panel" id="alertConfigPanel" style="display:none;">
+                        <div class="alert-config-body">
+                            <div class="config-field">
+                                <label for="acMemWarn" data-i18n="config.memory_warn">メモリ警告閾値 (%)</label>
+                                <input type="number" id="acMemWarn" min="0" max="100" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label for="acMemCrit" data-i18n="config.memory_critical">メモリ危険閾値 (%)</label>
+                                <input type="number" id="acMemCrit" min="0" max="100" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label for="acDiskWarn" data-i18n="config.disk_warn">ディスク空き警告閾値 (%)</label>
+                                <input type="number" id="acDiskWarn" min="0" max="100" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label for="acDiskCrit" data-i18n="config.disk_critical">ディスク空き危険閾値 (%)</label>
+                                <input type="number" id="acDiskCrit" min="0" max="100" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label for="acTempWarn" data-i18n="config.cpu_temp_warn">CPU温度警告閾値 (℃)</label>
+                                <input type="number" id="acTempWarn" min="0" max="150" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label for="acTempCrit" data-i18n="config.cpu_temp_critical">CPU温度危険閾値 (℃)</label>
+                                <input type="number" id="acTempCrit" min="0" max="150" step="1">
+                            </div>
+                            <div class="config-field">
+                                <label class="checkbox-wrap">
+                                    <input type="checkbox" id="acNotifyRecovery">
+                                    <span data-i18n="config.notify_recovery">復旧通知を送信する</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="alert-config-footer">
+                            <button class="btn-primary" id="alertConfigSaveBtn" data-i18n="config.save">保存</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <div class="toast-container" id="toastContainer"></div>
+    </div>
+
+    <script src="i18n.js?v=0.7.1"></script>
+    <script src="auth-guard.js?v=0.7.1"></script>
+    <script src="connection.js?v=0.7.1"></script>
+    <script src="config-editor.js?v=0.7.1"></script>
+</body>
+</html>

@@ -1,12 +1,12 @@
 // ============================================================
 // Kizuna-Eye Dashboard
-// Gauge Engine v0.6.0
+// Gauge Engine v0.6.1
 // ============================================================
 
 (function () {
     'use strict';
 
-    const VERSION = 'v0.6.0';
+    const VERSION = 'v0.6.1';
 
     const GAUGE = {
         radiusRatio: 0.40,
@@ -15,15 +15,18 @@
     };
 
     const ALERT = {
-        mem:      { warn: 80, critical: 90, label: 'メモリ使用率' },
-        diskFree: { warn: 20, critical: 10, label: 'ストレージ空き' },
-        cpuTemp:  { warn: 70, critical: 85, label: 'CPU温度' },
-        cpu:      { warn: 80, critical: 95, label: 'CPU使用率' },
+        mem:      { warn: 80, critical: 90 },
+        diskFree: { warn: 20, critical: 10 },
+        cpuTemp:  { warn: 70, critical: 85 },
+        cpu:      { warn: 80, critical: 95 },
         holdMs:   5000,
         cooldownMs: 5 * 60 * 1000
     };
 
     const $ = (selector) => document.querySelector(selector);
+
+    // i18n 翻訳ヘルパー（i18n.js 未読込時はキーをそのまま返す）
+    const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
     const elements = {
         connectionStatus: $('#connectionStatus'),
@@ -54,13 +57,21 @@
         networkIO: $('#networkIO'),
         backupSection: $('#backupSection'),
         backupStatusBadge: $('#backupStatusBadge'),
-        backupLastRun: $('#backupLastRun'),
-        backupStatus: $('#backupStatus'),
-        backupSize: $('#backupSize'),
-        backupNextRun: $('#backupNextRun'),
         backupToggle: $('#backupToggle'),
         backupBody: $('#backupBody'),
-        backupToggleBtn: document.querySelector('.backup-toggle-btn'),
+        moduleCount: $('#moduleCount'),
+        pluginList: $('#pluginList'),
+        alertsSection: $('#alertsSection'),
+        alertsToggle: $('#alertsToggle'),
+        alertsBody: $('#alertsBody'),
+        alertsCountBadge: $('#alertsCountBadge'),
+        alertsClearBtn: $('#alertsClearBtn'),
+        alertList: $('#alertList'),
+        historySection: $('#historySection'),
+        historyToggle: $('#historyToggle'),
+        historyBody: $('#historyBody'),
+        historyChart: $('#historyChart'),
+        historyRangeBadge: $('#historyRangeBadge'),
         themeToggle: $('#themeToggle'),
         themeIcon: $('#themeIcon'),
         themeLabel: $('#themeLabel'),
@@ -92,15 +103,18 @@
     // ============================================================
     // 接続状態
     // ============================================================
+    let currentConnectionState = 'connecting';
+
     function setConnectionState(state) {
+        currentConnectionState = state;
         if (!elements.connectionStatus) return;
         const el = elements.connectionStatus;
         el.classList.remove('connected', 'disconnected', 'connecting');
         el.classList.add(state);
         switch (state) {
-            case 'connected':    el.textContent = '接続中';   break;
-            case 'connecting':   el.textContent = '接続中...'; break;
-            case 'disconnected': el.textContent = '切断';     break;
+            case 'connected':    el.textContent = t('status.connected');   break;
+            case 'connecting':   el.textContent = t('status.connecting'); break;
+            case 'disconnected': el.textContent = t('status.disconnected'); break;
             default:             el.textContent = state;
         }
     }
@@ -120,7 +134,7 @@
             elements.themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
         }
         if (elements.themeLabel) {
-            elements.themeLabel.textContent = theme === 'dark' ? 'ダーク' : 'ライト';
+            elements.themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
         }
 
         if (window._lastData) updateDashboard(window._lastData);
@@ -131,8 +145,24 @@
         setTheme(current === 'dark' ? 'light' : 'dark');
     }
 
-    const savedTheme = localStorage.getItem('kizuna-theme') || 'dark';
-    setTheme(savedTheme);
+    // Phase 9-2: OS設定に基づく自動テーマ切り替え
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
+    const savedTheme = localStorage.getItem('kizuna-theme');
+
+    // localStorageに保存がある場合はそれを使用
+    // 保存がない場合はOS設定を使用
+    if (savedTheme) {
+        setTheme(savedTheme);
+    } else {
+        setTheme(prefersDark.matches ? 'dark' : 'light');
+    }
+
+    // OS設定の変更を監視（localStorageに手動設定がない場合のみ）
+    prefersDark.addEventListener('change', (e) => {
+        if (!localStorage.getItem('kizuna-theme')) {
+            setTheme(e.matches ? 'dark' : 'light');
+        }
+    });
 
     if (elements.themeToggle) {
         elements.themeToggle.addEventListener('click', toggleTheme);
@@ -211,10 +241,10 @@
         const minutes = Math.floor((seconds % 3600) / 60);
         const secs = Math.floor(seconds % 60);
 
-        if (days > 0) return { value: `${days}日${hours}時間`, unit: '' };
-        if (hours > 0) return { value: `${hours}時間${minutes}分`, unit: '' };
-        if (minutes > 0) return { value: `${minutes}分${secs}秒`, unit: '' };
-        return { value: `${secs}秒`, unit: '' };
+        if (days > 0) return { value: t('uptime.days_hours', days, hours), unit: '' };
+        if (hours > 0) return { value: t('uptime.hours_minutes', hours, minutes), unit: '' };
+        if (minutes > 0) return { value: t('uptime.minutes_seconds', minutes, secs), unit: '' };
+        return { value: t('uptime.seconds', secs), unit: '' };
     }
 
     function formatBootTime(uptimeSeconds) {
@@ -239,15 +269,11 @@
     // ============================================================
     // トースト通知
     // ============================================================
-    function showToast(message, type = 'info', icon = null) {
+    function showToast(message, type = 'info') {
         if (!elements.toastContainer) return;
-        const iconMap = {
-            error: '🚨', warning: '⚠️', info: 'ℹ️', success: '✅'
-        };
         const el = document.createElement('div');
         el.className = `dashboard-toast ${type}`;
         el.innerHTML = `
-            <span class="toast-icon">${icon || iconMap[type] || 'ℹ️'}</span>
             <span class="toast-message">${escapeHtml(message)}</span>
         `;
         elements.toastContainer.appendChild(el);
@@ -300,13 +326,31 @@
         if (level === 'critical') cardEl.classList.add('alert-critical');
     }
 
+    // Sync the frontend alert thresholds with the server-side settings
+    // so the card colors / toasts match the notification engine.
+    async function loadAlertThresholds() {
+        try {
+            const res = await fetch('/api/alert-config');
+            if (!res.ok) return;
+            const c = await res.json();
+            if (typeof c.memory_warn_pct === 'number') ALERT.mem.warn = c.memory_warn_pct;
+            if (typeof c.memory_critical_pct === 'number') ALERT.mem.critical = c.memory_critical_pct;
+            if (typeof c.disk_free_warn_pct === 'number') ALERT.diskFree.warn = c.disk_free_warn_pct;
+            if (typeof c.disk_free_critical_pct === 'number') ALERT.diskFree.critical = c.disk_free_critical_pct;
+            if (typeof c.cpu_temp_warn_c === 'number') ALERT.cpuTemp.warn = c.cpu_temp_warn_c;
+            if (typeof c.cpu_temp_critical_c === 'number') ALERT.cpuTemp.critical = c.cpu_temp_critical_c;
+        } catch (e) {
+            // 閾値取得失敗は致命的ではないので無視
+        }
+    }
+
     function checkAlerts(cpuPercent, cpuTemp, memPercent, diskFreePercent) {
         let memLevel = null;
         if (memPercent >= ALERT.mem.critical) memLevel = 'critical';
         else if (memPercent >= ALERT.mem.warn) memLevel = 'warn';
         applyCardAlert(elements.memCard, memLevel);
         if (evaluateAlert('mem', memPercent, memPercent >= ALERT.mem.critical)) {
-            showToast(`メモリ使用率が ${memPercent.toFixed(1)}% に達しました`, 'error', '🚨');
+            showToast(t('toast.mem_high', memPercent.toFixed(1)), 'error');
         }
 
         let diskLevel = null;
@@ -314,7 +358,7 @@
         else if (diskFreePercent <= ALERT.diskFree.warn) diskLevel = 'warn';
         applyCardAlert(elements.diskCard, diskLevel);
         if (evaluateAlert('diskFree', diskFreePercent, diskFreePercent <= ALERT.diskFree.critical)) {
-            showToast(`ストレージの空きが ${diskFreePercent.toFixed(1)}% を切りました`, 'error', '🚨');
+            showToast(t('toast.disk_low', diskFreePercent.toFixed(1)), 'error');
         }
 
         let tempLevel = null;
@@ -330,10 +374,10 @@
         applyCardAlert(elements.cpuCard, finalCpuLevel);
 
         if (evaluateAlert('cpuTemp', cpuTemp, cpuTemp >= ALERT.cpuTemp.critical)) {
-            showToast(`CPU温度が ${Math.round(cpuTemp)}℃ に達しました`, 'error', '🌡️');
+            showToast(t('toast.cpu_temp_high', Math.round(cpuTemp)), 'error');
         }
         if (evaluateAlert('cpu', cpuPercent, cpuPercent >= ALERT.cpu.critical)) {
-            showToast(`CPU使用率が ${cpuPercent.toFixed(1)}% に達しました`, 'warning', '⚠️');
+            showToast(t('toast.cpu_high', cpuPercent.toFixed(1)), 'warning');
         }
     }
 
@@ -501,36 +545,40 @@
     // ============================================================
     // 温度バッジ
     // ============================================================
-    const NA_TOOLTIP = 'センサーの初期化中、または非対応の温度センサーです';
+    const NA_TOOLTIP = () => t('card.temp.na.tooltip');
 
     function updateTempBadge(el, temp) {
         if (!el) return;
-        const t = Number(temp);
+        const tempNum = Number(temp);
 
-        if (!Number.isFinite(t) || t <= 25) {
+        if (!Number.isFinite(tempNum) || tempNum <= 25) {
             el.hidden = false;
             el.textContent = 'N/A℃';
             el.classList.remove('cool', 'warm', 'hot', 'critical');
             el.classList.add('na');
-            el.setAttribute('title', NA_TOOLTIP);
+            el.setAttribute('title', NA_TOOLTIP());
             return;
         }
 
         el.hidden = false;
-        el.textContent = `${Math.round(t)}℃`;
+        el.textContent = `${Math.round(tempNum)}℃`;
         el.removeAttribute('title');
         el.classList.remove('na', 'cool', 'warm', 'hot', 'critical');
 
-        if (t <= 45) el.classList.add('cool');
-        else if (t <= 65) el.classList.add('warm');
-        else if (t <= 85) el.classList.add('hot');
+        if (tempNum <= 45) el.classList.add('cool');
+        else if (tempNum <= 65) el.classList.add('warm');
+        else if (tempNum <= 85) el.classList.add('hot');
         else el.classList.add('critical');
     }
 
     // ============================================================
     // 空き容量バッジ
     // ============================================================
-    function updateFreeBadge(el, freeBytes, totalBytes) {
+    // critFreePct / warnFreePct are free-space percentages. Memory and disk
+    // use different thresholds, so they must be passed in explicitly (a memory
+    // badge judged by disk thresholds would stay green while memory is
+    // actually critical).
+    function updateFreeBadge(el, freeBytes, totalBytes, critFreePct, warnFreePct) {
         if (!el) return;
         const free = Math.max(0, Number(freeBytes) || 0);
         const total = Math.max(0, Number(totalBytes) || 0);
@@ -538,12 +586,12 @@
 
         const freePercent = (free / total) * 100;
         el.hidden = false;
-        el.textContent = `空き ${formatStorage(free)}`;
+        el.textContent = t('card.free', formatStorage(free));
         el.classList.remove('warn', 'critical');
-        el.setAttribute('title', `空き容量: ${freePercent.toFixed(1)}%`);
+        el.setAttribute('title', `Free: ${freePercent.toFixed(1)}%`);
 
-        if (freePercent < 10) el.classList.add('critical');
-        else if (freePercent < 20) el.classList.add('warn');
+        if (freePercent <= critFreePct) el.classList.add('critical');
+        else if (freePercent <= warnFreePct) el.classList.add('warn');
     }
 
     // ============================================================
@@ -567,7 +615,7 @@
         cores.forEach((value, index) => {
             const pct = clamp(value, 0, 100);
             const f = freqs[index] || 0;
-            const freqText = f > 0 ? `${(f / 1000).toFixed(2)} GHz` : '周波数 N/A';
+            const freqText = f > 0 ? `${(f / 1000).toFixed(2)} GHz` : t('process.col_freq', 'N/A');
             html += `
                 <div class="cpu-core-item">
                     <canvas id="core-gauge-${index}" width="64" height="64"></canvas>
@@ -609,16 +657,16 @@
             else if (percent >= 60) color = '#ff9f0a';
 
             let freeClass = 'disk-free';
-            if (freePercent < 10) freeClass += ' critical';
-            else if (freePercent < 20) freeClass += ' warn';
+            if (freePercent <= ALERT.diskFree.critical) freeClass += ' critical';
+            else if (freePercent <= ALERT.diskFree.warn) freeClass += ' warn';
 
             let smartHtml = '';
             if (disk.health) {
                 const healthClass = disk.health === 'PASSED' ? 'ok' :
                                    disk.health === 'FAILED' ? 'fail' : 'unknown';
-                const healthLabel = disk.health === 'PASSED' ? '正常' :
-                                   disk.health === 'FAILED' ? '異常' : '不明';
-                smartHtml += `<span class="disk-health ${healthClass}" title="S.M.A.R.T: ${disk.health}">${healthLabel}</span>`;
+                const healthLabel = disk.health === 'PASSED' ? t('disk.health.ok') :
+                                   disk.health === 'FAILED' ? t('disk.health.fail') : t('disk.health.unknown');
+                smartHtml += `<span class="disk-health ${healthClass}" title="S.M.A.R.T: ${escapeHtml(disk.health)}">${healthLabel}</span>`;
             }
             if (Number(disk.temp) > 0) {
                 smartHtml += `<span class="disk-temp">${Math.round(disk.temp)}℃</span>`;
@@ -635,7 +683,7 @@
                     </div>
                     <div class="disk-usage">${formatStorage(used)} / ${formatStorage(total)}</div>
                     <div class="disk-free-row">
-                        <span class="${freeClass}" title="空き容量: ${freePercent.toFixed(1)}%">空き ${formatStorage(free)}</span>
+                        <span class="${freeClass}" title="Free: ${freePercent.toFixed(1)}%">${t('disk.free', formatStorage(free))}</span>
                     </div>
                 </div>
             `;
@@ -662,12 +710,10 @@
 
         // タイトル更新
         if (elements.processModalTitle) {
-            const label = processState.sortKey === 'mem' ? 'メモリ順' : 'CPU順';
-            elements.processModalTitle.textContent = `プロセス一覧 (Top 10 / ${label})`;
+            elements.processModalTitle.textContent = processState.sortKey === 'mem' ? t('process.title_mem') : t('process.title_cpu');
         }
         if (elements.processHint) {
-            const label = processState.sortKey === 'mem' ? 'メモリ降順' : 'CPU降順';
-            elements.processHint.textContent = `Top 10 / ${label} / 3秒ごと更新`;
+            elements.processHint.textContent = processState.sortKey === 'mem' ? t('process.hint_mem') : t('process.hint_cpu');
         }
 
         renderProcessTable();
@@ -710,7 +756,7 @@
         if (list.length === 0) {
             elements.processTableBody.innerHTML = `
                 <tr><td colspan="5" class="process-empty">
-                    ${processState.search ? '該当するプロセスがありません' : 'データ待機中...'}
+                    ${processState.search ? t('process.empty_search') : t('process.empty_waiting')}
                 </td></tr>
             `;
             return;
@@ -777,12 +823,10 @@
                 b.classList.toggle('active', b === btn);
             });
             if (elements.processModalTitle) {
-                const label = processState.sortKey === 'mem' ? 'メモリ順' : 'CPU順';
-                elements.processModalTitle.textContent = `プロセス一覧 (Top 10 / ${label})`;
+                elements.processModalTitle.textContent = processState.sortKey === 'mem' ? t('process.title_mem') : t('process.title_cpu');
             }
             if (elements.processHint) {
-                const label = processState.sortKey === 'mem' ? 'メモリ降順' : 'CPU降順';
-                elements.processHint.textContent = `Top 10 / ${label} / 3秒ごと更新`;
+                elements.processHint.textContent = processState.sortKey === 'mem' ? t('process.hint_mem') : t('process.hint_cpu');
             }
             renderProcessTable();
         });
@@ -796,54 +840,216 @@
     // ============================================================
     // バックアップ
     // ============================================================
-    function hasBackupData(backup) {
-        if (!backup || typeof backup !== 'object') return false;
-        const status = String(backup.status || '').toLowerCase();
-        const hasStatus = status && status !== 'unknown';
-        const hasLastRun = !!backup.last_run;
-        const hasSize = Number(backup.size) > 0;
-        return hasStatus || hasLastRun || hasSize;
+
+    // 現在のバックアップ状態（最新の実行結果）。プラグイン一覧の表示にも使う。
+    let currentBackup = {};
+    // 直近取得したモジュール一覧。バックアップ状態変化時に再描画するため保持。
+    let lastModules = [];
+    // プラグインメタ（name → meta）。表示名や種別判定に使う。
+    let pluginMetaMap = new Map();
+
+    // 実行ステータスを「ラベル・色クラス」に正規化する。
+    function normalizeStatus(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'success' || s === 'completed' || s === 'ok') {
+            return { key: 'success', label: t('status.success'), cls: 'success' };
+        }
+        if (s === 'running' || s === 'processing') {
+            return { key: 'running', label: t('status.running'), cls: 'running' };
+        }
+        if (s === 'failed' || s === 'error') {
+            return { key: 'failed', label: t('status.failed'), cls: 'failed' };
+        }
+        if (s === '' || s === 'unknown' || s === 'standby') {
+            return { key: 'standby', label: t('plugin.standby'), cls: 'unknown' };
+        }
+        return { key: s, label: status, cls: 'unknown' };
+    }
+
+    // ISO 文字列を「MM/DD HH:mm:ss」に整形する。失敗時は元の文字列を返す。
+    function formatTimestamp(value) {
+        if (!value) return '';
+        const d = new Date(value);
+        if (isNaN(d.getTime())) return String(value);
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const hh = String(d.getHours()).padStart(2, '0');
+        const mi = String(d.getMinutes()).padStart(2, '0');
+        const ss = String(d.getSeconds()).padStart(2, '0');
+        return `${mm}/${dd} ${hh}:${mi}:${ss}`;
     }
 
     function updateBackup(backup) {
         const section = elements.backupSection;
         if (!section) return;
 
-        if (!hasBackupData(backup)) {
-            section.hidden = true;
-            return;
-        }
+        // Guard against a missing backup object.
+        if (!backup || typeof backup !== 'object') backup = {};
+        currentBackup = backup;
+
+        // Always show the plugin status section.
         section.hidden = false;
 
-        if (elements.backupLastRun && backup.last_run !== undefined) {
-            elements.backupLastRun.textContent = backup.last_run || '未取得';
-        }
-        if (elements.backupStatus && backup.status !== undefined) {
-            elements.backupStatus.textContent = backup.status || '-';
-        }
-        if (elements.backupSize && backup.size !== undefined) {
-            elements.backupSize.textContent = formatBytes(backup.size);
-        }
-        if (elements.backupNextRun && backup.next_run !== undefined) {
-            elements.backupNextRun.textContent = backup.next_run || '-';
-        }
+        const norm = normalizeStatus(backup.status);
 
-        if (elements.backupStatusBadge && backup.status !== undefined) {
+        // Status badge (single source of truth for label + color).
+        if (elements.backupStatusBadge) {
             const badge = elements.backupStatusBadge;
             badge.className = 'backup-status-badge';
-            switch (String(backup.status).toLowerCase()) {
-                case 'success':
-                case 'completed':
-                    badge.textContent = '成功'; badge.classList.add('success'); break;
-                case 'running':
-                case 'processing':
-                    badge.textContent = '実行中'; badge.classList.add('running'); break;
-                case 'failed':
-                case 'error':
-                    badge.textContent = '失敗'; badge.classList.add('failed'); break;
-                default:
-                    badge.textContent = backup.status || '不明';
+            badge.textContent = norm.label;
+            badge.classList.add(norm.cls);
+        }
+
+        // 実行状態が変わったのでプラグイン一覧も更新する。
+        renderPluginList(lastModules);
+    }
+
+    // ============================================================
+    // プラグイン一覧
+    // ============================================================
+    // モジュール1件分のカードHTMLを組み立てる。
+    function buildPluginCard(mod) {
+        const enabled = mod.enabled !== false;
+        const type = (mod.type || 'plugin').toLowerCase();
+        const meta = pluginMetaMap.get(mod.name) || {};
+        const displayName = meta.display_name || mod.name;
+        const isBackup = meta.is_backup === true;
+        const isActive = currentBackup && currentBackup.name === mod.name;
+        const activeNorm = normalizeStatus(currentBackup ? currentBackup.status : '');
+
+        // 状態バッジ。
+        //   無効 → 無効
+        //   監視系（セキュリティ等）で有効 → 監視中（常時動作）
+        //   バックアップ系で実行中 → 実行中/成功/失敗
+        //   バックアップ系で待機 → 待機中
+        let stateCls;
+        let stateLabel;
+        if (!enabled) {
+            stateCls = 'disabled';
+            stateLabel = t('plugin.disabled');
+        } else if (!isBackup) {
+            stateCls = 'success';
+            stateLabel = t('security.state_active');
+        } else if (isActive) {
+            stateCls = activeNorm.cls;
+            stateLabel = activeNorm.label;
+        } else {
+            stateCls = 'standby';
+            stateLabel = t('plugin.standby');
+        }
+
+        const cfg = mod.config || {};
+
+        // 本文の項目。バックアップ系と監視系で表示を分ける。
+        let body;
+        if (isBackup) {
+            const lastRun = (isActive && currentBackup.last_run)
+                ? formatTimestamp(currentBackup.last_run)
+                : (cfg.last_run ? formatTimestamp(cfg.last_run) : t('plugin.not_run'));
+            const nextRun = (isActive && currentBackup.next_run)
+                ? formatTimestamp(currentBackup.next_run)
+                : '-'
+            const size = (isActive && Number(currentBackup.size) > 0)
+                ? formatBytes(currentBackup.size)
+                : '-'
+            body = `
+                <div class="plugin-card-row">
+                    <span class="label">${t('plugin.last_run')}</span>
+                    <span class="value">${escapeHtml(lastRun)}</span>
+                </div>
+                <div class="plugin-card-row">
+                    <span class="label">${t('plugin.next_run')}</span>
+                    <span class="value">${escapeHtml(nextRun)}</span>
+                </div>
+                <div class="plugin-card-row">
+                    <span class="label">${t('modules.label_size')}</span>
+                    <span class="value">${escapeHtml(size)}</span>
+                </div>
+            `;
+        } else {
+            const watchFiles = cfg.watch_files || '-';
+            const notifyLevel = cfg.notify_min_level || '-';
+            const burst = cfg.failed_burst
+                ? t('security.burst_value', cfg.failed_burst, cfg.burst_window_sec || '-')
+                : '-';
+            const lastDetect = (isActive && currentBackup.last_run)
+                ? formatTimestamp(currentBackup.last_run)
+                : '-';
+            body = `
+                <div class="plugin-card-row">
+                    <span class="label">${t('security.label_last_detect')}</span>
+                    <span class="value">${escapeHtml(lastDetect)}</span>
+                </div>
+                <div class="plugin-card-row">
+                    <span class="label">${t('security.label_watch')}</span>
+                    <span class="value wrap" title="${escapeHtml(watchFiles)}">${escapeHtml(watchFiles)}</span>
+                </div>
+                <div class="plugin-card-row">
+                    <span class="label">${t('security.label_notify')}</span>
+                    <span class="value">${escapeHtml(notifyLevel)}</span>
+                </div>
+                <div class="plugin-card-row">
+                    <span class="label">${t('security.label_burst')}</span>
+                    <span class="value">${escapeHtml(burst)}</span>
+                </div>
+            `;
+        }
+
+        // カード全体をリンクにする。プラグイン専用 Web UI があればそこへ、
+        // 無ければモジュール管理画面（操作・設定ができる）へ遷移する。
+        const href = (meta.has_web_ui)
+            ? `/plugins/${encodeURIComponent(mod.name)}/`
+            : '/modules.html';
+        const target = meta.has_web_ui ? ' target="_blank" rel="noopener"' : '';
+
+        return `
+            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''}" href="${href}"${target}>
+                <div class="plugin-card-header">
+                    <span class="plugin-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
+                    <span class="plugin-row-type">${escapeHtml(type)}</span>
+                    <span class="plugin-row-state ${stateCls}">${escapeHtml(stateLabel)}</span>
+                </div>
+                <div class="plugin-card-body">
+                    ${body}
+                </div>
+            </a>
+        `;
+    }
+
+    function renderPluginList(modules) {
+        if (!elements.pluginList) return;
+
+        const list = Array.isArray(modules) ? modules : [];
+        lastModules = list;
+        if (elements.moduleCount) elements.moduleCount.textContent = String(list.length);
+
+        if (list.length === 0) {
+            elements.pluginList.innerHTML = `<div class="plugin-list-empty">${escapeHtml(t('plugin.none'))}</div>`;
+            return;
+        }
+
+        elements.pluginList.innerHTML = list.map(buildPluginCard).join('');
+    }
+
+    async function loadPluginList() {
+        try {
+            const [res, metaRes] = await Promise.all([
+                fetch('/api/modules'),
+                fetch('/api/plugins').catch(() => null),
+            ]);
+            if (res && res.ok) {
+                const data = await res.json();
+                renderPluginList(data);
             }
+            // プラグインメタ（表示名・is_backup 判定用）を取得して再描画する。
+            if (metaRes && metaRes.ok) {
+                const metaData = await metaRes.json();
+                pluginMetaMap = new Map();
+                (metaData.plugins || []).forEach(m => pluginMetaMap.set(m.name, m));
+                renderPluginList(lastModules);
+            }
+        } catch (e) {
+            // Non-fatal; ignore.
         }
     }
 
@@ -856,7 +1062,7 @@
         // ---------- CPU ----------
         const cpu = clamp(data.cpu_usage ?? data.cpu_percent ?? 0, 0, 100);
         if (elements.cpuValue) elements.cpuValue.textContent = `${cpu.toFixed(1)}%`;
-        if (elements.cpuDetail) elements.cpuDetail.textContent = `使用率 ${cpu.toFixed(1)}%`;
+        if (elements.cpuDetail) elements.cpuDetail.textContent = t('card.usage', cpu.toFixed(1));
         drawGauge(elements.cpuGauge, cpu, 'cpu');
         updateCpuCores(data.cpu_per_core ?? [], data.cpu_freq ?? data.cpu_frequency ?? 0);
 
@@ -875,7 +1081,10 @@
         if (elements.memDetail) {
             elements.memDetail.textContent = `${formatBytesFixed(memoryUsed, 'GB')} / ${formatBytesFixed(memoryTotal, 'GB')}`;
         }
-        updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal);
+        // Memory thresholds are configured as *usage* percentages; convert
+        // them to free-space percentages for the badge.
+        updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal,
+            100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
         drawGauge(elements.memGauge, memoryPercent, 'mem');
 
         // ---------- ストレージ ----------
@@ -896,15 +1105,16 @@
         if (elements.diskDetail) {
             elements.diskDetail.textContent = `${formatStorage(diskUsed)} / ${formatStorage(diskTotal)}`;
         }
-        updateFreeBadge(elements.diskFreeBadge, diskTotal - diskUsed, diskTotal);
+        updateFreeBadge(elements.diskFreeBadge, diskTotal - diskUsed, diskTotal,
+            ALERT.diskFree.critical, ALERT.diskFree.warn);
         drawGauge(elements.diskGauge, diskPercent, 'disk');
         updateDiskList(disks);
 
         let maxDiskTemp = 0;
         if (Array.isArray(disks)) {
             disks.forEach(d => {
-                const t = Number(d.temp) || 0;
-                if (t > maxDiskTemp) maxDiskTemp = t;
+                const tempVal = Number(d.temp) || 0;
+                if (tempVal > maxDiskTemp) maxDiskTemp = tempVal;
             });
         }
         updateTempBadge(elements.diskTempBadge, maxDiskTemp);
@@ -958,7 +1168,7 @@
     function startClock() {
         if (!elements.uptimeDetail) return;
         const tick = () => {
-            elements.uptimeDetail.textContent = `現在時刻: ${formatClock(new Date())}`;
+            elements.uptimeDetail.textContent = t('uptime.current_time', formatClock(new Date()));
         };
         tick();
         setInterval(tick, 1000);
@@ -1000,6 +1210,19 @@
         socket.addEventListener('message', event => {
             try {
                 const data = JSON.parse(event.data);
+                if (data.action) return;
+                if (data.event === 'backup_result') {
+                    // Reflect the manual backup result immediately.
+                    // 既存の状態（プラグイン名・次回実行）を保持するためマージする。
+                    updateBackup(Object.assign({}, currentBackup, {
+                        name: currentBackup.name || data.plugin,
+                        status: data.status,
+                        size: data.size,
+                        last_run: data.timestamp,
+                    }));
+                    return;
+                }
+                if (data.event) return;
                 window._lastData = data;
                 updateDashboard(data);
             } catch (error) {
@@ -1037,16 +1260,190 @@
         if (elements.backupBody) {
             elements.backupBody.classList.toggle('collapsed', backupCollapsed);
         }
-        if (elements.backupToggleBtn) {
-            elements.backupToggleBtn.classList.toggle('collapsed', backupCollapsed);
-        }
         if (elements.backupToggle) {
             elements.backupToggle.setAttribute('aria-expanded', String(!backupCollapsed));
+            // Scope the arrow lookup to THIS section. A global querySelector
+            // returned the history section's button (first in DOM order), so
+            // the plugin section arrow never rotated.
+            const btn = elements.backupToggle.querySelector('.backup-toggle-btn');
+            if (btn) btn.classList.toggle('collapsed', backupCollapsed);
         }
     }
 
     if (elements.backupToggle) {
         elements.backupToggle.addEventListener('click', toggleBackup);
+    }
+
+    // ============================================================
+    // メトリクス履歴（簡易トレンド）
+    // ============================================================
+    let historyCollapsed = false;
+
+    function toggleHistory() {
+        historyCollapsed = !historyCollapsed;
+        if (elements.historyBody) elements.historyBody.classList.toggle('collapsed', historyCollapsed);
+        if (elements.historyToggle) {
+            elements.historyToggle.setAttribute('aria-expanded', String(!historyCollapsed));
+            const icon = elements.historyToggle.querySelector('.backup-toggle-btn');
+            if (icon) icon.classList.toggle('collapsed', historyCollapsed);
+        }
+    }
+
+    if (elements.historyToggle) {
+        elements.historyToggle.addEventListener('click', toggleHistory);
+    }
+
+    async function loadHistory() {
+        try {
+            const res = await fetch('/api/history');
+            if (!res.ok) return;
+            const data = await res.json();
+            drawHistoryChart(data.samples || []);
+            if (elements.historyRangeBadge) {
+                elements.historyRangeBadge.textContent = String((data.samples || []).length);
+            }
+        } catch (e) {
+            // 履歴取得失敗は致命的ではないので無視
+        }
+    }
+
+    function drawHistoryChart(samples) {
+        const canvas = elements.historyChart;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        // Match the canvas backing store to its CSS size for sharp rendering.
+        const cssW = canvas.clientWidth || 600;
+        const cssH = 220;
+        if (canvas.width !== cssW || canvas.height !== cssH) {
+            canvas.width = cssW;
+            canvas.height = cssH;
+        }
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+
+        // Grid + axis labels (0/50/100%).
+        ctx.strokeStyle = 'rgba(150,150,170,0.15)';
+        ctx.fillStyle = 'rgba(160,170,195,0.7)';
+        ctx.font = '10px monospace';
+        ctx.lineWidth = 1;
+        [0, 50, 100].forEach(pct => {
+            const y = h - (pct / 100) * (h - 10) - 5;
+            ctx.beginPath();
+            ctx.moveTo(28, y);
+            ctx.lineTo(w - 5, y);
+            ctx.stroke();
+            ctx.fillText(pct + '%', 2, y + 3);
+        });
+
+        if (!Array.isArray(samples) || samples.length < 2) {
+            ctx.fillStyle = 'rgba(160,170,195,0.7)';
+            ctx.font = '12px sans-serif';
+            ctx.fillText(t('history.waiting'), 40, h / 2);
+            return;
+        }
+
+        const x0 = 28;
+        const x1 = w - 5;
+        const plotW = x1 - x0;
+        const plotH = h - 10;
+
+        const series = [
+            { key: 'cpu', color: '#18d66b' },
+            { key: 'mem', color: '#7b3ff2' },
+            { key: 'disk', color: '#d946ef' },
+        ];
+
+        series.forEach(s => {
+            ctx.beginPath();
+            ctx.strokeStyle = s.color;
+            ctx.lineWidth = 1.5;
+            samples.forEach((p, i) => {
+                const x = x0 + (i / (samples.length - 1)) * plotW;
+                const val = clamp(p[s.key] || 0, 0, 100);
+                const y = h - 5 - (val / 100) * plotH;
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            });
+            ctx.stroke();
+        });
+    }
+
+    // ============================================================
+    // アラート履歴
+    // ============================================================
+    let alertsCollapsed = false;
+
+    function toggleAlerts() {
+        alertsCollapsed = !alertsCollapsed;
+        if (elements.alertsBody) elements.alertsBody.classList.toggle('collapsed', alertsCollapsed);
+        if (elements.alertsToggle) {
+            elements.alertsToggle.setAttribute('aria-expanded', String(!alertsCollapsed));
+            const icon = elements.alertsToggle.querySelector('.backup-toggle-btn');
+            if (icon) icon.classList.toggle('collapsed', alertsCollapsed);
+        }
+    }
+
+    if (elements.alertsToggle) {
+        elements.alertsToggle.addEventListener('click', toggleAlerts);
+    }
+
+    async function clearAlerts() {
+        if (!window.confirm(t('alerts.clear_confirm'))) return;
+        try {
+            const res = await fetch('/api/alerts', { method: 'DELETE' });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            renderAlerts([]);
+            showToast(t('alerts.cleared'), 'success');
+        } catch (e) {
+            showToast(t('alerts.clear_failed'), 'error');
+        }
+    }
+
+    if (elements.alertsClearBtn) {
+        elements.alertsClearBtn.addEventListener('click', (e) => {
+            // ヘッダー全体の折りたたみトグルに伝播させない
+            e.stopPropagation();
+            clearAlerts();
+        });
+    }
+
+    function renderAlerts(alerts) {
+        if (!elements.alertList) return;
+        if (!Array.isArray(alerts) || alerts.length === 0) {
+            elements.alertList.innerHTML = `<div class="alert-empty">${escapeHtml(t('alerts.empty'))}</div>`;
+            if (elements.alertsCountBadge) elements.alertsCountBadge.textContent = '0';
+            return;
+        }
+        if (elements.alertsCountBadge) elements.alertsCountBadge.textContent = String(alerts.length);
+
+        let html = '';
+        alerts.forEach(a => {
+            const level = String(a.level || 'info');
+            const time = a.timestamp ? new Date(a.timestamp).toLocaleString() : '';
+            html += `
+                <div class="alert-item ${escapeHtml(level)}">
+                    <div class="alert-item-body">
+                        <div class="alert-item-title">${escapeHtml(a.title || '')}</div>
+                        <div class="alert-item-message">${escapeHtml(a.message || '')}</div>
+                    </div>
+                    <span class="alert-item-time">${escapeHtml(time)}</span>
+                </div>
+            `;
+        });
+        elements.alertList.innerHTML = html;
+    }
+
+    async function loadAlerts() {
+        try {
+            const res = await fetch('/api/alerts');
+            if (!res.ok) return;
+            const data = await res.json();
+            renderAlerts(data.alerts || []);
+        } catch (e) {
+            // 履歴取得失敗は致命的ではないので無視
+        }
     }
 
     // ============================================================
@@ -1064,6 +1461,23 @@
         startClock();
         setupProcessCardClicks();
         connectWebSocket();
+        loadAlerts();
+        setInterval(loadAlerts, 30000);
+        loadPluginList();
+        setInterval(loadPluginList, 30000);
+        loadHistory();
+        setInterval(loadHistory, 30000);
+        loadAlertThresholds();
+        setInterval(loadAlertThresholds, 30000);
+
+        // Re-render dynamic text on language change.
+        window.addEventListener('kizuna-lang-change', () => {
+            setConnectionState(currentConnectionState);
+            if (window._lastData) updateDashboard(window._lastData);
+            loadAlerts();
+            loadPluginList();
+            loadHistory();
+        });
     }
 
     if (document.readyState === 'loading') {

@@ -10,7 +10,7 @@ import (
 )
 
 // ============================================================
-// DiscordNotifier は Discord Webhook で通知を送る
+// DiscordNotifier sends notifications via a Discord webhook.
 // ============================================================
 type DiscordNotifier struct {
 	webhookURL string
@@ -27,9 +27,12 @@ func NewDiscordNotifier(webhookURL string) *DiscordNotifier {
 func (d *DiscordNotifier) Name() string { return "discord" }
 
 func (d *DiscordNotifier) Send(ctx context.Context, a *Alert) error {
+	// Discord rejects embeds whose title exceeds 256 chars or whose
+	// description exceeds 4096 chars (HTTP 400). Truncate so a single long
+	// alert (e.g. many failing disks) cannot drop the whole notification.
 	embed := map[string]interface{}{
-		"title":       a.FullTitle(),
-		"description": a.FullMessage(),
+		"title":       truncateRunes(a.FullTitle(), 256),
+		"description": truncateRunes(a.FullMessage(), 4096),
 		"color":       a.Color(),
 		"timestamp":   a.Timestamp.Format(time.RFC3339),
 		"footer": map[string]string{
@@ -39,6 +42,10 @@ func (d *DiscordNotifier) Send(ctx context.Context, a *Alert) error {
 
 	payload := map[string]interface{}{
 		"embeds": []interface{}{embed},
+		// Never allow the alert content to ping @everyone / roles / users.
+		"allowed_mentions": map[string]interface{}{
+			"parse": []string{},
+		},
 	}
 
 	body, err := json.Marshal(payload)

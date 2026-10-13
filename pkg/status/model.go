@@ -1,7 +1,7 @@
 package status
 
 // ============================================================
-// NetworkIO はネットワークI/Oの累積バイト数
+// NetworkIO holds cumulative network I/O bytes.
 // ============================================================
 type NetworkIO struct {
 	Up   uint64 `json:"up"`
@@ -9,7 +9,7 @@ type NetworkIO struct {
 }
 
 // ============================================================
-// NetworkSpeed はネットワーク速度（bytes/sec）
+// NetworkSpeed is network speed in bytes/sec.
 // ============================================================
 type NetworkSpeed struct {
 	Up   uint64 `json:"up"`
@@ -17,7 +17,7 @@ type NetworkSpeed struct {
 }
 
 // ============================================================
-// DiskInfo は個別のディスク情報
+// DiskInfo is per-disk information.
 // ============================================================
 type DiskInfo struct {
 	Path    string  `json:"path"`
@@ -29,18 +29,18 @@ type DiskInfo struct {
 }
 
 // ============================================================
-// ProcessInfo は個別プロセスの情報（Top N 用）
+// ProcessInfo is per-process information (Top N).
 // ============================================================
 type ProcessInfo struct {
 	PID   int32   `json:"pid"`
 	Name  string  `json:"name"`
-	CPU   float64 `json:"cpu"`            // %
+	CPU   float64 `json:"cpu"`            // % per-process CPU usage (system-wide is SystemStatus.CPUUsage="cpu_usage")
 	MemMB float64 `json:"mem_mb"`         // MB
-	User  string  `json:"user,omitempty"` // 実行ユーザー
+	User  string  `json:"user,omitempty"` // owning user
 }
 
 // ============================================================
-// SystemStatus はシステム全体の状態
+// SystemStatus is the overall system state.
 // ============================================================
 type SystemStatus struct {
 	Timestamp     int64      `json:"timestamp"`
@@ -67,12 +67,14 @@ type SystemStatus struct {
 	// Phase 4
 	NetworkSpeed *NetworkSpeed `json:"network_speed,omitempty"`
 
-	// ★ Phase 6: Top N プロセス（CPU降順）
+	// Top N processes (CPU descending)
 	Processes []ProcessInfo `json:"processes,omitempty"`
 
-	// バックアップ情報
+	// Backup info
 	Backup struct {
+		Name    string `json:"name,omitempty"`
 		LastRun string `json:"last_run,omitempty"`
+		NextRun string `json:"next_run,omitempty"`
 		Status  string `json:"status,omitempty"`
 		Size    int64  `json:"size,omitempty"`
 	} `json:"backup,omitempty"`

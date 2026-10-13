@@ -6,6 +6,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -33,6 +35,12 @@ type Options struct {
 	Level   Level
 	Prefix  string
 	UseUTC  bool
+
+	// MaxSizeMB is the size threshold that triggers rotation (default: 10).
+	// 0 disables rotation.
+	MaxSizeMB int
+	// MaxBackups is the number of rotated files to keep (default: 5).
+	MaxBackups int
 }
 
 type Logger struct {
@@ -41,28 +49,157 @@ type Logger struct {
 	level  Level
 	prefix string
 	file   *os.File
+	writer io.Writer
 }
 
+// ============================================================
+// rotatingWriter writes to a file and rotates it when it grows
+// past maxSize, keeping at most maxBackups old files.
+// ============================================================
+type rotatingWriter struct {
+	mu         sync.Mutex
+	path       string
+	file       *os.File
+	size       int64
+	maxSize    int64
+	maxBackups int
+}
+
+func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWriter, error) {
+	// Logs contain usernames/IPs; keep the directory owner-only.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	w := &rotatingWriter{
+		path:       path,
+		maxSize:    maxSize,
+		maxBackups: maxBackups,
+	}
+	if err := w.open(); err != nil {
+		return nil, err
+	}
+	// Tighten an existing file that may have been created world-readable.
+	_ = os.Chmod(path, 0600)
+	return w, nil
+}
+
+func (w *rotatingWriter) open() error {
+	// Log files may contain usernames, IPs, and other sensitive data, so
+	// create them 0600 (owner only).
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	w.file = f
+	w.size = info.Size()
+	return nil
+}
+
+func (w *rotatingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if w.maxSize > 0 && w.size+int64(len(p)) > w.maxSize {
+		if err := w.rotate(); err != nil {
+			// Rotation failure must not drop the log line.
+			fmt.Fprintf(os.Stderr, "ログローテーション失敗: %v\n", err)
+		}
+	}
+
+	n, err := w.file.Write(p)
+	w.size += int64(n)
+	return n, err
+}
+
+func (w *rotatingWriter) rotate() error {
+	if err := w.file.Close(); err != nil {
+		return err
+	}
+
+	// path -> path.1, path.1 -> path.2, ...
+	for i := w.maxBackups - 1; i >= 1; i-- {
+		old := fmt.Sprintf("%s.%d", w.path, i)
+		newer := fmt.Sprintf("%s.%d", w.path, i+1)
+		if _, err := os.Stat(old); err == nil {
+			_ = os.Rename(old, newer)
+		}
+	}
+	_ = os.Rename(w.path, w.path+".1")
+
+	// Remove anything beyond maxBackups (defensive).
+	w.cleanup()
+
+	return w.open()
+}
+
+func (w *rotatingWriter) cleanup() {
+	// Rotated files are named "<path>.1" (newest) .. "<path>.N" (oldest).
+	// Remove any file whose numeric suffix exceeds maxBackups, so we never
+	// keep a stale suffix that would otherwise shadow the newest file
+	// (e.g. path.10 being treated as older than path.2 by a string sort).
+	matches, _ := filepath.Glob(w.path + ".*")
+	prefix := filepath.Base(w.path) + "."
+	for _, m := range matches {
+		base := filepath.Base(m)
+		if !strings.HasPrefix(base, prefix) {
+			continue
+		}
+		n, err := strconv.Atoi(base[len(prefix):])
+		if err != nil {
+			continue
+		}
+		if n > w.maxBackups {
+			_ = os.Remove(m)
+		}
+	}
+}
+
+func (w *rotatingWriter) Sync() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Sync()
+}
+
+func (w *rotatingWriter) Close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Close()
+}
+
+// ============================================================
+// Logger
+// ============================================================
 func NewLogger(opts *Options) *Logger {
 	if opts == nil {
 		opts = &Options{Level: INFO}
 	}
 
+	maxSizeMB := opts.MaxSizeMB
+	if maxSizeMB == 0 {
+		maxSizeMB = 10
+	}
+	maxBackups := opts.MaxBackups
+	if maxBackups <= 0 {
+		maxBackups = 5
+	}
+
 	var writer io.Writer = os.Stdout
 	var file *os.File
+	var rot *rotatingWriter
 
 	if opts.LogFile != "" {
-		dir := filepath.Dir(opts.LogFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "ログディレクトリ作成失敗: %v\n", err)
+		r, err := newRotatingWriter(opts.LogFile, int64(maxSizeMB)*1024*1024, maxBackups)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ログファイルオープン失敗: %v\n", err)
 		} else {
-			f, err := os.OpenFile(opts.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-			if err == nil {
-				writer = io.MultiWriter(os.Stdout, f)
-				file = f
-			} else {
-				fmt.Fprintf(os.Stderr, "ログファイルオープン失敗: %v\n", err)
-			}
+			rot = r
+			file = r.file
+			writer = io.MultiWriter(os.Stdout, r)
 		}
 	}
 
@@ -78,6 +215,7 @@ func NewLogger(opts *Options) *Logger {
 		level:  opts.Level,
 		prefix: opts.Prefix,
 		file:   file,
+		writer: rot,
 	}
 }
 
@@ -114,6 +252,9 @@ func (l *Logger) Error(format string, args ...interface{}) { l.log(ERROR, format
 func (l *Logger) Fatal(format string, args ...interface{}) { l.log(FATAL, format, args...) }
 
 func (l *Logger) Sync() error {
+	if rw, ok := l.writer.(*rotatingWriter); ok {
+		return rw.Sync()
+	}
 	if l.file != nil {
 		return l.file.Sync()
 	}
@@ -121,6 +262,10 @@ func (l *Logger) Sync() error {
 }
 
 func (l *Logger) Close() {
+	if rw, ok := l.writer.(*rotatingWriter); ok {
+		_ = rw.Close()
+		return
+	}
 	if l.file != nil {
 		l.file.Close()
 	}

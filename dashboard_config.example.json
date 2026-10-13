@@ -1,0 +1,51 @@
+{
+    "listen_addr": ":8080",
+    "log_file": "dashboard.log",
+    "static_dir": "./web/static",
+    "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+    "plugins_upload_enabled": false,
+    "alert_history_file": "logs/alert_history.jsonl",
+    "auth": {
+        "enabled": false,
+        "secure_cookies": false,
+        "session_ttl_hours": 12,
+        "users_file": "users.json",
+        "agent_token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+    },
+    "notifications": {
+        "enabled": true,
+        "agent_timeout_sec": 30,
+        "hold_sec": 5,
+        "cooldown_sec": 300,
+        "recovery_hold_sec": 30,
+        "memory_warn_pct": 70,
+        "memory_critical_pct": 85,
+        "disk_free_warn_pct": 20,
+        "disk_free_critical_pct": 10,
+        "cpu_temp_warn_c": 70,
+        "cpu_temp_critical_c": 85,
+        "notify_recovery": true,
+        "channels": [
+            {
+                "type": "discord",
+                "enabled": true,
+                "webhook_url": "https://discord.com/api/webhooks/YOUR_WEBHOOK_ID/YOUR_WEBHOOK_TOKEN"
+            },
+            {
+                "type": "slack",
+                "enabled": false,
+                "webhook_url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK"
+            },
+            {
+                "type": "email",
+                "enabled": false,
+                "smtp_host": "smtp.example.com",
+                "smtp_port": "587",
+                "smtp_username": "user@example.com",
+                "smtp_password": "YOUR_SMTP_PASSWORD",
+                "email_from": "kizuna-eye@example.com",
+                "email_to": "admin@example.com,ops@example.com"
+            }
+        ]
+    }
+}

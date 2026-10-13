@@ -1,0 +1,101 @@
+/* ログビューア */
+.log-viewer-container {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 260px);
+}
+
+.log-viewer {
+    flex: 1;
+    margin: 0;
+    padding: 20px;
+    overflow: auto;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.82rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.log-status {
+    padding: 8px 16px;
+    border-top: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    min-height: 20px;
+}
+
+.log-lines-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.log-lines-select {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.file-actions .btn-secondary.active {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+}
+
+@media (max-width: 768px) {
+    .log-viewer-container {
+        height: auto;
+        min-height: 60vh;
+    }
+
+    .log-viewer {
+        font-size: 0.8rem;
+        padding: 14px;
+        max-height: 70vh;
+    }
+
+    .file-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+    }
+
+    .file-actions button,
+    .file-actions label {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .log-lines-label {
+        justify-content: space-between;
+    }
+
+    .log-lines-select {
+        flex: 1;
+        font-size: 16px;
+        padding: 10px;
+    }
+}
+
+@media (max-width: 480px) {
+    .file-actions {
+        grid-template-columns: 1fr;
+    }
+
+    .log-viewer {
+        font-size: 0.75rem;
+    }
+}

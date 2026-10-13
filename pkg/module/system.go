@@ -1,4 +1,4 @@
-﻿package module
+package module
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 	"Kizuna-Eye/pkg/status"
 )
 
-// SystemConfig はシステムモジュールの設定
+// SystemConfig is the system module configuration.
 type SystemConfig struct {
 	DiskPath          string `json:"disk_path"`
 	Interval          int    `json:"interval"`
@@ -34,7 +34,7 @@ type SystemConfig struct {
 }
 
 // ============================================================
-// smartCache（Phase 4・変更なし）
+// smartCache caches S.M.A.R.T data.
 // ============================================================
 type smartCache struct {
 	mu        sync.RWMutex
@@ -102,9 +102,9 @@ func (s *smartCache) checkAvailable() bool {
 // ============================================================
 // ★ Phase 6: processCache
 //
-// Top N プロセスをキャッシュする。
-//   - 毎秒呼ぶと重いので 3 秒に 1 回だけ再取得
-//   - CPU% は前回サンプルとの差分から計算（精度のため）
+// processCache caches Top N processes.
+//   - Refreshes every 3s (calling every second is expensive)
+//   - CPU% is computed from the difference since the last sample
 //
 // ============================================================
 type processCache struct {
@@ -114,7 +114,7 @@ type processCache struct {
 	interval   time.Duration
 	topN       int
 
-	// CPU% 差分計算用
+	// For CPU% delta calculation
 	lastCPUTimes   map[int32]float64 // PID -> total CPU seconds
 	lastSampleTime time.Time
 }
@@ -238,7 +238,7 @@ type SystemModule struct {
 	wg           sync.WaitGroup
 }
 
-// ---------- CPU Collector（変更なし） ----------
+// ---------- CPU collector ----------
 type cpuCollector struct {
 	mu          sync.RWMutex
 	cache       float64
@@ -306,7 +306,7 @@ func (c *cpuCollector) getErrorCount() int {
 	return c.errCount
 }
 
-// ---------- コンストラクタ ----------
+// ---------- Constructor ----------
 func NewSystemModule(logger Logger) *SystemModule {
 	return &SystemModule{
 		logger: logger,
@@ -323,7 +323,7 @@ func NewSystemModule(logger Logger) *SystemModule {
 	}
 }
 
-// ---------- Module インターフェース ----------
+// ---------- Module interface ----------
 func (m *SystemModule) Name() string { return "system" }
 
 func (m *SystemModule) Interval() time.Duration {
@@ -499,7 +499,7 @@ func (m *SystemModule) Shutdown(ctx context.Context) error {
 	}
 }
 
-// ---------- 内部メソッド ----------
+// ---------- Internal methods ----------
 func (m *SystemModule) GetStatus() *status.SystemStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -518,7 +518,7 @@ func (m *SystemModule) getStaleThresholdLocked() time.Duration {
 }
 
 // ============================================================
-// updateStatus はシステム情報を収集する
+// updateStatus collects system information.
 // ============================================================
 func (m *SystemModule) updateStatus() {
 	m.mu.RLock()
@@ -528,12 +528,14 @@ func (m *SystemModule) updateStatus() {
 	m.mu.RUnlock()
 
 	// ---------- CPU ----------
+	// gopsutil keeps separate baselines for overall (percpu=false) and
+	// per-core (percpu=true) sampling, so these two calls do not race.
 	cpuVal, cpuErr := m.cpuCollector.get()
 	cpuErrCount := m.cpuCollector.getErrorCount()
 	cpuPerCore, _ := cpu.Percent(0, true)
 	cpuTemp := collectCPUTemp()
 
-	// ---------- メモリ ----------
+	// ---------- Memory ----------
 	memInfo, memErr := mem.VirtualMemory()
 	if memErr != nil {
 		if m.logger != nil {
@@ -542,7 +544,7 @@ func (m *SystemModule) updateStatus() {
 		memInfo = &mem.VirtualMemoryStat{Total: 0, Used: 0, UsedPercent: 0}
 	}
 
-	// ---------- ディスク ----------
+	// ---------- Disk ----------
 	var disks []status.DiskInfo
 	var totalDiskUsed, totalDiskTotal uint64
 	var totalDiskPercent float64
@@ -559,7 +561,17 @@ func (m *SystemModule) updateStatus() {
 			fstype := strings.ToLower(p.Fstype)
 			if fstype == "" || fstype == "tmpfs" || fstype == "devtmpfs" ||
 				fstype == "devfs" || fstype == "proc" || fstype == "sysfs" ||
-				fstype == "fuseblk" || fstype == "fuse" || strings.HasPrefix(fstype, "fuse.") {
+				fstype == "fuseblk" || fstype == "fuse" || strings.HasPrefix(fstype, "fuse.") ||
+				fstype == "squashfs" || fstype == "overlay" || fstype == "ramfs" ||
+				fstype == "autofs" || fstype == "efivarfs" || fstype == "nsfs" ||
+				fstype == "bpf" || fstype == "cgroup" || fstype == "cgroup2" ||
+				fstype == "mqueue" || fstype == "debugfs" || fstype == "tracefs" ||
+				fstype == "securityfs" || fstype == "pstore" || fstype == "hugetlbfs" ||
+				fstype == "configfs" || fstype == "binfmt_misc" {
+				continue
+			}
+			// snap などの squashfs は /dev/loop* を使う。実ディスクではないため除外する。
+			if strings.HasPrefix(p.Device, "/dev/loop") {
 				continue
 			}
 			usage, err := disk.Usage(p.Mountpoint)
@@ -596,8 +608,7 @@ func (m *SystemModule) updateStatus() {
 
 	if len(disks) > 0 && totalDiskTotal > 0 {
 		totalDiskPercent = float64(totalDiskUsed) / float64(totalDiskTotal) * 100
-	} else {
-		diskInfo, _ := disk.Usage(diskPath)
+	} else if diskInfo, err := disk.Usage(diskPath); err == nil && diskInfo != nil {
 		disks = []status.DiskInfo{{
 			Path:    diskPath,
 			Total:   diskInfo.Total,
@@ -607,9 +618,11 @@ func (m *SystemModule) updateStatus() {
 		totalDiskUsed = diskInfo.Used
 		totalDiskTotal = diskInfo.Total
 		totalDiskPercent = diskInfo.UsedPercent
+	} else if m.logger != nil {
+		m.logger.Warn("ディスク情報取得失敗: %s (%v)", diskPath, err)
 	}
 
-	// ---------- ホスト ----------
+	// ---------- Host ----------
 	hostInfo, hostErr := host.Info()
 	if hostErr != nil {
 		if m.logger != nil {
@@ -624,7 +637,7 @@ func (m *SystemModule) updateStatus() {
 		loadAvg = []float64{avg.Load1, avg.Load5, avg.Load15}
 	}
 
-	// ---------- ネットワーク ----------
+	// ---------- Network ----------
 	var netIO *status.NetworkIO
 	var netSpeed *status.NetworkSpeed
 	if counters, err := gnet.IOCounters(false); err == nil && len(counters) > 0 {
@@ -634,6 +647,12 @@ func (m *SystemModule) updateStatus() {
 
 		netIO = &status.NetworkIO{Up: curUp, Down: curDown}
 
+		// The previous network counters are shared state (Health and
+		// Configure also touch the module), so guard the read and write
+		// with the module mutex.
+		m.mu.Lock()
+		// Compute speed from the delta and elapsed time.
+		// curUp/curDown >= prev is guaranteed above; elapsed > 0 avoids division by zero.
 		if m.hasPrevNet && curUp >= m.prevNetUp && curDown >= m.prevNetDown {
 			elapsed := now.Sub(m.prevNetTime).Seconds()
 			if elapsed > 0 {
@@ -642,14 +661,14 @@ func (m *SystemModule) updateStatus() {
 				netSpeed = &status.NetworkSpeed{Up: upSpeed, Down: downSpeed}
 			}
 		}
-
 		m.prevNetUp = curUp
 		m.prevNetDown = curDown
 		m.prevNetTime = now
 		m.hasPrevNet = true
+		m.mu.Unlock()
 	}
 
-	// ---------- ★ Phase 6: プロセス ----------
+	// ---------- Processes ----------
 	processes := m.processes.get()
 
 	// ---------- lastError ----------
@@ -696,6 +715,13 @@ func (m *SystemModule) updateStatus() {
 // ============================================================
 // collectCPUTemp
 // ============================================================
+
+// minPlausibleCPUTemp is the lowest value accepted as a real CPU temperature.
+// Some AMD APUs (e.g. A4-4020) report physically impossible readings such as
+// 4C while idle. Anything below this floor is treated as a sensor error
+// (returns 0), so the dashboard shows N/A and no bogus alert is fired.
+const minPlausibleCPUTemp = 10.0
+
 func collectCPUTemp() float64 {
 	temps, err := host.SensorsTemperatures()
 	if err != nil || len(temps) == 0 {
@@ -710,7 +736,7 @@ func collectCPUTemp() float64 {
 	for _, kw := range priorityKeywords {
 		for _, t := range temps {
 			key := strings.ToLower(t.SensorKey)
-			if strings.Contains(key, kw) && t.Temperature > 0 {
+			if strings.Contains(key, kw) && t.Temperature >= minPlausibleCPUTemp {
 				return t.Temperature
 			}
 		}
@@ -718,13 +744,13 @@ func collectCPUTemp() float64 {
 
 	for _, t := range temps {
 		key := strings.ToLower(t.SensorKey)
-		if (strings.Contains(key, "cpu") || strings.Contains(key, "core")) && t.Temperature > 0 {
+		if (strings.Contains(key, "cpu") || strings.Contains(key, "core")) && t.Temperature >= minPlausibleCPUTemp {
 			return t.Temperature
 		}
 	}
 
 	for _, t := range temps {
-		if t.Temperature > 0 {
+		if t.Temperature >= minPlausibleCPUTemp {
 			return t.Temperature
 		}
 	}
@@ -735,8 +761,22 @@ func collectCPUTemp() float64 {
 // ============================================================
 // resolveBlockDevice
 // ============================================================
-var blockDevRe = regexp.MustCompile(`^(.*?)(p?\d+)$`)
+// partRe matches a partition device whose partition suffix is "p<num>"
+// (NVMe / mmcblk style), e.g. /dev/nvme0n1p2, /dev/mmcblk0p1.
+var partRe = regexp.MustCompile(`^(.*\d)p\d+$`)
 
+// sdRe matches an sd/vd/hd-style partition, i.e. letters followed only by a
+// partition number, e.g. sda1, vda2. It deliberately does NOT match whole
+// disks such as nvme0n1 (digits in the middle) so those are kept as-is.
+var sdRe = regexp.MustCompile(`^[a-z]+\d+$`)
+
+// resolveBlockDevice maps a partition device to its parent whole disk so
+// S.M.A.R.T can be queried once per physical disk.
+//   - /dev/sdb1       -> /dev/sdb
+//   - /dev/nvme0n1p1  -> /dev/nvme0n1
+//   - /dev/nvme0n1    -> /dev/nvme0n1 (unchanged; whole disk)
+//   - /dev/mmcblk0p1  -> /dev/mmcblk0
+//   - /dev/mapper/... -> unchanged
 func resolveBlockDevice(device string) string {
 	if !strings.HasPrefix(device, "/dev/") {
 		return device
@@ -744,9 +784,14 @@ func resolveBlockDevice(device string) string {
 	if strings.HasPrefix(device, "/dev/mapper/") {
 		return device
 	}
-	m := blockDevRe.FindStringSubmatch(device)
-	if len(m) == 3 {
-		return m[1]
+	name := strings.TrimPrefix(device, "/dev/")
+	// NVMe / mmcblk partitions: <base><digit>p<num>.
+	if m := partRe.FindStringSubmatch(name); len(m) == 2 {
+		return "/dev/" + m[1]
+	}
+	// sd/vd/hd partitions: <letters><num>.
+	if sdRe.MatchString(name) {
+		return "/dev/" + strings.TrimRight(name, "0123456789")
 	}
 	return device
 }
@@ -762,11 +807,13 @@ func runSmartctl(device string) (float64, string) {
 	}
 	_ = err
 
+	// smart_status はポインタで受ける。フィールドが存在しない出力
+	// （loop デバイスや SMART 非対応デバイスなど）を「FAILED」と誤判定しないため。
 	var result struct {
 		Temperature struct {
 			Current int `json:"current"`
 		} `json:"temperature"`
-		SmartStatus struct {
+		SmartStatus *struct {
 			Passed bool `json:"passed"`
 		} `json:"smart_status"`
 	}
@@ -777,11 +824,15 @@ func runSmartctl(device string) (float64, string) {
 
 	temp := float64(result.Temperature.Current)
 
+	// smart_status が無い場合は UNKNOWN（通知対象外）とする。
+	// これにより実ディスクでない・SMART 非対応のデバイスで誤警報しない。
 	health := "UNKNOWN"
-	if result.SmartStatus.Passed {
-		health = "PASSED"
-	} else {
-		health = "FAILED"
+	if result.SmartStatus != nil {
+		if result.SmartStatus.Passed {
+			health = "PASSED"
+		} else {
+			health = "FAILED"
+		}
 	}
 
 	return temp, health
