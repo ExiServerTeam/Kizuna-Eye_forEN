@@ -57,7 +57,7 @@ The Agent and Dashboard communicate over WebSocket. Plugins are loaded as `.so` 
 
 ## Requirements
 
-- **Go 1.27.1** or higher
+- **Go 1.27.2** or higher (the exact patch is pinned via `toolchain` in go.mod; host and plugins must be built with the same version)
 - **Ubuntu Server** 20.04+ (other Linux distributions work too)
 - **CGO_ENABLED=1** (required by the `plugin` package)
 - **rsync** (when using SSH file transfers)

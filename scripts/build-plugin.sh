@@ -28,6 +28,10 @@ SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-}"
 
 # Go が PATH に無い環境（cron 等）でも動くように。
 export PATH="$PATH:/usr/local/go/bin"
+# ホストとプラグインは同一ツールチェーンでビルドしないと plugin.Open が
+# "different version of package" で失敗する。パッチまで固定する。
+export GOTOOLCHAIN=${GOTOOLCHAIN:-auto}
+PINNED_GO=go1.27.2
 
 log()  { echo "[build-plugin] $*"; }
 ok()   { echo "  [ OK ] $*"; }
@@ -86,7 +90,7 @@ SIG="$NAME.so.sig"
 
 # --- 1) ビルド ---
 log "1/4 ビルド (GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin)"
-if ( cd "$PLUGIN_DIR" && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o "$SO" . ); then
+if ( cd "$PLUGIN_DIR" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildmode=plugin -o "$SO" . ); then
     ok "ビルド成功: $PLUGIN_DIR/$SO"
 else
     ng "ビルド失敗"

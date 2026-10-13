@@ -57,7 +57,7 @@ Agent と Dashboard は WebSocket で通信します。プラグインは Agent 
 
 ## 動作要件
 
-- **Go 1.27.1** 以上
+- **Go 1.27.2** 以上（パッチまで `go.mod` の `toolchain` で固定。ホストとプラグインは同一バージョンでビルドが必要）
 - **Ubuntu Server** 20.04 以上（他のLinuxディストリビューションでも動作可）
 - **CGO_ENABLED=1**（`plugin` パッケージ使用時）
 - **rsync**（SSHファイル転送使用時）

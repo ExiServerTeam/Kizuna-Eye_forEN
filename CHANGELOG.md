@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Security
+- Go ツールチェーンを go1.27.2 に固定（`go.mod` / `go.work` の `toolchain` と各ビルドスクリプト）。go1.27.1 は net/http の HTTP/2 に到達可能な脆弱性を10件含み（HPACK エンコーダ競合・Trailer によるメモリ枯渇など、GO-2026-6603〜6617）、govulncheck で検出されていた。go1.27.2 でこれらは解消する。Go プラグインは共有パッケージのビルドハッシュ完全一致が必要で、パッチが違うと `plugin was built with a different version of package` で全 .so がロード不能になるため、ホストと全プラグインを同一ツールチェーンで同時再ビルド・再署名することを必須とし、スクリプト（build.sh / build-all.sh / scripts/build*.sh）に固定を組み込んだ。CI も 1.27.2 に更新
 - operator の権限範囲を明確化（コード実行境界を除く）。`docs/PROCEDURE.md` / `README.md` / `README.ja.md` に operator と admin の境界（コード実行境界を越えるか）を明記
 - モジュール設定のうち保護・復旧・コード実行境界に直結するフィールドの変更を admin 限定に（fail-closed）。対象: `plugin_path` / `chain_key_path` / `integrity_baseline_path` / `integrity_files` / `watch_files` / `block_mode` / `fim_watch` / `fim_watch_paths` / `fim_watch_baseline_path` / `suid_check` / `suid_paths` / `suid_watch` / `suid_watch_paths` / `suid_fast_check` / `suid_fast_paths` / `cron_check` / `cron_paths` / `listen_port_check` / `firewall_backend` / `block_state_path` / `block_whitelist` / `block_duration_sec` / `sudo_ignore_commands` / `notify_min_level` / `log_path`。`PUT /api/modules/{name}` で現在値と異なる場合に admin を要求（`internal/api/modules.go`）。admin 判定は `auth.Handler.IsAdmin` を注入（api は auth に非依存）。しきい値・間隔・除外などの運用調整は operator のまま
 - アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）

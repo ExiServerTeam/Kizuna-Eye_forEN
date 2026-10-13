@@ -16,7 +16,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:-ubuntu:20.04}"
-GO_VER="${KIZUNA_GO_VER:-1.27.1}"
+GO_VER="${KIZUNA_GO_VER:-1.27.2}"
 RUN_UID="$(id -u)"
 RUN_GID="$(id -g)"
 
@@ -29,7 +29,7 @@ set -e
 apt-get update -qq >/dev/null 2>&1
 apt-get install -y -qq build-essential git curl ca-certificates >/dev/null 2>&1
 
-# 公式 Go を導入（apt の golang は古く 1.27.1 を満たさない）
+# 公式 Go を導入（apt の golang は古く 1.27.2 を満たさない）
 if [ ! -x /usr/local/go/bin/go ]; then
   curl -fsSL https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz -o /tmp/go.tgz
   tar -C /usr/local -xzf /tmp/go.tgz

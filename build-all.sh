@@ -26,7 +26,11 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 export PATH="$PATH:/usr/local/go/bin"
-export GOTOOLCHAIN=auto
+# Pin the exact patch: the host and every plugin must be built with the SAME
+# toolchain, or plugin.Open fails with "different version of package".
+# GOTOOLCHAIN=auto lets Go fetch go1.27.2 when it is not installed yet.
+export GOTOOLCHAIN=${GOTOOLCHAIN:-auto}
+PINNED_GO=go1.27.2
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 DEPLOY_DIR="$BIN_DIR/plugins"
@@ -43,10 +47,10 @@ VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 mkdir -p "$BIN_DIR"
-CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
-CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
-CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
-CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 log "    host OK (version=${VERSION})"
 
 build_plugin() {
@@ -60,7 +64,7 @@ build_plugin() {
         return 1
     fi
     log "2/3 plugin $name ($dir)"
-    ( cd "$dir" && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o "$name.so" . )
+    ( cd "$dir" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildmode=plugin -o "$name.so" . )
     if [ ! -r "$SIGNING_KEY" ]; then
         log "WARN signing key not readable ($SIGNING_KEY); leaving $name.so unsigned"
     else

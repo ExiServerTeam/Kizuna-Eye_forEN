@@ -2,6 +2,16 @@ module Kizuna-Eye
 
 go 1.27.1
 
+// toolchain pins the exact patch used to build the host AND every plugin.
+// Go plugins require an exact build-hash match for shared packages, and a
+// different toolchain patch produces a different hash: a host rebuilt with
+// go1.27.2 refuses a plugin built with go1.27.1 with
+// "plugin was built with a different version of package". Pinning here (with
+// GOTOOLCHAIN=auto) makes `go build` fetch and use this exact version, so
+// host and plugins stay ABI-compatible. go1.27.2 also fixes ten reachable
+// net/http HTTP/2 vulnerabilities found by govulncheck in go1.27.1.
+toolchain go1.27.2
+
 require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mouuff/go-rocket-update v1.5.6

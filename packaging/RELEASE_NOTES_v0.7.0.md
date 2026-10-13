@@ -19,7 +19,7 @@ This release focuses on **a simpler installation experience**, **APT package dis
 
 ## Requirements
 
-- Go 1.27.1 or higher
+- Go 1.27.2 or higher
 - Ubuntu Server 20.04+ / Debian 11+ (other Linux distributions work too)
 - CGO_ENABLED=1 (when using the plugin package)
 
