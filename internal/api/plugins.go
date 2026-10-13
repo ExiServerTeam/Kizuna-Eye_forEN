@@ -1167,10 +1167,14 @@ func (p *PluginManager) inspectPlugin(
 	}
 	out, err := cmd.Output()
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok {
-			return nil, fmt.Errorf("plugin-inspect 失敗 (exit=%d): %s", ee.ExitCode(), string(ee.Stderr))
-		}
-		return nil, fmt.Errorf("plugin-inspect 実行失敗: %w", err)
+		// plugin-inspect reports a structured failure as JSON on STDOUT and
+		// exits non-zero (it also prints nothing on stderr for a clean
+		// "could not load" case). Reading only stderr produced an empty
+		// message ("plugin-inspect 失敗 (exit=1): "), which hid the real
+		// reason from the operator. Prefer the JSON error_message, then
+		// stderr, then the exit code.
+		reason := inspectFailureReason(out, err)
+		return nil, fmt.Errorf("plugin-inspect 失敗: %s", reason)
 	}
 
 	var raw struct {
@@ -1216,6 +1220,27 @@ func (p *PluginManager) inspectPlugin(
 		UploadedAt:     time.Now().Format(time.RFC3339),
 		UploaderIP:     remoteAddr,
 	}, nil
+}
+
+// inspectFailureReason extracts the human-readable cause from a failed
+// plugin-inspect run. It prefers the JSON error_message on stdout (the normal
+// path), then stderr, then a generic exit-code message.
+func inspectFailureReason(stdout []byte, runErr error) string {
+	if len(stdout) > 0 {
+		var r struct {
+			ErrorMessage string `json:"error_message"`
+		}
+		if json.Unmarshal(stdout, &r) == nil && strings.TrimSpace(r.ErrorMessage) != "" {
+			return r.ErrorMessage
+		}
+	}
+	if ee, ok := runErr.(*exec.ExitError); ok {
+		if s := strings.TrimSpace(string(ee.Stderr)); s != "" {
+			return fmt.Sprintf("exit=%d: %s", ee.ExitCode(), s)
+		}
+		return fmt.Sprintf("exit=%d（詳細不明）", ee.ExitCode())
+	}
+	return runErr.Error()
 }
 
 // inspectCommand builds the plugin-inspect invocation for a quarantined .so.
