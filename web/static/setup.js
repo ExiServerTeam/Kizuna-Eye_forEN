@@ -1,4 +1,5 @@
 // Kizuna-Eye - 初回セットアップ処理
+// Kizuna-Eye - first-run setup handling
 (function () {
     'use strict';
 
@@ -14,11 +15,13 @@
         errEl.hidden = false;
     }
 
+    // セットアップが完了済みならログインへ送る。
     // If setup is already done, send the user to login.
     fetch('/api/auth/status', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (s) {
             if (s && s.auth_enabled === false) {
+                // 認証無効: セットアップは該当しない。
                 // Auth disabled: setup is not applicable.
                 location.replace('/');
                 return;
@@ -59,6 +62,8 @@
                 })
                 .then(function (res) {
                     if (res.ok) {
+                        // setup エンドポイントはセッションを発行するため、
+                        // 再ログインさせずにダッシュボードへ直行する。
                         // The setup endpoint issues a session, so go straight to
                         // the dashboard instead of making the user log in again.
                         location.replace('/');

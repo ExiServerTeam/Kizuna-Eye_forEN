@@ -1,4 +1,5 @@
 // Kizuna-Eye - ログイン処理
+// Kizuna-Eye - login handling
 (function () {
     'use strict';
 
@@ -14,11 +15,13 @@
         errEl.hidden = false;
     }
 
+    // 既にログイン済み? ダッシュボードへ直行する。
     // Already logged in? Go straight to the dashboard.
     fetch('/api/auth/status', { credentials: 'same-origin' })
         .then(function (r) { return r.json(); })
         .then(function (s) {
             if (!s || s.auth_enabled === false) {
+                // 認証無効: ログイン不要。
                 // Auth disabled: no login needed.
                 location.replace('/');
                 return;
@@ -29,6 +32,7 @@
                 location.replace('/setup.html');
             } else if (s.guest_enabled) {
                 // ゲストログインが有効なときだけボタンを表示する。
+                // Show the button only when guest login is enabled.
                 var gb = document.getElementById('guestBtn');
                 if (gb) gb.hidden = false;
             }
