@@ -135,21 +135,16 @@ document.addEventListener('DOMContentLoaded', function () {
                 { key: 'recovery_hold_sec', labelKey: 'config.f.recovery_hold_sec', type: 'number', min: 0 },
             ],
         },
-        {
-            legendKey: 'config.g.dash.thresholds',
-            prefix: 'notifications.',
-            fields: [
-                { key: 'memory_warn_pct', labelKey: 'config.f.memory_warn_pct', type: 'number', min: 0, max: 100 },
-                { key: 'memory_critical_pct', labelKey: 'config.f.memory_critical_pct', type: 'number', min: 0, max: 100 },
-                { key: 'disk_free_warn_pct', labelKey: 'config.f.disk_free_warn_pct', type: 'number', min: 0, max: 100, hintKey: 'config.h.disk_free_warn_pct' },
-                { key: 'disk_free_critical_pct', labelKey: 'config.f.disk_free_critical_pct', type: 'number', min: 0, max: 100 },
-                { key: 'cpu_temp_warn_c', labelKey: 'config.f.cpu_temp_warn_c', type: 'number', min: 0 },
-                { key: 'cpu_temp_critical_c', labelKey: 'config.f.cpu_temp_critical_c', type: 'number', min: 0 },
-            ],
-            checks: [
-                { key: 'notify_recovery', labelKey: 'config.c.notify_recovery' },
-            ],
-        },
+        // NOTE: the alert thresholds (memory/disk/cpu_temp) and
+        // notify_recovery are deliberately NOT editable here. They used to
+        // appear in this GUI *and* in the dedicated alert panel
+        // ("/api/alert-config"), both writing the same
+        // notifications.* keys — two editors for one value, with different
+        // required roles (this page is admin, the alert panel is operator),
+        // so the two could silently disagree. The alert panel is now the
+        // single editor. collectGui() copies loadedConfig and only overwrites
+        // keys the form actually renders, so the values are preserved on
+        // save even though they no longer have inputs here.
     ];
 
     // 通知チャンネルは Discord のみ対応
