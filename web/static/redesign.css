@@ -245,7 +245,9 @@ input, select, textarea {
 /* ===== ヘッダー ===== */
 .header {
     top: 0;
-    padding: 14px 18px;
+    /* ヘッダーを縦に大きく。1 段目と 2 段目(ユーザー)の間隔も確保する。 */
+    padding: 18px 22px;
+    gap: 12px;
     border-radius: 0;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -253,7 +255,7 @@ input, select, textarea {
     border: none;
     border-bottom: 1px solid var(--border-color);
     box-shadow: none;
-    margin-bottom: 24px;
+    margin-bottom: 28px;
 }
 
 .logo {
@@ -278,14 +280,27 @@ input, select, textarea {
     border-bottom: none;
 }
 .nav-tab {
-    /* タブの縦幅を拡大（クリック領域と見た目のゆとり）。 */
-    padding: 10px 16px;
+    /* タブの縦幅をさらに拡大。 */
+    padding: 12px 18px;
     border-radius: var(--radius-sm);
-    font-size: 0.95rem;
+    font-size: 1rem;
     font-weight: 500;
     color: var(--text-secondary);
-    line-height: 1.35;
+    line-height: 1.4;
     transition: background 0.12s ease, color 0.12s ease;
+}
+
+/* 右上のコントロール（言語/テーマ/バージョン）が窮屈な幅で縦積みに
+   ならないよう、折り返しを抑えて余白を確保する。 */
+.header-controls {
+    gap: 10px;
+    flex-wrap: nowrap;
+}
+.theme-toggle {
+    padding: 8px 12px;
+}
+.version-badge {
+    padding: 4px 10px;
 }
 .nav-tab:hover { background: var(--bg-tertiary); color: var(--text-primary); }
 .nav-tab.active {
@@ -329,16 +344,17 @@ input, select, textarea {
 
 /* ===== レイアウト ===== */
 .main { gap: 24px; }
-/* カードを大きめに。minmax の下限と gap を上げ、広い画面では 2 列に収まりやすくする。 */
+/* カードをさらに大きく。下限・gap・カード内余白を上げる。
+   1 画面に 2 枚（狭い画面では 1 枚）が基本になる。 */
 .gauge-grid {
-    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+    gap: 24px;
 }
 
 /* ===== カード ===== */
 .gauge-card {
     border-radius: var(--radius-lg);
-    padding: 24px 22px 22px;
+    padding: 30px 28px 28px;
     border: 1px solid var(--border-color);
     background: var(--bg-card);
     backdrop-filter: none;
@@ -641,10 +657,15 @@ input, select, textarea {
 .gauge-card.alert-critical { animation: pulse-critical 1.8s ease-in-out infinite; }
 
 /* ===== レスポンシブ ===== */
-@media (max-width: 900px) {
+@media (max-width: 1024px) {
+    .gauge-grid { grid-template-columns: 1fr; gap: 18px; }
+    .gauge-card { padding: 24px 20px 20px; }
+    .header { padding: 14px 16px; margin-bottom: 18px; }
+    .header-controls { flex-wrap: wrap; }
+}
+@media (max-width: 600px) {
     .gauge-grid { grid-template-columns: 1fr; gap: 14px; }
-    .gauge-card { padding: 18px 16px 16px; }
-    .header { padding: 8px 12px; margin-bottom: 16px; }
+    .gauge-card { padding: 20px 16px 16px; }
 }
 @media (max-width: 600px) {
     .main { gap: 16px; }
