@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
@@ -29,6 +30,26 @@ type AlertActioner interface {
 // the action name and arguments and is the only privileged command the
 // dashboard may run for one-click remediation (sudoers grants it NOPASSWD).
 var actionHelperPath = "/usr/local/bin/kizuna-action.sh"
+
+// sudoBin is resolved to an absolute path so the dashboard invokes the real
+// sudo even when PATH contains a user-writable directory (design principle
+// V3: 特権ヘルパーの絶対パス化). pkg/module (smartctl) and internal/updater
+// already do this; running the bare name here was the one inconsistency.
+// Falling back to "sudo" only when no known location exists keeps the error
+// visible (exec fails) instead of silently skipping the action.
+var sudoBin = resolveSudoBin()
+
+func resolveSudoBin() string {
+	for _, c := range []string{"/usr/bin/sudo", "/bin/sudo", "/usr/sbin/sudo", "/sbin/sudo"} {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	if p, err := exec.LookPath("sudo"); err == nil {
+		return p
+	}
+	return "sudo"
+}
 
 // allowedActions is the closed set the UI may request. Keeping it a map (not
 // a slice) makes the membership test O(1) and the intent obvious: any name
@@ -113,7 +134,7 @@ func (h *ActionHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	if len(args) > 0 {
 		target = args[len(args)-1]
 	}
-	cmd := exec.CommandContext(ctx, "sudo", append([]string{"-n", actionHelperPath, req.Action}, args...)...)
+	cmd := exec.CommandContext(ctx, sudoBin, append([]string{"-n", actionHelperPath, req.Action}, args...)...)
 	out, runErr := cmd.CombinedOutput()
 	resultText := strings.TrimSpace(string(out))
 
