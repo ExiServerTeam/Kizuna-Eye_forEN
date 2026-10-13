@@ -34,7 +34,9 @@ scan() {
         [ -z "$ln" ] && continue
         start=$(( ln > 6 ? ln - 6 : 1 ))
         ctx="$(sed -n "${start},$((ln-1))p" "$f")"
-        ts="$(printf '%s\n' "$ctx" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+' | tail -1)"
+        # Accept both the legacy plain-text ts ("2026-10-05 03:07:13.509")
+        # and the JSON Lines RFC3339 ts ("2026-10-05T03:07:13+09:00").
+        ts="$(printf '%s\n' "$ctx" | grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})?' | tail -1)"
         ev="$(printf '%s\n' "$ctx" | grep -E 'セキュリティイベント送信|送信失敗|アラート|sudo|SSH|FIM' | tail -1 | cut -c1-160)"
         echo "  crash@line $ln  last_ts=${ts:-?}"
         [ -n "$ev" ] && echo "    prev: $ev"
