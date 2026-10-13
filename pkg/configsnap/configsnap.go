@@ -1,3 +1,13 @@
+// configsnap パッケージは設定ファイルのタイムスタンプ付きスナップショットを保ち、
+// 運用者が任意の過去の時点へロールバック（「タイムトラベル」）できるようにする。
+//
+// 設計意図:
+//   - 保存（設定変更）の直前に、現行ファイルをスナップショットとして退避する。
+//   - 世代管理は GFS 的（直近 N 件 + 日次 + 週次 + 月次）に行い、古いものから削除する。
+//   - 退避先は設定ファイルと同じディレクトリ配下の snapshots/（Samba 共有外）。
+//     秘密を含むため 0600、ディレクトリは 0700。
+//   - 復元は原子的（fsutil.WriteFileAtomic）。復元前の現行は「上書きされる
+//     1 スロット」だけに退避する（復元は設定変更ではないので、履歴を増やさない）。
 // Package configsnap keeps timestamped snapshots of configuration files so an
 // operator can roll back to any earlier point ("time travel").
 //
@@ -24,24 +34,33 @@ import (
 )
 
 const (
+	// dirName はスナップショットを保持する設定ファイルのサブディレクトリだ。
 	// dirName is the sub-directory of the config file that holds snapshots.
 	dirName = "snapshots"
 
+	// timeLayout はミリ秒を含み、同じ秒の 2 回の保存が衝突しないようにする。
+	// 同じレイアウトでパースし直す。
 	// timeLayout includes milliseconds so two saves in the same second do not
 	// collide. It is parsed back in the same layout.
 	timeLayout = "20060102T150405.000"
 
+	// GFS 保持の既定値。
 	// GFS retention defaults.
-	keepRecent  = 20 // 直近の保存を無条件で保持
-	keepDaily   = 7  // 直近7日は 1日1件
-	keepWeekly  = 8  // 直近8週は 1週1件
-	keepMonthly = 12 // 直近12か月は 1月1件
+	keepRecent  = 20 // 直近の保存を無条件で保持 / keep the most recent saves unconditionally
+	keepDaily   = 7  // 直近7日は 1日1件 / one per day for the last 7 days
+	keepWeekly  = 8  // 直近8週は 1週1件 / one per week for the last 8 weeks
+	keepMonthly = 12 // 直近12か月は 1月1件 / one per month for the last 12 months
 )
 
+// mu は snapshot/list/restore を直列化し、並行する保存がスナップショット
+// ディレクトリ上で競合しない（そして prune が復元中のファイルを消さない）ようにする。
 // mu serializes snapshot/list/restore so concurrent saves cannot race on the
 // snapshot directory (and so prune never removes a file mid-restore).
 var mu sync.Mutex
 
+// Entry は退避ファイル 1 件のメタデータだ。
+// Seq は同じミリ秒に取ったスナップショットを区別する（0 = 最初）。Time と
+// 併せて順序付けに使い、タイムスタンプが同一でも保存のバーストが真の順序を保つ。
 // Entry is one退避ファイルのメタデータ。
 // Seq disambiguates snapshots taken in the same millisecond (0 = first). It
 // is used for ordering together with Time, so a burst of saves keeps its
@@ -53,6 +72,10 @@ type Entry struct {
 	Size int64     `json:"size"`
 }
 
+// snapDir は設定ファイルのスナップショットを保持するディレクトリを返す。
+// ベース名は拡張子を剥がす（dashboard_config.json ではなく dashboard_config）。
+// 拡張子を保つとディレクトリがファイルに見え、"dashboard_config/" を探す
+// 運用者を混乱させた。
 // snapDir returns the directory that holds snapshots for a config file.
 // The base name is stripped of its extension (dashboard_config, not
 // dashboard_config.json): keeping the extension made the directory look like a
@@ -61,12 +84,15 @@ func snapDir(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), dirName, baseName(configPath))
 }
 
+// baseName は設定ファイルのベース名を拡張子なしで返す。
 // baseName returns the config file's base name without extension.
 func baseName(configPath string) string {
 	b := filepath.Base(configPath)
 	return strings.TrimSuffix(b, filepath.Ext(b))
 }
 
+// Snapshot は現在の設定ファイルをスナップショットディレクトリへコピーする。
+// ファイル欠落は no-op だ（スナップショットするものが無い）。
 // Snapshot copies the current config file into the snapshot directory. A missing
 // file is a no-op (nothing to snapshot).
 func Snapshot(configPath string) error {
@@ -78,6 +104,7 @@ func Snapshot(configPath string) error {
 	return snapshotLocked(configPath, time.Now().UTC())
 }
 
+// snapshotLocked はコピー + prune を行う。呼び出し側は mu を保持すること。
 // snapshotLocked performs the copy + prune. Caller must hold mu.
 func snapshotLocked(configPath string, now time.Time) error {
 	data, err := os.ReadFile(configPath)
@@ -94,12 +121,19 @@ func snapshotLocked(configPath string, now time.Time) error {
 	name := uniqueName(dir, baseName(configPath), now)
 	target := filepath.Join(dir, name)
 	// 0600: snapshot は秘密を含む。WriteFileAtomic は symlink を拒否する。
+	// 0600: snapshots hold secrets. WriteFileAtomic refuses a symlink.
 	if err := fsutil.WriteFileAtomic(target, data, 0600); err != nil {
 		return err
 	}
 	return pruneLocked(configPath, now)
 }
 
+// preRestoreName は直近の Restore の直前の設定内容を保持する、固定で上書きされる
+// スロットだ。意図的にタイムスタンプ付きスナップショットにはしない。List() は
+// "<base>.<ts>.json" のみを認識するため、このファイルは履歴に決して現れない。
+// 復元は設定変更ではないので、エントリを蓄積してはならない（繰り返しの復元が
+// そうでなければ運用者の本当の保存を GFS 窓から押し出してしまう）。最新の
+// 復元前状態だけが有用なので、毎回上書きする。
 // preRestoreName is the fixed, overwritten slot that holds the config content
 // from just before the most recent Restore. It is deliberately NOT a
 // timestamped snapshot: List() only recognizes "<base>.<ts>.json", so this
@@ -109,11 +143,14 @@ func snapshotLocked(configPath string, now time.Time) error {
 // pre-restore state is useful, so it is overwritten each time.
 const preRestoreName = ".pre-restore.json"
 
+// preRestorePath は復元前スロットのパスを返す。
 // preRestorePath returns the path of the pre-restore slot.
 func preRestorePath(configPath string) string {
 	return filepath.Join(snapDir(configPath), preRestoreName)
 }
 
+// savePreRestoreLocked は現在の設定内容を固定の復元前スロットへコピーし、
+// 以前のものを上書きする。呼び出し側は mu を保持すること。
 // savePreRestoreLocked copies the current config content into the fixed
 // pre-restore slot, overwriting the previous one. Caller must hold mu.
 func savePreRestoreLocked(configPath string) error {
@@ -131,6 +168,8 @@ func savePreRestoreLocked(configPath string) error {
 	return fsutil.WriteFileAtomic(preRestorePath(configPath), data, 0600)
 }
 
+// LastPreRestore は復元前スロットの内容を返す（存在すれば）。直近の Restore の
+// 直前の設定であるため、呼び出し側は単一の「復元を元に戻す」を提供できる。
 // LastPreRestore returns the content of the pre-restore slot, if present. It is
 // the config as it was immediately before the most recent Restore, so a caller
 // can offer a single "undo restore".
@@ -147,6 +186,12 @@ func LastPreRestore(configPath string) ([]byte, bool) {
 	return data, true
 }
 
+// uniqueName は dir 内にまだ存在しないスナップショットファイル名を返す。
+//
+// タイムスタンプはミリ秒精度なので、同じミリ秒内の 2 回の保存（高速なマシンでは
+// 十分起こり得るし、まさにテストがそうする）は同じ名前を生み、2 回目の
+// WriteFileAtomic が 1 回目を上書きしてスナップショットを失ってしまう。
+// 数値接尾辞が衝突を解消する。parseSnapshotTime はそれを無視する。
 // uniqueName returns a snapshot file name that does not yet exist in dir.
 //
 // The timestamp has millisecond precision, so two saves within the same
@@ -166,16 +211,19 @@ func uniqueName(dir, base string, now time.Time) string {
 			return cand
 		}
 	}
+	// 極めて稀なフォールバック: ナノ秒精度。
 	// Extremely unlikely fallback: nanosecond precision.
 	return fmt.Sprintf("%s.%s.json", base, now.Format("20060102T150405.000000000"))
 }
 
+// fileExists は path が存在するか（任意の型）を返す。
 // fileExists reports whether path exists (any type).
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
 }
 
+// List はスナップショットを新しい順で返す。ディレクトリ欠落はエラーにしない。
 // List returns snapshots newest-first. A missing directory is not an error.
 func List(configPath string) ([]Entry, error) {
 	if configPath == "" {
@@ -187,6 +235,7 @@ func List(configPath string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
+	// listLocked は古い順で返す。UI 用に新しい順へ反転する。
 	// listLocked returns oldest-first; reverse to newest-first for the UI.
 	out := make([]Entry, 0, len(snaps))
 	for i := len(snaps) - 1; i >= 0; i-- {
@@ -195,6 +244,7 @@ func List(configPath string) ([]Entry, error) {
 	return out, nil
 }
 
+// listLocked はスナップショットを古い順で返す。呼び出し側は mu を保持すること。
 // listLocked returns snapshots oldest-first. Caller must hold mu.
 func listLocked(configPath string) ([]Entry, error) {
 	dir := snapDir(configPath)
@@ -221,6 +271,10 @@ func listLocked(configPath string) ([]Entry, error) {
 		}
 		out = append(out, Entry{Name: e.Name(), Time: ts, Seq: seq, Size: info.Size()})
 	}
+	// 時刻、次に同一ミリ秒のシーケンスでソートする。時刻だけでソートすると
+	// 同じミリ秒に取った 2 つのスナップショットの順序が未定義になり（Go の sort は
+	// 安定でない）、高速な保存のバースト後に「最古のスナップショット」が誤った
+	// ファイルになり得た。
 	// Sort by time, then by the same-millisecond sequence. Sorting by time
 	// alone left the order of two snapshots taken in the same millisecond
 	// undefined (Go's sort is not stable), so "the oldest snapshot" could be
@@ -234,6 +288,8 @@ func listLocked(configPath string) ([]Entry, error) {
 	return out, nil
 }
 
+// parseSnapshotTime は "<base>.<ts>.json"（seq 0）または
+// "<base>.<ts>-<n>.json"（seq n）からタイムスタンプと同一ミリ秒シーケンスを抽出する。
 // parseSnapshotTime extracts the timestamp and the same-millisecond sequence
 // from "<base>.<ts>.json" (seq 0) or "<base>.<ts>-<n>.json" (seq n).
 func parseSnapshotTime(base, name string) (time.Time, int, bool) {
@@ -256,6 +312,9 @@ func parseSnapshotTime(base, name string) (time.Time, int, bool) {
 	return ts.UTC(), seq, true
 }
 
+// Restore は configPath を指定名のスナップショットで上書きする。現在のファイルは
+// 先に（ベストエフォートで）スナップショットされるため、復元自体が可逆になる。
+// name はスナップショットディレクトリ内の素のファイル名でなければならない。
 // Restore overwrites configPath with the named snapshot. The current file is
 // snapshotted first (best effort) so a restore is itself reversible. The name
 // must be a plain file name inside the snapshot directory.
@@ -275,6 +334,11 @@ func Restore(configPath, name string) error {
 	if err != nil {
 		return err
 	}
+	// 直近の復元前状態だけを、上書きされる単一スロットに保つ。復元は設定変更では
+	// ないため、タイムスタンプ付きスナップショットを追加してはならない。
+	// そうすると復元のたびに履歴が増え、運用者の本当の保存を押し出してしまう。
+	// 最後の復元前状態だけが有用で（直前に戻した復元を元に戻せる）、List() が
+	// 無視する名前で保存する。
 	// Keep only the most recent pre-restore state in a single, overwritten
 	// slot. A restore is not a config change, so it must NOT add a timestamped
 	// snapshot: doing so made every restore grow the history and push out the
@@ -286,6 +350,8 @@ func Restore(configPath, name string) error {
 	return fsutil.WriteFileAtomic(configPath, data, mode)
 }
 
+// pruneLocked は GFS ポリシー外のスナップショットを除去する。呼び出し側は mu を
+// 保持すること。
 // pruneLocked removes snapshots that fall outside the GFS policy. Caller must
 // hold mu.
 func pruneLocked(configPath string, now time.Time) error {
@@ -298,6 +364,7 @@ func pruneLocked(configPath string, now time.Time) error {
 	}
 	keep := make(map[string]bool, len(snaps))
 
+	// 1) 常に最新の keepRecent 件を保持する。
 	// 1) Always keep the newest keepRecent snapshots.
 	kept := 0
 	for i := len(snaps) - 1; i >= 0 && kept < keepRecent; i-- {
@@ -305,6 +372,7 @@ func pruneLocked(configPath string, now time.Time) error {
 		kept++
 	}
 
+	// 2) GFS バケット。新しい順に歩き、日/週/月ごとに最初に見たものを保つ。
 	// 2) GFS buckets, walking newest-first: keep the first seen per day/week/month.
 	seenDay := map[string]bool{}
 	seenWeek := map[string]bool{}
@@ -335,6 +403,7 @@ func pruneLocked(configPath string, now time.Time) error {
 				keep[s.Name] = true
 			}
 		default:
+			// 月次窓より古い: 削除する。
 			// Older than the monthly window: drop.
 		}
 	}
