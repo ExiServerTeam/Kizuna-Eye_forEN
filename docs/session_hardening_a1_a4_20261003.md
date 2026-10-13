@@ -224,8 +224,8 @@
 
 ## 追加記録: リードの push（未完了・要ユーザー対応）
 
-`master` は `origin/master`（`4713e85`）から **63 コミット先行 / 0 遅れ**（fast-forward 可能）。
-ただし push は GitHub 側の権限で拒否された。
+本文書のコミットを除き、`master` は `origin/master`（`4713e85`）から
+**63 コミット先行 / 0 遅れ**（fast-forward 可能）。ただし push は GitHub 側の権限で拒否された。
 
 ```
 remote: Permission to ExiServerTeam/Kizuna-Eye_forEN.git denied to sy815twty-spec.
@@ -249,10 +249,12 @@ fatal: unable to access 'https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git/'
 
 ### 作業保全（push できない間の受け渡し用）
 
-- `tmp/lead_a3a4_63commits.bundle`（669,436 bytes / SHA256
-  `F80DFC47C02598AA47754AF0BAF1EB38B35A43FA75758DB8527D40DFE54FCF57`）
-  - `origin/master` = `4713e85` を基点とした 63 コミットを収録。受け手での取り込み:
-    `git pull <bundle> master`（基点を持たない場合は `git fetch <bundle> master:refs/heads/<branch>`）。
+- `tmp/lead_a3a4.bundle`（基点 `4713e85` / 収録 `refs/heads/master`）
+  - 受け手での取り込み: `git pull <bundle> master`
+    （基点を持たない場合は `git fetch <bundle> master:refs/heads/<branch>`）。
+  - 自己検証: `git bundle verify tmp/lead_a3a4.bundle` が `is okay` を返す。
+    サイズと SHA256 は転送時に別途連絡する（本ノートへの追記でバンドルの内容も
+    1 コミット分だけ変化し得るため、固定値をここには書かない）。
 - `tmp/` は `.gitignore` 対象なので push 内容には含まれない。
 
 ## 残タスク（要 sudo / 判断）
