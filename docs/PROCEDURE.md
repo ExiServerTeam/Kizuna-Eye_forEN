@@ -243,3 +243,9 @@ gcc が無い環境では race 検証は自動的にスキップされる。Linu
 - プラグインが読み込まれない場合は、Agent 本体と同一ソースで再ビルドされているかを確認する。
 - ログが表示されない場合は、ログファイルのパスと権限を確認する。
 - `smartctl` が無い環境ではディスクの温度と健康状態は取得されない。
+- `systemctl status` が `status=203/EXEC`（`Failed to execute`）で失敗する場合は、本体を実行するユーザーがバイナリとその**親ディレクトリ**を辿れるかを確認する。`/opt/kizuna-eye` が root の umask 077 で作られた 0700 のままだと、バイナリに実行権を付けても exec できない（`ls -ld /opt/kizuna-eye /opt/kizuna-eye/bin`）。復旧は次の 2 行（owner は実行ユーザー、グループは kizuna-eye）：
+
+      sudo chmod o+rx /opt/kizuna-eye /opt/kizuna-eye/bin
+      sudo chgrp kizuna-eye /opt/kizuna-eye/bin/agent_linux && sudo chmod 0750 /opt/kizuna-eye/bin/agent_linux
+
+  `install.sh` / `systemd/migrate-agent-user.sh` はディレクトリのモードを明示的に正規化するようになったため、再実行で同じ状態には戻らない。

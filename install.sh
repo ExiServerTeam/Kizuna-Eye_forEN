@@ -395,8 +395,27 @@ log "▶ ディレクトリ準備"
 mkdir -p "$BIN_DIR" "$PLUGIN_OUT_DIR" logs plugins || { err "ディレクトリ作成に失敗"; exit 1; }
 RUN_DIR="${KIZUNA_RUN_DIR:-/opt/kizuna-eye/run}"
 mkdir -p "$RUN_DIR" 2>/dev/null || true
+
+# モードは umask に依存させない。root の umask 077 で mkdir すると
+# /opt/kizuna-eye が 0700 になり、非 root のサービスユーザー
+# (dashboard = 実行ユーザー / agent = kizuna-eye) が本体を exec できず、
+# systemd が status=203/EXEC で起動できなくなる（実機で発生した）。
+# ディレクトリは「通り抜け (x) + 読み取り (r)」を全ユーザーへ許可しておく。
+for d in "$(dirname "$BIN_DIR")" "$BIN_DIR" "$PLUGIN_OUT_DIR" "$RUN_DIR"; do
+    [ -d "$d" ] || continue
+    chmod o+rx "$d" 2>/dev/null || true
+done
+
 TARGET_UID="${SUDO_UID:-$(id -u)}"; TARGET_GID="${SUDO_GID:-$(id -g)}"
-if [ "$(id -u)" -eq 0 ]; then chown -R "$TARGET_UID:$TARGET_GID" "$BIN_DIR" "$RUN_DIR" logs plugins 2>/dev/null || true; fi
+if [ "$(id -u)" -eq 0 ]; then
+    # sudo 経由なら SUDO_UID は実行者。root シェル (su - / sudo -i) から実行すると
+    # SUDO_UID が無く root 所有のままになり、dashboard からのプラグイン配置・署名が
+    # 権限エラーになる。所有権を直す方法を案内する。
+    if [ -z "${SUDO_UID:-}" ]; then
+        warn "root シェルから実行されています（SUDO_UID なし）。$BIN_DIR が root 所有になり、dashboard からのプラグイン配置・署名が失敗します。sudo ./install.sh の形で実行し直すか、後で chown -R <ユーザー> $BIN_DIR を実行してください。"
+    fi
+    chown -R "$TARGET_UID:$TARGET_GID" "$BIN_DIR" "$RUN_DIR" logs plugins 2>/dev/null || true
+fi
 ok "$BIN_DIR / $PLUGIN_OUT_DIR / logs / plugins"
 
 # ---- 5. 本体ビルド ----
@@ -772,6 +791,16 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
         else
             warn "dashboard の systemd 起動に失敗しました。手動で: sudo systemctl enable --now kizuna-dashboard"
         fi
+        # restart が成功を返しても直後に落ちることがある（例: 203/EXEC =
+        # バイナリ本体か親ディレクトリの権限不足）。数秒待って状態を確認し、
+        # 落ちていれば journal の見方を案内する（「入ったつもり」を防ぐ）。
+        sleep 2
+        DASH_STATE="$($SUDO systemctl is-active kizuna-dashboard 2>/dev/null || true)"
+        if [ "$DASH_STATE" = "active" ]; then
+            ok "dashboard は稼働中 (systemd)"
+        else
+            warn "dashboard が active ではありません（state=$DASH_STATE）。確認: sudo journalctl -u kizuna-dashboard -n 50 --no-pager"
+        fi
         # 移行済みの場合、agent も再起動して新バイナリを反映する（停止は伴わない）。
         if [ "$ALREADY_INSTALLED" -eq 1 ]; then
             # start-limit-hit（再起動の繰り返しで failed）だと restart が弾かれる
@@ -780,6 +809,18 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
             $SUDO systemctl restart kizuna-eye-agent 2>/dev/null \
                 && ok "agent を再起動しました" \
                 || warn "agent の再起動に失敗しました: sudo systemctl restart kizuna-eye-agent"
+            sleep 1
+            AGENT_STATE="$($SUDO systemctl is-active kizuna-eye-agent 2>/dev/null || true)"
+            if [ "$AGENT_STATE" != "active" ]; then
+                warn "agent が active ではありません（state=$AGENT_STATE）。確認: sudo journalctl -u kizuna-eye-agent -n 50 --no-pager"
+                # 203/EXEC の典型原因（親ディレクトリ / バイナリの権限）を切り分けて案内する。
+                # sudo のパスワード待ちで止まらないよう、非対話 (-n) が通るときだけ調べる。
+                if getent passwd kizuna-eye >/dev/null 2>&1 && $SUDO -n true 2>/dev/null; then
+                    if ! $SUDO -n -u kizuna-eye test -x "$BIN_DIR/agent_linux" 2>/dev/null; then
+                        warn "kizuna-eye から $BIN_DIR/agent_linux を実行できません。: sudo chmod o+rx $(dirname "$BIN_DIR") $BIN_DIR && sudo chgrp kizuna-eye $BIN_DIR/agent_linux && sudo chmod 0750 $BIN_DIR/agent_linux"
+                    fi
+                fi
+            fi
         fi
     fi
 fi

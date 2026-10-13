@@ -318,6 +318,16 @@ if [ -f "$AGENT_BIN" ]; then
     echo "   $(stat -c '%a %U:%G' "$AGENT_BIN") $AGENT_BIN"
 fi
 
+# 親ディレクトリが 0700 だと、バイナリに実行権を付けても exec できない
+# （トラバース不可 → systemd は status=203/EXEC で失敗する）。root の
+# umask 077 で install.sh が mkdir した場合に起きる。通り抜け (x) を許可する。
+# 書き込み権は与えない（配置できるのは所有者=dashboard 実行ユーザーだけ）。
+for d in "$(dirname "$BIN_DIR")" "$BIN_DIR"; do
+    [ -d "$d" ] || continue
+    chmod o+rx "$d"
+    echo "   $(stat -c '%a %U:%G' "$d") $d"
+done
+
 echo "$(msg "▶ 3.6 共有グループと共有設定の権限")"
 # agent は $DATA の agent_config.json / modules.json を読み続ける（UI の設定変更を
 # agent に届けるため）。どちらもダッシュボード (= 運用ユーザー) が保存のたびに
