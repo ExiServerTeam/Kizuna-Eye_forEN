@@ -68,7 +68,7 @@ See README.md for details.
 - Executable bits normalized across the tree (`.sh` = 100755, everything else = 100644)
 
 ### Fixed
-- Build failure on Ubuntu 26.04+ where `. /etc/os-release` overwrote `VERSION`
+- Build failure on newer releases (Ubuntu 26.04 and later), where `. /etc/os-release` overwrote `VERSION` — Ubuntu 20.04–24.04 were unaffected
 - cron / action helper install skipped when run as root
 - `update.sh` plugin re-signing looked for keys under `/root/.kizuna-eye`
 - Agent binary exec permission (203/EXEC) now re-applied on every install
