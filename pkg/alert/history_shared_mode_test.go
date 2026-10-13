@@ -12,7 +12,7 @@ import (
 )
 
 // A-4: alert_history.jsonl はダッシュボード (= 運用ユーザー) が書き、agent
-// (kizuna-agent) がプラグインの V2-B 整合性検証で読む。移行スクリプト
+// (kizuna-eye) がプラグインの V2-B 整合性検証で読む。移行スクリプト
 // (systemd/migrate-agent-user.sh §3.7) が与えた group read (0640) をダッシュ
 // ボードが起動時・追記時・圧縮時に 0600 へ戻すと、agent はチェック間隔ごとに
 // 「open failed: permission denied」の警告 (= alert_history_tamper) を出し続ける。

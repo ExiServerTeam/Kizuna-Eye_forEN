@@ -112,7 +112,7 @@
 - 該当: `monitor.go:40-43`（`lineSource{path, offset}`）、`monitor.go:107-119`（初回 offset = 現在サイズ）。
 - 攻撃シナリオ: `logrotate`/`systemctl restart`/手動 truncate の直後に攻撃アクションを実行。
   新しいファイルは古い offset より小さいため、Seek 位置以降が空 → **その区間の行が読まれない**。
-  既知課題として `docs/session_part10.md:63`「ログローテーションの inode 追跡 — 未実装」。
+  既知課題として `docs/WORK_RECORD_2026-10-03_part10.md:63`「ログローテーションの inode 追跡 — 未実装」。
 - 深刻度: **medium**（検知の穴。ローテーション直後という限定的な時間窓）
 - 修正: `syscall.Stat_t` の `Dev`/`Ino` を `lineSource` に保持し、変化したら `offset=0` にリセット。
   併せて `!NotExist` 時の挙動（ファイル一時消失）も明示的に扱う。
@@ -240,7 +240,7 @@
 
 **結論（先）**: このリポジトリにあるコードだけでは **V1/V2/V4/V5 の検証は不能**。
 V3 のみ、repo 内 `scripts/kizuna-cron-read.sh`（573B、絶対パス化済み）と
-`docs/session_part11.md:16` の検証記録で「意図どおり」であることを確認できる。
+`docs/WORK_RECORD_2026-10-03_part11.md:16` の検証記録で「意図どおり」であることを確認できる。
 V1/V2/V4/V5 は配備版（`/samba/share/Kizuna-Security/plugin/*.go`）を持ち込んでもらえれば
 本日中に判定できる。以下、各項目の「いま分かること」。
 
@@ -262,7 +262,7 @@ V1/V2/V4/V5 は配備版（`/samba/share/Kizuna-Security/plugin/*.go`）を持�
 
 ### V2（alert_history 整合性）
 - 検証可否: **不可**。repo の `pkg/alert/history.go` に整合性チェックは無い（`Load` は無検証: history.go:234-269）。
-  `docs/session_part11.md:40` は「V2-B 実装済み」と書くが、該当コードが repo に存在しない
+  `docs/WORK_RECORD_2026-10-03_part11.md:40` は「V2-B 実装済み」と書くが、該当コードが repo に存在しない
   → 配備版プラグイン（`filelog` 相当）にあると推定。
 - 精度への懸念: 「in-place 改ざん=critical / 行数減=warning」という**行数ベース**の判定は、
   行を **追加** された場合（偽アラート注入）や、**行数を保ったまま内容を入れ替えた**場合に沈黙する。
@@ -273,7 +273,7 @@ V1/V2/V4/V5 は配備版（`/samba/share/Kizuna-Security/plugin/*.go`）を持�
 ### V3（ヘルパー絶対パス化）
 - 検証可否: **可（repo 内で確認済み）**。`scripts/kizuna-cron-read.sh` は `/usr/bin/basename`,
   `/usr/bin/sha256sum`, `/usr/bin/cut`, `/usr/bin/printf` を使用。設置物は root:root 755 で実測 EXIT=0
-  （`docs/session_part11.md:16-18`）。
+  （`docs/WORK_RECORD_2026-10-03_part11.md:16-18`）。
 - **ただし V3 は検知のごく一部しか守っていない**。プラグイン本体は依然 PATH 依存で、
   `portmon.go:117 exec.Command("ss", ...)`、`pkg/module/system.go:111,118,120 smartctl` は PATH 経由。
   **「V3 完了」をもって PATH 乗っ取り耐性が完了したと判断してはいけない**（F-3）。
@@ -297,7 +297,7 @@ V1/V2/V4/V5 は配備版（`/samba/share/Kizuna-Security/plugin/*.go`）を持�
 
 ### V5（ログインジェクション検知 = journald 照合）
 - 検証可否: **不可**。snapshot の `monitor.go:28-31, 471-509` は sshd ログを正規表現で読むだけで、
-  journald 照合が無い。`docs/session_part13b.md` 以降に記載があると推定。
+  journald 照合が無い。`docs/WORK_RECORD_2026-10-03_part13b.md` 以降に記載があると推定。
 - 精度への懸念（照合を入れるなら考慮必須）:
   1. **時刻の丸め**: journald のエントリはマイクロ秒精度、ログ行の `ts` は秒精度。
      照合は「同一秒窓 ± N秒」で行わないと**偽陰性（本物を偽物と判定）**が多発する。

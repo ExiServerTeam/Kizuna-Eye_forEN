@@ -39,36 +39,60 @@
 
 各ファイルを環境に合わせて編集する。秘密情報を含むため、権限は 0600 に保つこと。
 
-### 1.4 起動
+### 1.4 セットアップ（install.sh 一本）
 
-    ./start.sh
+初回セットアップは `install.sh` だけで完結する。次を実行する。
 
-ブラウザで `http://<サーバーのIP>:8080` を開く。
+    sudo ./install.sh
 
-一部だけを起動したい場合は `./start.sh dashboard` / `./start.sh agent` を使う
-（停止は `./stop.sh dashboard` / `./stop.sh agent`）。引数省略時は従来どおり両方を
-起動・停止する。
+`install.sh` は次を順に行う。
 
-#### agent を専用ユーザーで動かす場合（A-4）
+1. 必要パッケージの差分導入（smartmontools / rsync / git / curl / build-essential / bubblewrap）
+2. Go の確認
+3. 本体ビルド（`plugin-inspect` / `dashboard_linux` / `agent_linux` / `plugin-sign`）
+4. プラグインのビルドと署名（純正プラグインのみ。署名鍵が無ければ生成）
+5. sudoers の導入（smartctl / cron ヘルパー / ワンクリック対処）
+6. **systemd 登録**（dashboard + agent）。agent は専用ユーザー `kizuna-eye` で
+   動かす（H-1 権限分離）。`systemd/migrate-agent-user.sh` を内部で呼ぶ
+7. 起動
 
-`systemd/migrate-agent-user.sh` で agent を専用ユーザー `kizuna-agent` へ移行すると、
-以降 agent は systemd（`kizuna-agent.service`）が管理する。このとき `start.sh` /
-`stop.sh` は **agent を操作しない**（agent は別ユーザー所有なので kill できず、
-systemd 管理下の agent と二重に動くと状態ファイルを奪い合うため）。agent の操作は
-systemctl を使う。
+主なオプション:
 
-    systemctl status kizuna-agent
-    sudo systemctl restart kizuna-agent
-    journalctl -u kizuna-agent -f
+    ./install.sh --no-install    # パッケージ導入をスキップ
+    ./install.sh --no-build      # ビルドをスキップ
+    ./install.sh --no-start      # 起動をスキップ
+    ./install.sh --no-systemd    # systemd 登録をスキップ（start.sh/stop.sh で手動管理）
 
-dashboard は従来どおり手動管理なので、移行後は次で再起動する。
+完了後、ブラウザで `http://<サーバーのIP>:8080` を開く。
 
-    ./stop.sh dashboard
-    ./start.sh dashboard
+#### 手動管理（--no-systemd）で使う場合
+
+`./install.sh --no-systemd` で導入した場合、dashboard / agent は `start.sh` /
+`stop.sh` で管理する。
+
+    ./start.sh                 # dashboard + agent
+    ./start.sh dashboard       # dashboard のみ
+    ./stop.sh                  # 両方停止
+
+#### systemd 管理下の操作（既定）
+
+既定では dashboard と agent は systemd が管理する。agent は専用ユーザー
+`kizuna-eye`（`kizuna-eye-agent.service`）で動く。このとき `start.sh` / `stop.sh` は
+**agent を操作しない**（agent は別ユーザー所有なので kill できず、systemd 管理下の
+agent と二重に動くと状態ファイルを奪い合うため）。操作は systemctl を使う。
+
+    systemctl status kizuna-eye-agent
+    sudo systemctl restart kizuna-eye-agent
+    journalctl -u kizuna-eye-agent -f
+
+dashboard は `kizuna-dashboard.service` で動く。
+
+    systemctl status kizuna-dashboard
+    sudo systemctl restart kizuna-dashboard
 
 agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./start.sh` を使う
-（systemd 側は `systemctl disable --now kizuna-agent` で止めておくこと）。
-移行の設計と適用手順は `docs/session_hardening_a1_a4_20261003.md` を参照。
+（systemd 側は `systemctl disable --now kizuna-eye-agent` で止めておくこと）。
+移行の設計と適用手順は `docs/H1_PLAN.md` を参照。
 
 移行後は agent がアラート履歴 `logs/alert_history.jsonl` を整合性検証（V2-B）で読む
 ため、ファイルにはグループ `kizuna-eye` の読み取り（0640）を与える。ダッシュボードは

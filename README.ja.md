@@ -85,6 +85,26 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 
 ## インストール
 
+### かんたんセットアップ（推奨）
+
+`install.sh` だけで初期セットアップが完結します（パッケージ導入 → ビルド →
+プラグイン署名 → sudoers → systemd 登録 → 起動）。
+
+    git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
+    cd Kizuna-Eye
+    sudo ./install.sh
+
+agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashboard は
+`kizuna-dashboard.service` として systemd に登録されます。systemd を使わず
+手動管理（`start.sh` / `stop.sh`）にする場合は `--no-systemd` を付けます。
+
+アンインストール:
+
+    sudo ./uninstall.sh            # サービス等を撤去（データは温存）
+    sudo ./uninstall.sh --purge    # データ・鍵・ユーザーまで完全削除
+
+### 手動セットアップ
+
 ### 1. リポジトリをクローン
 
     git clone https://github.com/sy815twty-spec/Kizuna-Eye.git

@@ -13,7 +13,7 @@
 | 2. 認証 | C | ロール/ bcrypt / セッション / 最終管理者保護 | `auth.enabled` 既定 false、`public_viewer` 既定 true、`agent_token` 既定 空 → セキュアデフォルト化 |
 | 3. プラグイン | B- | 別プロセス検査、Ed25519 署名検証（任意）、bwrap 分離（任意） | `require_signature` 既定 false → 既定 true 化、共有型の最小化 |
 | 4. ログ | B+ | HMAC チェーン＋定期検証、alert_history 整合性、inode 追跡、FIM | リモート転送、alert_history への HMAC 署名 |
-| 5. 権限 | C+ | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3） | **agent 専用ユーザー化（H-1）**＝最大の弱点、systemd 保護（ProtectSystem 等） |
+| 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities） | systemd 保護の他ユニットへの横展開、HMAC 鍵ローテーション自動化 |
 | 6. 運用 | C+ | CONTRIBUTING 受入範囲、CI(go test/-race) | SECURITY.md 拡充(済)、govulncheck CI(済)、ROADMAP(本書)、脆弱性開示ポリシー |
 
 ## 0.1 実装済み / 未実装 / やらないこと
@@ -26,11 +26,11 @@
 - ログローテーションの inode 追跡（monitor.go）。
 - alert_history の最終行ハッシュによる自己圧縮と改ざんの区別。
 - agent 専用ユーザー移行スクリプト（systemd/migrate-agent-user.sh）。
+- **H-1 agent 専用ユーザー化（権限分離）完了**（2026-10-05）。agent は専用ユーザー `kizuna-eye`、unit は `kizuna-eye-agent.service`、dashboard は `kizuna-dashboard.service`。`install.sh` だけで systemd 登録まで完結。`uninstall.sh` で撤去可能。
 
 ### 未実装 / 要強化（優先度順）
-- P0: H-1 agent 専用ユーザー化（権限分離）。
 - P1: セキュアデフォルト化（層1/2/3）、ログのリモート転送、alert_history の HMAC 署名。
-- P2: 共有型の最小化、systemd 保護、HMAC 鍵の自動ローテーション。
+- P2: 共有型の最小化、HMAC 鍵の自動ローテーション。
 - P3: E2E 自動化、Docker 再現手順、作業記録のサニタイズ（OSS 公開直前）。
 
 ### やらないこと（現時点）
@@ -38,7 +38,7 @@
 - `*.sh`（build/release/update）の無協議な変更。
 - 重いサンドボックス（gVisor 等）の常時適用（低スペック環境と矛盾）。
   プラグイン検査の分離は bwrap を任意適用とし、運用ルールで補う。
-- 完全な改ざん防止の保証（同一ユーザー権限では不可能。H-1 が前提）。
+- 完全な改ざん防止の保証（同一ユーザー権限では不可能。H-1 で権限分離済みだが、alert_history 鍵は書き手=dashboard のため user 権限奪取には完全防御でない）。
 
 ---
 
