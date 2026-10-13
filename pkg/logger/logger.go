@@ -170,6 +170,9 @@ func (w *rotatingWriter) cleanup() {
 }
 
 func (w *rotatingWriter) Sync() error {
+	if w == nil {
+		return nil
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	// w.file is nil after a failed rotation whose reopen also failed, so a
@@ -228,13 +231,19 @@ func NewLogger(opts *Options) *Logger {
 
 	lg := log.New(writer, "", flag)
 
-	return &Logger{
+	out := &Logger{
 		logger: lg,
 		level:  opts.Level,
 		prefix: opts.Prefix,
 		file:   file,
-		writer: rot,
 	}
+	// nil の *rotatingWriter を writer に入れてはいけない。型アサーションは
+	// 成功するため Sync/Close が nil レシーバを触り、シャットダウン時に
+	// panic する（LogFile 未指定・オープン失敗時に発生）。
+	if rot != nil {
+		out.writer = rot
+	}
+	return out
 }
 
 func (l *Logger) log(level Level, format string, args ...interface{}) {
@@ -276,7 +285,7 @@ func (l *Logger) Fatal(format string, args ...interface{}) { l.log(FATAL, format
 func (l *Logger) Sync() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if rw, ok := l.writer.(*rotatingWriter); ok {
+	if rw, ok := l.writer.(*rotatingWriter); ok && rw != nil {
 		return rw.Sync()
 	}
 	if l.file != nil {
@@ -295,7 +304,7 @@ func (l *Logger) Close() {
 
 // closeLocked performs the actual close. Caller must hold l.mu.
 func (l *Logger) closeLocked() {
-	if rw, ok := l.writer.(*rotatingWriter); ok {
+	if rw, ok := l.writer.(*rotatingWriter); ok && rw != nil {
 		_ = rw.Close()
 		return
 	}
