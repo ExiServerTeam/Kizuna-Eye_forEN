@@ -1,5 +1,6 @@
 // ============================================
 // Kizuna-Eye - モジュール管理 JavaScript
+// Phase 8-5: 手動実行ボタン追加
 // ============================================
 
 (function() {
@@ -61,6 +62,49 @@
     let editingPluginName = null;
 
     const API_BASE = '/api/modules';
+
+    // ============================================================
+    // ★ Phase 8-5: WebSocket 接続（backup_result 受信用）
+    // ============================================================
+    let ws = null;
+    const backupResultHandlers = new Map(); // request_id → {resolve, reject, timer}
+
+    function connectWS() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+        ws.addEventListener('open', () => {
+            console.log('[WS] connected');
+        });
+        ws.addEventListener('close', () => {
+            console.log('[WS] disconnected, reconnecting in 3s...');
+            setTimeout(connectWS, 3000);
+        });
+        ws.addEventListener('error', (e) => {
+            console.error('[WS] error', e);
+        });
+        ws.addEventListener('message', (event) => {
+            let data;
+            try { data = JSON.parse(event.data); } catch { return; }
+            if (data.event !== 'backup_result') return;
+            const handler = backupResultHandlers.get(data.request_id);
+            if (!handler) return;
+            clearTimeout(handler.timer);
+            backupResultHandlers.delete(data.request_id);
+            handler.resolve(data);
+        });
+    }
+    connectWS();
+
+    function waitForBackupResult(requestID, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                backupResultHandlers.delete(requestID);
+                reject(new Error('タイムアウト（結果が返ってきませんでした）'));
+            }, timeoutMs);
+            backupResultHandlers.set(requestID, { resolve, reject, timer });
+        });
+    }
 
     // ============================================================
     // テーマ
@@ -295,6 +339,40 @@
     }
 
     // ============================================================
+    // ★ Phase 8-5: 手動実行
+    // ============================================================
+    async function handleRunClick(btn) {
+        const name = btn.dataset.name;
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = '実行中...';
+
+        try {
+            const res = await fetch(`/api/plugins/${encodeURIComponent(name)}/run`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+            showToast('実行を受け付けました', 'info');
+            const result = await waitForBackupResult(data.request_id, 180000);
+
+            if (result.status === 'success') {
+                showToast(`成功 (${formatBytes(result.size)}, ${result.duration_ms}ms)`, 'success');
+            } else {
+                showToast(`失敗: ${result.error || 'unknown'}`, 'error');
+            }
+            await loadModules();
+        } catch (err) {
+            showToast(`実行失敗: ${err.message}`, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.textContent = original;
+        }
+    }
+
+    // ============================================================
     // 描画
     // ============================================================
     function renderModules() {
@@ -369,6 +447,11 @@
             const logPath = mod.config?.log_path || '自動';
             const interval = mod.config?.interval_sec || mod.config?.interval || 60;
 
+            // ★ Phase 8-5: プラグインのみ「▶ 実行」ボタンを表示
+            const runButton = (mod.type === 'plugin')
+                ? `<button class="btn-run" data-name="${escapeAttr(mod.name)}" title="手動実行">▶ 実行</button>`
+                : '';
+
             html += `
                 <div class="module-card">
                     <div class="module-card-header">
@@ -380,6 +463,7 @@
                             </span>
                         </div>
                         <div class="module-card-actions">
+                            ${runButton}
                             <button class="btn-edit" data-name="${escapeAttr(mod.name)}">編集</button>
                             <button class="btn-delete" data-name="${escapeAttr(mod.name)}">削除</button>
                         </div>
@@ -425,7 +509,12 @@
         enabledCount.textContent = enabled;
         disabledCount.textContent = disabled;
 
-        // 編集ボタン: type に応じてモーダルを切り替え
+        // ★ Phase 8-5: 実行ボタンのイベント登録
+        document.querySelectorAll('.btn-run').forEach(btn => {
+            btn.addEventListener('click', () => handleRunClick(btn));
+        });
+
+        // 編集ボタン
         document.querySelectorAll('.btn-edit').forEach(btn => {
             btn.addEventListener('click', () => {
                 const name = btn.dataset.name;
@@ -445,6 +534,7 @@
             });
         });
 
+        // 削除ボタン
         document.querySelectorAll('.btn-delete').forEach(btn => {
             btn.addEventListener('click', () => {
                 const name = btn.dataset.name;
@@ -620,7 +710,6 @@
 
                 showToast(`プラグイン「${result.name}」を登録しました`, 'success');
 
-                // 動的フォームモーダルを開く（新規なので空のconfig）
                 openPluginConfigModal(result, {});
                 await loadModules();
             } catch (err) {
@@ -809,6 +898,15 @@
             .replace(/'/g, '&#39;');
     }
     function escapeAttr(s) { return escapeHtml(s); }
+
+    function formatBytes(bytes) {
+        bytes = Number(bytes) || 0;
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
+    }
 
     if (exportFileBtn) {
         exportFileBtn.addEventListener('click', exportConfigFile);

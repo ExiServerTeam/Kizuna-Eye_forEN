@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -38,7 +39,6 @@ type Hub struct {
 	log        *logger.Logger
 	lastStatus *status.SystemStatus
 
-	// Phase 7: Agent 死活監視用
 	agentConn         *websocket.Conn
 	onAgentDisconnect func()
 	onAgentStatus     func(*status.SystemStatus)
@@ -61,7 +61,7 @@ func (h *Hub) Broadcast(msg []byte) {
 	h.RUnlock()
 
 	for _, conn := range clients {
-		conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
 		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
 			h.log.Debug("Broadcast 送信エラー: %v, クライアントを削除します", err)
 			h.Remove(conn)
@@ -81,12 +81,6 @@ func (h *Hub) Add(conn *websocket.Conn) bool {
 	return true
 }
 
-// ============================================================
-// Remove は クライアントを削除する
-//
-// 修正点: onAgentDisconnect() を h.Unlock() の前に呼ぶことで、
-// Agent 再起動時のレースコンディション（復帰通知の遅延）を防ぐ
-// ============================================================
 func (h *Hub) Remove(conn *websocket.Conn) {
 	h.Lock()
 	if _, ok := h.clients[conn]; ok {
@@ -96,7 +90,6 @@ func (h *Hub) Remove(conn *websocket.Conn) {
 	wasAgent := (h.agentConn == conn)
 	if wasAgent {
 		h.agentConn = nil
-		// ロック内で切断コールバックを呼ぶ（新Agentの接続より先に agentOnline=false を確定させる）
 		if h.onAgentDisconnect != nil {
 			h.onAgentDisconnect()
 		}
@@ -135,6 +128,49 @@ func (h *Hub) MarkAgentConn(conn *websocket.Conn) {
 	h.Unlock()
 }
 
+// ★ Phase 8-5: Agent へメッセージを送信する
+func (h *Hub) SendToAgent(payload map[string]interface{}) error {
+	h.RLock()
+	agentConn := h.agentConn
+	h.RUnlock()
+
+	if agentConn == nil {
+		return fmt.Errorf("Agent が接続されていません")
+	}
+
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	if err := agentConn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	return agentConn.WriteMessage(websocket.TextMessage, data)
+}
+
+// ★ Phase 8-5: Agent 以外の全クライアント（ブラウザ）に中継する
+func (h *Hub) BroadcastToBrowsers(msg []byte) {
+	h.RLock()
+	agentConn := h.agentConn
+	clients := make([]*websocket.Conn, 0, len(h.clients))
+	for conn := range h.clients {
+		if conn == agentConn {
+			continue
+		}
+		clients = append(clients, conn)
+	}
+	h.RUnlock()
+
+	for _, conn := range clients {
+		_ = conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
+		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			h.log.Debug("BroadcastToBrowsers 送信エラー: %v", err)
+			h.Remove(conn)
+		}
+	}
+}
+
 // ============================================================
 // main
 // ============================================================
@@ -169,7 +205,6 @@ func main() {
 		cancel()
 	}()
 
-	// ---------- Phase 7: 通知マネージャ ----------
 	notifierMgr := notify.FromConfig(cfg.Notifications, lg)
 	if notifierMgr.HasChannels() {
 		lg.Info("通知機能: 有効")
@@ -177,7 +212,6 @@ func main() {
 		lg.Info("通知機能: 無効（チャンネル未設定）")
 	}
 
-	// ---------- Phase 7: アラートエンジン ----------
 	alertCfg := alert.Config{
 		MemoryWarn:       cfg.Notifications.MemoryWarnPct,
 		MemoryCritical:   cfg.Notifications.MemoryCriticalPct,
@@ -193,7 +227,6 @@ func main() {
 	}
 	engine := alert.NewEngine(alertCfg, notifierMgr, lg)
 
-	// モジュールストレージ
 	modulesPath := "./modules.json"
 	storage := api.NewModulesStorage(modulesPath)
 	if err := storage.Load(); err != nil {
@@ -205,7 +238,6 @@ func main() {
 	hub.onAgentStatus = engine.OnStatus
 	hub.onAgentDisconnect = engine.OnAgentDisconnect
 
-	// ---------- Phase 7: Agent 応答なしの定期チェック ----------
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
@@ -219,7 +251,6 @@ func main() {
 		}
 	}()
 
-	// ---------- ルーティング ----------
 	mux := http.NewServeMux()
 
 	// ---- WebSocket ハンドラ ----
@@ -256,10 +287,27 @@ func main() {
 					break
 				}
 
-				// ★ 修正点: メッセージ受信成功時に ReadDeadline をリセット
-				//   Agent は1秒ごとにメッセージを送るので、これで切断されなくなる
 				conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 
+				// ★ Phase 8-5: メッセージ種別を判定
+				var envelope struct {
+					Event  string `json:"event"`
+					Action string `json:"action"`
+				}
+				_ = json.Unmarshal(msg, &envelope)
+
+				if envelope.Event != "" {
+					lg.Debug("イベント受信: %s", envelope.Event)
+					hub.BroadcastToBrowsers(msg)
+					continue
+				}
+
+				if envelope.Action != "" {
+					lg.Debug("コマンド受信（無視）: %s", envelope.Action)
+					continue
+				}
+
+				// Status として扱う
 				var s status.SystemStatus
 				if err := json.Unmarshal(msg, &s); err == nil {
 					if !isAgent {
@@ -291,9 +339,8 @@ func main() {
 	moduleHandler := api.NewModuleHandler(storage)
 	moduleHandler.RegisterRoutes(mux)
 
-	// ---- プラグイン管理API ----
-	// NewPluginManager は (manager, error) を返す新シグネチャに変更された。
-	pluginManager, err := api.NewPluginManager(storage, lg)
+	// ---- プラグイン管理API（★ hub を渡す） ----
+	pluginManager, err := api.NewPluginManager(storage, lg, hub)
 	if err != nil {
 		lg.Error("PluginManager 初期化失敗: %v", err)
 		lg.Warn("プラグイン API は無効化されます")
@@ -316,7 +363,6 @@ func main() {
 	}
 	mux.Handle("/", http.FileServer(http.Dir(staticDir)))
 
-	// ---- HTTP サーバー ----
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: mux,

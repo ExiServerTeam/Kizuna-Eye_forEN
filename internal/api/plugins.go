@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,12 +17,23 @@ import (
 	"Kizuna-Eye/pkg/module"
 )
 
+// ============================================================
+// AgentHub は Agent へコマンドを送信するためのインターフェース。
+// Dashboard 側の Hub が実装する。
+// ============================================================
+type AgentHub interface {
+	SendToAgent(payload map[string]interface{}) error
+}
+
+// ============================================================
 // PluginManager はプラグインを管理する
+// ============================================================
 type PluginManager struct {
 	storage    *ModulesStorage
 	logger     module.Logger
 	pluginsDir string
 	inspectBin string
+	hub        AgentHub
 }
 
 // PluginMeta は plugins/{name}.meta.json の中身や。
@@ -39,7 +51,8 @@ type PluginMeta struct {
 }
 
 // NewPluginManager は新しいプラグインマネージャーを作成する。
-func NewPluginManager(storage *ModulesStorage, logger module.Logger) (*PluginManager, error) {
+// hub は Agent へコマンドを送るために使う。nil でも動くが、手動実行は不可。
+func NewPluginManager(storage *ModulesStorage, logger module.Logger, hub AgentHub) (*PluginManager, error) {
 	exePath, err := os.Executable()
 	if err != nil {
 		return nil, fmt.Errorf("実行ファイルパス取得失敗: %w", err)
@@ -61,6 +74,7 @@ func NewPluginManager(storage *ModulesStorage, logger module.Logger) (*PluginMan
 		logger:     logger,
 		pluginsDir: pluginsDir,
 		inspectBin: inspectBin,
+		hub:        hub,
 	}, nil
 }
 
@@ -69,6 +83,7 @@ func (p *PluginManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/plugins/upload", p.handleUpload)
 	mux.HandleFunc("GET /api/plugins", p.handleList)
 	mux.HandleFunc("DELETE /api/plugins/{name}", p.handleDelete)
+	mux.HandleFunc("POST /api/plugins/{name}/run", p.handleRunPlugin) // ★ Phase 8-5
 }
 
 var safeNameRe = regexp.MustCompile(`^[A-Za-z0-9_\-]+$`)
@@ -87,8 +102,59 @@ func sanitizeName(name string) (string, error) {
 	return name, nil
 }
 
+// ============================================================
+// ★ Phase 8-5: 手動実行
+// ============================================================
+func (p *PluginManager) handleRunPlugin(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSONError(w, http.StatusBadRequest, "プラグイン名が指定されていません")
+		return
+	}
+	if _, err := sanitizeName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if p.hub == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Agent ハブが未設定です")
+		return
+	}
+
+	requestID := generateRequestID()
+	if err := p.hub.SendToAgent(map[string]interface{}{
+		"action":     "run_backup",
+		"plugin":     name,
+		"request_id": requestID,
+	}); err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "Agent に接続できません: "+err.Error())
+		return
+	}
+
+	if p.logger != nil {
+		p.logger.Info("手動実行リクエスト送信: plugin=%s request_id=%s", name, requestID)
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"status":     "accepted",
+		"request_id": requestID,
+		"plugin":     name,
+	})
+}
+
+// generateRequestID は 16バイトのランダムIDを返す。
+func generateRequestID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("req-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", b)
+}
+
+// ============================================================
 // handleUpload はプラグイン .so ファイルをアップロードし、
 // plugin-inspect でメタ情報を抽出して plugins/ に保存する。
+// ============================================================
 func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "ファイル解析エラー: "+err.Error())
