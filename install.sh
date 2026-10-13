@@ -598,16 +598,23 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
             SMARTCTL_PATH=""
         fi
         RUN_USER="${SUDO_USER:-$(id -un)}"
+        # The agent is the process that runs smartctl, and after H-1 it runs as
+        # the dedicated user kizuna-eye. Granting NOPASSWD to the operator who
+        # ran install.sh would leave the agent unable to use the helper while
+        # handing the operator an unnecessary root grant. Prefer the service
+        # user when it exists.
+        HELPER_USER="$RUN_USER"
+        if id kizuna-eye >/dev/null 2>&1; then HELPER_USER="kizuna-eye"; fi
         SUDOERS_FILE="/etc/sudoers.d/kizuna-smartctl"
         if [ -n "$SMARTCTL_PATH" ] && [ -d /etc/sudoers.d ]; then
             TMP="$(mktemp)"
-            printf '%s ALL=(root) NOPASSWD: %s\n' "$RUN_USER" "$SMARTCTL_PATH" > "$TMP"
+            printf '%s ALL=(root) NOPASSWD: %s\n' "$HELPER_USER" "$SMARTCTL_PATH" > "$TMP"
             if $SUDO install -m 0440 -o root -g root "$TMP" "$SUDOERS_FILE" 2>/dev/null \
                && $SUDO visudo -cf "$SUDOERS_FILE" >/dev/null 2>&1; then
-                ok "sudoers 設定: $SUDOERS_FILE (user=$RUN_USER, $SMARTCTL_PATH)"
+                ok "sudoers 設定: $SUDOERS_FILE (user=$HELPER_USER, $SMARTCTL_PATH)"
             else
                 warn "sudoers 設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:"
-                warn "  echo '$RUN_USER ALL=(root) NOPASSWD: $SMARTCTL_PATH' | sudo tee $SUDOERS_FILE"
+                warn "  echo '$HELPER_USER ALL=(root) NOPASSWD: $SMARTCTL_PATH' | sudo tee $SUDOERS_FILE"
             fi
             rm -f "$TMP"
         elif [ -z "$SMARTCTL_PATH" ]; then
@@ -632,6 +639,9 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log ""
     log "▶ cron 読み取りヘルパーの導入"
     CRON_USER="${SUDO_USER:-$(id -un)}"
+    # The agent runs the cron helper; after H-1 that is kizuna-eye. Granting the
+    # operator instead would leave the agent without a usable fallback.
+    if id kizuna-eye >/dev/null 2>&1; then CRON_USER="kizuna-eye"; fi
     CRON_SUDOERS="/etc/sudoers.d/kizuna-security-cron"
     if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため cron ヘルパーの導入をスキップします。手動で:"
@@ -673,6 +683,8 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log ""
     log "▶ ワンクリック対処ヘルパーの導入"
     ACTION_USER="${SUDO_USER:-$(id -un)}"
+    # The dashboard runs the action helper; after H-1 that is kizuna-eye.
+    if id kizuna-eye >/dev/null 2>&1; then ACTION_USER="kizuna-eye"; fi
     ACTION_SUDOERS="/etc/sudoers.d/kizuna-security-action"
     if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:"
@@ -700,7 +712,7 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
             warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
             warn "  sudo chmod 0440 $ACTION_SUDOERS"
         fi
-        rm -f "$CRON_TMP"
+        rm -f "$ACTION_TMP"
     fi
 fi
 

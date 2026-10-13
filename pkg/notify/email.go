@@ -99,12 +99,20 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 	}
 	defer c.Close()
 
-	// Upgrade with STARTTLS when the server supports it (matches the old
-	// smtp.SendMail behaviour, which negotiated STARTTLS automatically).
-	if ok, _ := c.Extension("STARTTLS"); ok {
-		if err := c.StartTLS(&tls.Config{ServerName: e.host}); err != nil {
-			return fmt.Errorf("email starttls: %w", err)
-		}
+	// Upgrade with STARTTLS. This is FAIL-CLOSED: if the server does not
+	// advertise STARTTLS we refuse to continue rather than fall through.
+	//
+	// smtp.PlainAuth refuses to send the password over an unencrypted
+	// connection, but only if the connection is not already local. A silent
+	// downgrade would therefore either drop every notification or (worse,
+	// with a non-PlainAuth mechanism) leak credentials. Failing here makes the
+	// misconfiguration a visible delivery error instead of a silent security
+	// downgrade. The old code only upgraded "when the server supports it".
+	if ok, _ := c.Extension("STARTTLS"); !ok {
+		return fmt.Errorf("email: SMTP サーバーが STARTTLS に対応していません（暗号化されないため送信を中止しました）。smtps(465) を使ってください")
+	}
+	if err := c.StartTLS(&tls.Config{ServerName: e.host, MinVersion: tls.VersionTLS12}); err != nil {
+		return fmt.Errorf("email starttls: %w", err)
 	}
 
 	if e.username != "" {
