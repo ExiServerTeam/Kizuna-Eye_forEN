@@ -12,8 +12,14 @@
 package updater
 
 import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +28,11 @@ import (
 
 	"Kizuna-Eye/pkg/logger"
 )
+
+// scriptTimeout bounds a single update-script run. The script rebuilds and
+// restarts services, so it is allowed to be slow, but a hung build must not
+// keep the updater goroutine blocked forever (and, on shutdown, delay exit).
+const scriptTimeout = 30 * time.Minute
 
 // Config controls the auto-update loop.
 type Config struct {
@@ -152,23 +163,96 @@ func (u *Updater) latestVersion() (string, error) {
 	return p.GetLatestVersion()
 }
 
-// runUpdateScript executes safe_update.sh and streams nothing (output is
-// inherited so it lands in the agent/dashboard log).
+// runUpdateScript executes safe_update.sh after checking that the script is a
+// trustworthy regular file.
+//
+// The script runs with the agent's privileges and performs git pull + build +
+// service restart, so it is a code-execution boundary. Auto-update is off by
+// default (design 10.3), but when an operator enables it the script itself
+// must not be replaceable by a non-privileged writer: a world/group-writable
+// update script in a shared directory (e.g. the Samba share) would let any
+// local user swap it for their own and have the agent run it. The check is
+// fail-closed and runs every time (not only at startup), so a later chmod or
+// swap is caught before the next execution.
 func (u *Updater) runUpdateScript() error {
-	script := u.cfg.UpdateScript
-	// exec.Command searches $PATH for a name with no path separator, so the
-	// default relative name ("safe_update.sh") would never be found. Anchor a
-	// bare name to its directory (cmd.Dir) with an explicit "./".
+	dir := scriptDir(u.cfg.UpdateScript)
+	resolved, err := u.verifyUpdateScript()
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), scriptTimeout)
+	defer cancel()
+
+	// Anchor a bare name to its directory (cmd.Dir) with an explicit "./", so
+	// exec.Command does not search $PATH (which would let a PATH entry win).
+	script := resolved
 	if !strings.ContainsAny(script, `/\`) {
 		script = "./" + script
 	}
-	cmd := exec.Command(script)
-	cmd.Dir = scriptDir(u.cfg.UpdateScript)
+	cmd := exec.CommandContext(ctx, script)
+	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if u.lg != nil && len(out) > 0 {
 		u.lg.InfoT("updater.output", u.cfg.UpdateScript, string(out))
 	}
+	if ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("update script timed out after %s", scriptTimeout)
+	}
 	return err
+}
+
+// verifyUpdateScript resolves the update script and refuses to run it unless it
+// is a regular file that only its owner can write. It also logs the path and
+// SHA-256 for the audit trail, and returns the path to execute.
+func (u *Updater) verifyUpdateScript() (string, error) {
+	path := u.cfg.UpdateScript
+	if path == "" {
+		return "", fmt.Errorf("update script is not configured")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("update script path: %w", err)
+	}
+
+	info, err := os.Lstat(abs)
+	if err != nil {
+		return "", fmt.Errorf("update script not found (%s): %w", abs, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("update script is a symlink (refusing): %s", abs)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("update script is not a regular file: %s", abs)
+	}
+	// Fail closed on any write bit for group/other: the script is executed
+	// with this process's privileges, so only the owner may change it.
+	if info.Mode().Perm()&0o022 != 0 {
+		return "", fmt.Errorf("update script is group/other-writable (refusing): %s (%04o)", abs, info.Mode().Perm())
+	}
+
+	if u.lg != nil {
+		if sum, serr := fileSHA256(abs); serr == nil {
+			u.lg.InfoT("updater.script_verify", abs, sum)
+		} else {
+			u.lg.WarnT("updater.script_hash_failed", abs, serr)
+		}
+	}
+	return abs, nil
+}
+
+// fileSHA256 returns the hex SHA-256 of path.
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // Status returns a snapshot for the dashboard/API.
