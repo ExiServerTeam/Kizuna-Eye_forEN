@@ -14,7 +14,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-VERSION_RAW="$(cat VERSION 2>/dev/null || echo v0.7.1)"
+VERSION_RAW="$(cat VERSION 2>/dev/null || echo v0.7.0)"
 VERSION="${VERSION_RAW#v}"
 ARCH="${KIZUNA_DEB_ARCH:-amd64}"
 PKG="kizuna-eye"

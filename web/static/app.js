@@ -1,12 +1,12 @@
 // ============================================================
 // Kizuna-Eye Dashboard
-// Gauge Engine v0.7.1
+// Gauge Engine v0.7.0
 // ============================================================
 
 (function () {
     'use strict';
 
-    const VERSION = 'v0.7.1';
+    const VERSION = 'v0.7.0';
 
     const GAUGE = {
         radiusRatio: 0.40,

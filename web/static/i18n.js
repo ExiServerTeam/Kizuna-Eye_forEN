@@ -4,7 +4,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.7.1';
+    const VERSION = 'v0.7.0';
 
     const DICT = {
         ja: {
