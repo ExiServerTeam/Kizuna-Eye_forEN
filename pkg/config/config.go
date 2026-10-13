@@ -113,16 +113,23 @@ type AuthConfig struct {
 	PublicViewer *bool `json:"public_viewer"`
 }
 
-// SessionFilePath returns the absolute session persistence file. configDir is
-// the directory of dashboard_config.json. An empty result disables persistence.
+// SessionFilePath returns the session persistence file. configDir is the
+// directory of dashboard_config.json. An empty result disables persistence.
+// A relative path is resolved against configDir (NOT the process working
+// directory), so the file location never depends on where the server was
+// started from.
 func (a AuthConfig) SessionFilePath(configDir string) string {
-	if strings.EqualFold(strings.TrimSpace(a.SessionFile), "none") {
+	v := strings.TrimSpace(a.SessionFile)
+	if strings.EqualFold(v, "none") {
 		return ""
 	}
-	if strings.TrimSpace(a.SessionFile) == "" {
+	if v == "" {
 		return filepath.Join(configDir, "sessions.json")
 	}
-	return a.SessionFile
+	if filepath.IsAbs(v) {
+		return v
+	}
+	return filepath.Join(configDir, v)
 }
 
 // IsSessionIPBind reports whether sessions are bound to their client IP.
