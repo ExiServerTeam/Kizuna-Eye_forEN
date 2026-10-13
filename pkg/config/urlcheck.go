@@ -63,7 +63,58 @@ func IsPlaceholderWebhookURL(s string) bool {
 			return true
 		}
 	}
+	// Structural check: an unedited Discord webhook may use an obviously fake
+	// id/token (000000000000000000 / xxxxxxxxxxxxxxxxxxxxxxxx) that contains
+	// none of the markers above, so it would validate, register a notifier, and
+	// then fail every send with HTTP 400 forever — a silent notification
+	// outage (the operator sees "discord enabled" but nothing is delivered).
+	if isFakeDiscordWebhook(s) {
+		return true
+	}
 	return false
+}
+
+// isFakeDiscordWebhook reports whether a Discord webhook URL carries an
+// obviously-fake id or token segment: a long run of a single character
+// (0000..., xxxx...). Discord ids are numeric snowflakes and tokens are mixed
+// alphanumeric, so such a value is never a real webhook. Treating it as a
+// placeholder makes the loader warn and the notifier skip it instead of
+// silently failing.
+func isFakeDiscordWebhook(raw string) bool {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "discord.com", "discordapp.com", "canary.discord.com", "ptb.discord.com":
+	default:
+		return false
+	}
+	if !strings.HasPrefix(u.Path, "/api/webhooks/") {
+		return false
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(u.Path, "/api/webhooks/"), "/") {
+		if isRepeatedChar(seg, 12) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRepeatedChar reports whether s is at least n bytes long and every byte is
+// the same character (case-insensitive). Real webhook ids/tokens never look
+// like this, so a long run of one character is an unambiguous dummy value.
+func isRepeatedChar(s string, n int) bool {
+	if len(s) < n {
+		return false
+	}
+	first := s[0]
+	for i := 1; i < len(s); i++ {
+		if s[i] != first {
+			return false
+		}
+	}
+	return true
 }
 
 // validateWebhookURLShape performs the scheme/host/SSRF checks.
