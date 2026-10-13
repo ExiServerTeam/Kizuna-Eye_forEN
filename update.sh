@@ -244,6 +244,21 @@ if ! build_one plugin-inspect ./cmd/plugin-inspect \
 fi
 ok "本体再ビルド完了"
 
+# ---- 5.5 ビルド後の権限正規化 (A-4) ----
+# update.sh を sudo で実行すると、go build が生成する agent_linux は
+# root:root 0755 になり、install.sh / 運用が設定する「0750 root:kizuna-eye
+# （agent 専用ユーザーのみ実行可）」から後退する（実機で発生）。agent は
+# kizuna-eye で動くため、グループ実行権を保った最小権限に戻す
+# （install.sh:903 の推奨と同じ）。kizuna-eye グループが無い環境
+# （A-4 未適用）では何もしない。
+if [ "$(id -u)" -eq 0 ] && getent group kizuna-eye >/dev/null 2>&1; then
+    if [ -f "$BIN_DIR/agent_linux" ]; then
+        chown root:kizuna-eye "$BIN_DIR/agent_linux" 2>/dev/null || true
+        chmod 0750 "$BIN_DIR/agent_linux" 2>/dev/null || true
+    fi
+fi
+ok "権限を正規化しました (agent_linux: 0750 root:kizuna-eye)"
+
 # PLUGINS_REBUILT counts how many plugin .so files were actually rebuilt.
 # It is used below to refuse a restart when a shared package changed but no
 # plugin could be rebuilt (the deployed .so would then fail to load).
