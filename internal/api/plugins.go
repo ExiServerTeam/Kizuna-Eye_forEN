@@ -228,7 +228,15 @@ func (p *PluginManager) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // handleWebUI serves a plugin's bundled web UI.
-// It serves files under plugins/<name>.web/, defaulting to index.html.
+//
+// 設計書 5.4 に従い、実行方式を origin で分ける:
+//   - 純正 (official): 直接配信する。
+//   - サードパーティ (origin=third_party): sandbox iframe で隔離する。
+//     /plugins/{name}/ はラッパー HTML を返し、実コンテンツは
+//     /plugins/{name}/_asset/... から読み込む。sandbox に allow-same-origin を
+//     付けないため、iframe 内は opaque origin になり、親の cookie / 本体 API /
+//     DOM にアクセスできない。加えて実コンテンツ側 CSP で connect-src を
+//     禁止し、UI からの API 呼び出しを二重に塞ぐ。
 func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if _, err := sanitizeName(name); err != nil {
@@ -243,8 +251,21 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	thirdParty := p.isThirdPartyPlugin(name)
+
 	// Resolve the path after /plugins/{name}/.
 	rel := strings.TrimPrefix(r.URL.Path, "/plugins/"+name+"/")
+
+	if thirdParty {
+		// _asset/ 以外（トップや index.html 直指定）はラッパーを返す。
+		// 直接 _asset を開かれても、CSP の connect-src 'none' で API は叩けない。
+		// サードパーティの実体は baseDir/_asset/ 配下に置く前提なので、
+		// rel はそのまま（"_asset/..."）として baseDir に結合する。
+		if !strings.HasPrefix(rel, "_asset/") {
+			p.serveSandboxWrapper(w, name)
+			return
+		}
+	}
 	if rel == "" {
 		rel = "index.html"
 	}
@@ -289,28 +310,80 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Plugin web UIs are third-party code and are served outside the main
-	// static handler, so apply the same baseline security headers here.
-	// CSP も本体と同水準に揃える: script は 'self' のみ（インライン禁止）、
-	// frame-ancestors 'none' でクリックジャッキングを防ぐ。プラグイン UI は
-	// 自前のリソース（'self'）だけを使う想定で、外部 CDN やインライン script を
-	// 許すと XSS の温床になる。現状 .web を提供するプラグインは無いため、
-	// 付与しても既存動作を壊さない。
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
-	h.Set("Referrer-Policy", "same-origin")
-	h.Set("Content-Security-Policy",
-		"default-src 'self'; "+
-			"script-src 'self'; "+
-			"style-src 'self' 'unsafe-inline'; "+
-			"img-src 'self' data:; "+
-			"connect-src 'self'; "+
-			"frame-ancestors 'none'; "+
-			"base-uri 'self'; "+
-			"form-action 'self'")
+	h.Set("Referrer-Policy", "no-referrer")
+	if thirdParty {
+		// サードパーティ UI: 本体 API へのアクセスを禁止する（多層防御）。
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self' 'unsafe-inline'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'none'; "+
+				"frame-ancestors 'self'; "+
+				"base-uri 'none'; "+
+				"form-action 'none'")
+	} else {
+		// 純正 UI: 本体と同水準（script は 'self' のみ）。
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"connect-src 'self'; "+
+				"frame-ancestors 'none'; "+
+				"base-uri 'self'; "+
+				"form-action 'self'")
+	}
 
 	http.ServeFile(w, r, realPath)
+}
+
+// serveSandboxWrapper writes the sandbox-iframe wrapper for a third-party
+// plugin web UI. The iframe uses sandbox WITHOUT allow-same-origin, so its
+// content runs in an opaque origin: it cannot read the parent's cookies, call
+// the dashboard API, or touch the parent DOM. Only the assets under
+// /plugins/{name}/_asset/ are loaded.
+func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name string) {
+	// name is sanitizeName()-checked ([A-Za-z0-9_-]); safe to embed in the URL.
+	src := "/plugins/" + name + "/_asset/index.html"
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Security-Policy",
+		"default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'; base-uri 'none'")
+	page := "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" +
+		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
+		"<title>Plugin UI</title>\n" +
+		"<style>html,body{margin:0;height:100%;background:transparent}" +
+		"iframe{border:0;width:100%;height:100%;display:block}</style>\n" +
+		"</head>\n<body>\n" +
+		"<iframe sandbox=\"allow-scripts allow-forms allow-popups allow-modals allow-downloads\" " +
+		"referrerpolicy=\"no-referrer\" src=\"" + src + "\"></iframe>\n" +
+		"</body>\n</html>\n"
+	_, _ = io.WriteString(w, page)
+}
+
+// isThirdPartyPlugin reports whether a plugin's meta.json records
+// origin=third_party (an operator-confirmed unsigned plugin). A missing or
+// unreadable meta is treated as NOT third-party: the authoritative signature
+// decision is made by the agent at load time, and this is only used to decide
+// the sandbox wrapper.
+func (p *PluginManager) isThirdPartyPlugin(name string) bool {
+	data, err := os.ReadFile(filepath.Join(p.pluginsDir, name+".meta.json"))
+	if err != nil {
+		return false
+	}
+	var m PluginMeta
+	if json.Unmarshal(data, &m) != nil {
+		return false
+	}
+	return m.Origin == "third_party"
 }
 
 // fileExists reports whether path exists (any type).
