@@ -140,7 +140,13 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 	// so a failed save cannot leave the running state (engine + cfg) out of
 	// sync with the file and silently lost on restart.
 	if h.cfg != nil {
-		prev := h.cfg.Notifications
+		if err := h.persistConfig(p); err != nil {
+			// Nothing was written, so the in-memory config and the engine are
+			// left untouched (no silent divergence on restart).
+			writeJSONError(w, http.StatusInternalServerError, "設定の保存に失敗しました: "+err.Error())
+			return
+		}
+		// Persisted: reflect the new values in the in-memory config.
 		h.cfg.Notifications.MemoryWarnPct = p.MemoryWarnPct
 		h.cfg.Notifications.MemoryCriticalPct = p.MemoryCriticalPct
 		h.cfg.Notifications.DiskFreeWarnPct = p.DiskFreeWarnPct
@@ -148,14 +154,6 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 		h.cfg.Notifications.CPUTempWarnC = p.CPUTempWarnC
 		h.cfg.Notifications.CPUTempCriticalC = p.CPUTempCriticalC
 		h.cfg.Notifications.NotifyRecovery = p.NotifyRecovery
-
-		if err := h.persistConfig(); err != nil {
-			// Roll back the in-memory config and do not touch the engine, so
-			// nothing changes when the save fails.
-			h.cfg.Notifications = prev
-			writeJSONError(w, http.StatusInternalServerError, "設定の保存に失敗しました: "+err.Error())
-			return
-		}
 		if h.logger != nil {
 			kelog.LogInfo(h.logger, "api.alertcfg_updated")
 		}
@@ -167,15 +165,47 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
-// persistConfig writes the current config back to dashboard_config.json.
-// It writes atomically (temp + rename) and preserves the existing file mode,
-// so a tightened permission (e.g. 0600 for a webhook-bearing config) is not
-// silently widened to 0644 on every threshold save.
-func (h *AlertConfigHandler) persistConfig() error {
+// persistConfig patches ONLY the notification threshold keys into
+// dashboard_config.json. It reads the file that is currently on disk (not the
+// startup snapshot) and merges the new values in, so it can never revert an
+// unrelated setting edited elsewhere (config editor, another API call) or
+// reorder the operator's file. It writes atomically and preserves the file
+// mode, so a tightened permission (e.g. 0600 for a webhook-bearing config) is
+// not silently widened on every threshold save.
+//
+// A file that is missing or not a JSON object falls back to a fresh object;
+// a file that is not valid JSON is an error (refusing to clobber a file we do
+// not understand).
+func (h *AlertConfigHandler) persistConfig(p alertConfigPayload) error {
 	if h.configPath == "" {
 		return fmt.Errorf("config path is empty")
 	}
-	data, err := json.MarshalIndent(h.cfg, "", "  ")
+
+	root := map[string]interface{}{}
+	if raw, rerr := os.ReadFile(h.configPath); rerr == nil {
+		if len(raw) > 0 {
+			if uerr := json.Unmarshal(raw, &root); uerr != nil {
+				return fmt.Errorf("dashboard_config.json を解析できません（上書きを中止しました）: %w", uerr)
+			}
+		}
+	} else if !os.IsNotExist(rerr) {
+		return fmt.Errorf("dashboard_config.json を読めません: %w", rerr)
+	}
+
+	notif, _ := root["notifications"].(map[string]interface{})
+	if notif == nil {
+		notif = map[string]interface{}{}
+	}
+	notif["memory_warn_pct"] = p.MemoryWarnPct
+	notif["memory_critical_pct"] = p.MemoryCriticalPct
+	notif["disk_free_warn_pct"] = p.DiskFreeWarnPct
+	notif["disk_free_critical_pct"] = p.DiskFreeCriticalPct
+	notif["cpu_temp_warn_c"] = p.CPUTempWarnC
+	notif["cpu_temp_critical_c"] = p.CPUTempCriticalC
+	notif["notify_recovery"] = p.NotifyRecovery
+	root["notifications"] = notif
+
+	data, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return err
 	}
