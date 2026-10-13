@@ -9,18 +9,27 @@ import (
 	"Kizuna-Eye/pkg/insight"
 )
 
+// InsightProvider は insight の導出元になるアラート履歴を供給する。
+// dashboard のアラートエンジンがこれを満たす。
 // InsightProvider supplies the alert history the insight is derived from.
 // The dashboard's alert engine satisfies it.
 type InsightProvider interface {
 	Alerts() []alert.HistoryEntry
 }
 
+// InsightHandler は GET /api/insight を提供する。
+//
+// 設計方針 (内部設計書 4.1): コアは観測と可視化に徹する。ここは既存の
+// アラート履歴を集計して返すだけで、新しい永続データを持たない。検知もしない。
 // InsightHandler serves GET /api/insight.
 //
 // 設計方針 (内部設計書 4.1): コアは観測と可視化に徹する。ここは既存の
 // アラート履歴を集計して返すだけで、新しい永続データを持たない。検知もしない。
 type InsightHandler struct {
 	provider InsightProvider
+	// postureFn はポスチャスコアに使う設定状態を返す。設定は dashboard の実行中に
+	// 設定エディタが再読み込みするため、起動時のスナップショットでは古くなる。
+	// したがってコールバックにしてある。nil 関数はゼロ値の PostureInput を生む。
 	// postureFn returns the configuration state used for the posture score.
 	// It is a callback because the config is re-read by the config editor
 	// while the dashboard runs, so a startup snapshot would go stale.
@@ -28,24 +37,33 @@ type InsightHandler struct {
 	postureFn func() insight.PostureInput
 }
 
+// NewInsightHandler は InsightHandler を作る。postureFn は nil でもよい。
 // NewInsightHandler creates an InsightHandler. postureFn may be nil.
 func NewInsightHandler(provider InsightProvider, postureFn func() insight.PostureInput) *InsightHandler {
 	return &InsightHandler{provider: provider, postureFn: postureFn}
 }
 
+// RegisterRoutes は insight のルートを登録する。
 // RegisterRoutes registers the insight route.
 func (h *InsightHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/insight", h.handleGet)
 }
 
+// defaultPeriodHours はクライアントが指定しない場合のレポート対象期間だ（7 日）。
 // defaultPeriodHours is the reporting window when the client sends none (7 days).
 const defaultPeriodHours = 7 * 24
 
+// maxPeriodHours は窓を制限し、呼び出し側が毎ポーリングで数年に及ぶ走査を
+// 要求できないようにする（履歴自体は有界だが、その境界はここでも明示すべきだ）。
 // maxPeriodHours caps the window so a caller cannot ask for a multi-year scan
 // on every poll (the history itself is bounded, but the bound should be
 // explicit here too).
 const maxPeriodHours = 90 * 24
 
+// handleGet は集計済み insight を返す。クエリパラメータ:
+//
+//	period_hours (int, 既定 168, [1, 2160] にクランプ)
+//
 // handleGet returns the aggregated insight. Query param:
 //
 //	period_hours (int, default 168, clamped to [1, 2160])
