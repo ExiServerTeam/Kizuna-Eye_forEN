@@ -1,6 +1,7 @@
 package status
 
 // ============================================================
+// NetworkIO は累積ネットワーク I/O バイト数を保持する。
 // NetworkIO holds cumulative network I/O bytes.
 // ============================================================
 type NetworkIO struct {
@@ -9,6 +10,7 @@ type NetworkIO struct {
 }
 
 // ============================================================
+// NetworkSpeed はバイト/秒のネットワーク速度だ。
 // NetworkSpeed is network speed in bytes/sec.
 // ============================================================
 type NetworkSpeed struct {
@@ -17,6 +19,7 @@ type NetworkSpeed struct {
 }
 
 // ============================================================
+// DiskInfo はディスク単位の情報だ。
 // DiskInfo is per-disk information.
 // ============================================================
 type DiskInfo struct {
@@ -27,27 +30,30 @@ type DiskInfo struct {
 	Temp    float64 `json:"temp,omitempty"`
 	Health  string  `json:"health,omitempty"`
 
+	// 任意の S.M.A.R.T メタデータ（smartctl が利用可能で、デバイスが報告する場合のみ存在）。
 	// Optional S.M.A.R.T metadata (present only when smartctl is
 	// available and the device reports it).
 	Model        string `json:"model,omitempty"`
 	Serial       string `json:"serial,omitempty"`
-	WriteBytes   uint64 `json:"write_bytes,omitempty"` // total bytes written over the device lifetime
+	WriteBytes   uint64 `json:"write_bytes,omitempty"` // デバイス生涯の総書込バイト数 / total bytes written over the device lifetime
 	PowerOnHours uint64 `json:"power_on_hours,omitempty"`
-	RotationRate int    `json:"rotation_rate,omitempty"` // RPM; 0 (SSD) and -1 (unknown) are omitted
+	RotationRate int    `json:"rotation_rate,omitempty"` // RPM。0（SSD）と -1（不明）は省略 / RPM; 0 (SSD) and -1 (unknown) are omitted
 }
 
 // ============================================================
+// ProcessInfo はプロセス単位の情報だ（Top N）。
 // ProcessInfo is per-process information (Top N).
 // ============================================================
 type ProcessInfo struct {
 	PID   int32   `json:"pid"`
 	Name  string  `json:"name"`
-	CPU   float64 `json:"cpu"`            // % per-process CPU usage (system-wide is SystemStatus.CPUUsage="cpu_usage")
+	CPU   float64 `json:"cpu"`            // プロセス単位の CPU 使用率（システム全体は SystemStatus.CPUUsage="cpu_usage"） / % per-process CPU usage (system-wide is SystemStatus.CPUUsage="cpu_usage")
 	MemMB float64 `json:"mem_mb"`         // MB
-	User  string  `json:"user,omitempty"` // owning user
+	User  string  `json:"user,omitempty"` // 所有ユーザー / owning user
 }
 
 // ============================================================
+// SystemStatus はシステム全体の状態だ。
 // SystemStatus is the overall system state.
 // ============================================================
 type SystemStatus struct {
@@ -75,9 +81,11 @@ type SystemStatus struct {
 	// Phase 4
 	NetworkSpeed *NetworkSpeed `json:"network_speed,omitempty"`
 
+	// Top N プロセス（CPU 降順）
 	// Top N processes (CPU descending)
 	Processes []ProcessInfo `json:"processes,omitempty"`
 
+	// バックアップ情報
 	// Backup info
 	Backup struct {
 		Name    string `json:"name,omitempty"`
