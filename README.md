@@ -13,7 +13,7 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 - **Browser-based configuration**: Full setup and management from the UI, no SSH required
 - **Authentication (enabled by the installer)**: Roles (admin / operator / viewer), bcrypt passwords, session cookies, per-IP login rate limiting
 - **Plugin system**: Extend functionality with Go `.so` dynamic plugins
-- **Notifications**: Discord, Slack, Telegram, LINE, and Email (SMTP)
+- **Notifications**: Discord, Slack, Telegram, LINE, and Email (SMTP). All five are implemented; the Config Editor UI currently edits **Discord** only. Slack / Telegram / LINE / Email are configured by editing `dashboard_config.json` directly.
 - **Dark / light mode** with OS preference detection
 - **Process list**: Live processes sorted by CPU or memory
 - **Disk S.M.A.R.T**: Disk health and temperature (via `smartctl`, optional)
@@ -268,7 +268,17 @@ Never send credentials over plain HTTP. Terminate TLS in a reverse proxy in fron
 
 ## Notifications
 
-`notifications.channels` supports `discord`, `slack`, `telegram`, `line`, and `email`. See `dashboard_config.example.json` for the fields each type requires. Alert thresholds can also be changed at runtime from the Config Editor (Admin) without a restart.
+`notifications.channels` supports five types: `discord`, `slack`, `telegram`, `line`, and `email`.
+
+| Type | Setup | Required fields |
+|---|---|---|
+| `discord` | **Config Editor UI** or config file | `webhook_url` |
+| `slack` | config file (`dashboard_config.json`) | `webhook_url` |
+| `telegram` | config file | `bot_token`, `chat_id` |
+| `line` | config file | `token` |
+| `email` | config file | `smtp_host`, `email_from`, `email_to` (plus `smtp_port` / `smtp_username` / `smtp_password` as needed) |
+
+**The Config Editor (Admin) currently edits `discord` channels only.** The other types are read and dispatched normally, but must be added or changed by editing `dashboard_config.json` directly; an existing non-Discord channel is preserved as-is by the UI. See `dashboard_config.example.json` for the exact field names. Alert thresholds (memory / disk / CPU temperature) can be changed at runtime from the Config Editor without a restart.
 
 ## Plugin development
 

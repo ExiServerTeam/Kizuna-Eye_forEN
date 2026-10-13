@@ -13,7 +13,7 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 - **ブラウザベース設定**: SSH不要で全設定が完結
 - **認証（インストーラが有効化）**: ロール（admin / operator / viewer）、bcrypt パスワード、セッション Cookie、IP単位のログイン試行制限
 - **プラグイン機構**: Goの `.so` ダイナミックプラグインで機能拡張
-- **通知**: Discord / Slack / Telegram / LINE / Email（SMTP）
+- **通知**: Discord / Slack / Telegram / LINE / Email（SMTP）。5種すべて実装済み。設定エディタ UI で編集できるのは現在 **Discord のみ**。Slack / Telegram / LINE / Email は `dashboard_config.json` を直接編集して設定する。
 - **ダーク / ライトモード**: OS設定にも追従
 - **プロセス一覧**: CPU / メモリ順ソート
 - **ディスク S.M.A.R.T**: ディスクの健康状態と温度（`smartctl` 使用時、任意）
@@ -285,7 +285,17 @@ Kizuna-Eye は認証あり・なしの両方で動作します。認証は**イ�
 
 ## 通知
 
-`notifications.channels` は `discord` / `slack` / `telegram` / `line` / `email` に対応しています。各タイプに必要な項目は `dashboard_config.example.json` を参照してください。アラート閾値は設定エディタ（admin）から再起動なしで変更できます。
+`notifications.channels` は5種に対応しています: `discord` / `slack` / `telegram` / `line` / `email`。
+
+| type | 設定方法 | 必須項目 |
+|---|---|---|
+| `discord` | **設定エディタ UI** または設定ファイル | `webhook_url` |
+| `slack` | 設定ファイル（`dashboard_config.json`） | `webhook_url` |
+| `telegram` | 設定ファイル | `bot_token` / `chat_id` |
+| `line` | 設定ファイル | `token` |
+| `email` | 設定ファイル | `smtp_host` / `email_from` / `email_to`（必要に応じて `smtp_port` / `smtp_username` / `smtp_password`） |
+
+**設定エディタ（admin）で編集できるのは現在 `discord` チャンネルのみ**です。他の type も読み込み・送信は正常に動作しますが、追加・変更は `dashboard_config.json` を直接編集して行ってください。UI は既存の非 Discord チャンネルをそのまま保持します。正確なフィールド名は `dashboard_config.example.json` を参照してください。アラート閾値（メモリ / ディスク / CPU 温度）は設定エディタから再起動なしで変更できます。
 
 ## プラグイン開発
 
