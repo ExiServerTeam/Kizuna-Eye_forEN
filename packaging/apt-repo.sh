@@ -64,7 +64,9 @@ for d in "${DEBS[@]}"; do
 done
 
 # --- Packages 生成（dpkg-scanpackages） ---
-( cd "$REPO_DIR" && dpkg-scanpackages "pool/$COMPONENT" /dev/null \
+# override ファイルは /dev/null なので "missing from override file" 警告が出るが、
+# これは実害が無い（Packages 本体は stdout に正しく書かれる）。stderr を抑制する。
+( cd "$REPO_DIR" && dpkg-scanpackages "pool/$COMPONENT" /dev/null 2>/dev/null \
     > "dists/$SUITE/$COMPONENT/binary-$ARCH/Packages" )
 gzip -9c "$REPO_DIR/dists/$SUITE/$COMPONENT/binary-$ARCH/Packages" \
     > "$REPO_DIR/dists/$SUITE/$COMPONENT/binary-$ARCH/Packages.gz"
@@ -99,6 +101,12 @@ if [ ! -d "$GNUPGHOME_DIR" ]; then
     echo "❌ 署名鍵がありません。先に ./packaging/apt-key.sh を実行してください。" >&2
     exit 1
 fi
+# gpg は homedir が「実行ユーザー所有・0700」でないと "unsafe ownership" 警告を
+# 出す。Samba 共有など所有者がずれやすい環境で黙らせるため、ここで揃える。
+# gpg warns on a homedir not owned by the running user; align it here so a
+# Samba share (where ownership drifts) does not print the warning.
+chmod 700 "$GNUPGHOME_DIR" 2>/dev/null || true
+chown -R "$(id -u):$(id -g)" "$GNUPGHOME_DIR" 2>/dev/null || true
 export GNUPGHOME="$GNUPGHOME_DIR"
 KEYID="$(gpg --list-secret-keys --with-colons 2>/dev/null | awk -F: '/^sec:/ {print $5; exit}')"
 if [ -z "$KEYID" ]; then
