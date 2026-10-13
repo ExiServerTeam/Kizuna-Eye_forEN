@@ -135,6 +135,29 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
+/* テーマ切替は「即時」にする。
+   既存 style.css は body に transition: background/color 0.35s を当てており、
+   背景だけが遅れて先に変わり、カード等の切り替えとズレて「背景から先に
+   切り替わる」ように見えていた。テーマ変更時にだけ遷移を止める。
+   ボタン等のホバー遷移はそのまま残す。 */
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+    transition: none !important;
+}
+body {
+    transition: none !important;
+}
+
+/* 絵文字アイコン（言語/テーマ）は使わない。
+   HTML の span に絵文字が入っているが、テキストラベルで用は足りる。
+   JS が textContent を入れ直しても見えないよう CSS で潰す。 */
+.theme-icon,
+.auth-theme-icon,
+.lang-icon {
+    display: none !important;
+}
+
 /* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。
    メーター内の数字（.gauge-value / .uptime-value）とコアの文字は「大きくしすぎ」
    との指摘があったため、既存 style.css の元の値をそのまま使う（上書きしない）。 */

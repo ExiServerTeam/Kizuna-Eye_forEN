@@ -26,9 +26,17 @@
     }
 
     function applyTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
+        // テーマ切替中はトランジションを止める（背景だけ遅れて変わるのを防ぐ）。
+        // 2 フレーム後に解除し、次回以降のホバー等の遷移は通常どおり動かす。
+        var root = document.documentElement;
+        root.classList.add('theme-switching');
+        root.setAttribute('data-theme', theme);
+        requestAnimationFrame(function () {
+            requestAnimationFrame(function () { root.classList.remove('theme-switching'); });
+        });
+        // アイコン（絵文字）は使わない。CSS でも非表示にしている。
         var icon = document.getElementById('authThemeIcon') || document.getElementById('themeIcon');
-        if (icon) icon.textContent = theme === 'dark' ? '🌙' : '☀️';
+        if (icon) icon.textContent = '';
         var label = theme === 'dark'
             ? t('theme.toggle_to_light', 'Switch to light mode')
             : t('theme.toggle_to_dark', 'Switch to dark mode');

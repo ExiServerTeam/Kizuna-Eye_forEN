@@ -263,7 +263,7 @@
     function applyTheme(theme) {
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
-        if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
+        if (themeIcon) themeIcon.textContent = '';
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 

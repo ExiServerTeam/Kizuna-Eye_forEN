@@ -142,13 +142,20 @@
     }
 
     function setTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
+        // 背景だけが遅れて変わるのを防ぐため、切替中はトランジションを止める。
+        const root = document.documentElement;
+        root.classList.add('theme-switching');
+        root.setAttribute('data-theme', theme);
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => root.classList.remove('theme-switching'));
+        });
         // localStorage はプライベートモード等で例外を投げる。失敗しても
         // 初期化 IIFE 全体（イベント登録・データ取得）を止めないよう握りつぶす。
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
+        // テーマアイコンの絵文字は使わない（CSS で非表示）。
         if (elements.themeIcon) {
-            elements.themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
+            elements.themeIcon.textContent = '';
         }
         if (elements.themeLabel) {
             elements.themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');

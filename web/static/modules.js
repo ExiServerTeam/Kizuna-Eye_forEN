@@ -228,7 +228,7 @@
         // 初期化 IIFE 全体を止めないよう握りつぶす。
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
-        if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
+        if (themeIcon) themeIcon.textContent = '';
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 

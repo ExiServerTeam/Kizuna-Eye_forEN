@@ -544,7 +544,7 @@ document.addEventListener('DOMContentLoaded', function () {
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
         const themeIcon = document.getElementById('themeIcon');
         const themeLabel = document.getElementById('themeLabel');
-        if (themeIcon) themeIcon.textContent = theme === 'dark' ? '🌙' : '☀️';
+        if (themeIcon) themeIcon.textContent = '';
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
