@@ -320,6 +320,75 @@ func TestCheckLogMonotonicDetectsRemoval(t *testing.T) {
 	}
 }
 
+// 鍵ローテーション等で既存チェーンを退避した場合、行数アンカーも一緒に退避し、
+// 新チェーン（数行）に対して「line count decreased」の critical が出続けないこと。
+// アンカーを残すと、新チェーンが旧行数を超えるまで毎回の整合性チェックで
+// 誤検知が発生し、本物の異常が埋もれる。
+func TestQuarantineResetsLineCountAnchor(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "kizuna-security.log")
+	keyPath := filepath.Join(dir, "chain.key")
+	statePath := logStatePathFor(logPath)
+
+	if _, err := loadOrCreateChainKey(keyPath); err != nil {
+		t.Fatal(err)
+	}
+	fl, err := NewFileLoggerKeyed(logPath, keyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		fl.Info("test", "entry", nil)
+	}
+	if err := fl.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// 運用と同じく整合性チェックでアンカーを確定させる。
+	if reason, _ := checkLogMonotonic(logPath, statePath); reason != "" {
+		t.Fatalf("anchor must be clean, got %q", reason)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("anchor must exist after a check: %v", err)
+	}
+
+	// 鍵を入れ替える → 既存チェーンは検証不能 → 退避 + 新チェーン。
+	if err := os.WriteFile(keyPath, []byte("rotated-key-material-32-bytes!!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	fl2, err := NewFileLoggerKeyed(logPath, keyPath)
+	if err != nil {
+		t.Fatalf("NewFileLoggerKeyed after rotation: %v", err)
+	}
+	defer fl2.Close()
+
+	archive, _ := fl2.Quarantine()
+	if archive == "" {
+		t.Fatal("rotation must quarantine the old chain")
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Errorf("the old anchor must be moved aside together with the log (stat err = %v)", err)
+	}
+	// 対で追えるよう、ログと同じ接尾辞でアンカーも残っていること。
+	stateArchive := statePath + strings.TrimPrefix(archive, logPath)
+	if _, err := os.Stat(stateArchive); err != nil {
+		t.Errorf("archived anchor missing: %v", err)
+	}
+
+	// 新チェーンは短いが、切り詰め（critical）として誤検知しないこと。
+	if reason, level := checkLogMonotonic(logPath, statePath); reason != "" || level != "" {
+		t.Fatalf("new chain must not be reported as truncated, got (%q,%q)", reason, level)
+	}
+
+	// 退避イベントにはアンカーも退避したことが残っていること。
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "state_archive") {
+		t.Errorf("chain_quarantined must record the archived anchor, got: %s", raw)
+	}
+}
+
 // 読取不能の通知は再起動で繰り返さず、既定24時間の間隔でのみ再通知すること。
 // 非 root 運用では /etc/shadow 等が常に読めず、再起動のたびに警告を出すと
 // ログと Discord が埋まり本物の異常が見えなくなる（ノイズ削減）。

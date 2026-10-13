@@ -42,6 +42,15 @@ type FileLogger struct {
 type chainQuarantine struct {
 	Archive string
 	Reason  string
+	// StateArchive is the archived line-count anchor
+	// (kizuna-security-logstate.json) when one existed and was moved aside.
+	// Keeping it next to the archived chain preserves the old anchor as
+	// evidence of how long that chain was.
+	StateArchive string
+	// StateErr records a failed attempt to archive the anchor. The anchor
+	// then keeps its old value, so the next integrity check reports a
+	// (false) line-count decrease — never stay silent about it.
+	StateErr string
 }
 
 // Quarantine returns the archive path and the verification error when an
@@ -66,7 +75,38 @@ func quarantineExtra(q *chainQuarantine, permErr string) map[string]interface{} 
 	if permErr != "" {
 		extra["archive_perm_error"] = permErr
 	}
+	if q.StateArchive != "" {
+		extra["state_archive"] = q.StateArchive
+	}
+	if q.StateErr != "" {
+		extra["state_archive_error"] = q.StateErr
+	}
 	return extra
+}
+
+// archiveChainLogState moves the line-count anchor of a quarantined chain aside.
+//
+// checkLogMonotonic compares the current line count against the stored maximum
+// and reports a decrease as critical. A legitimate quarantine (broken chain or
+// rotated key) restarts the log at a few lines, so leaving the old anchor in
+// place made the plugin report "line count decreased" as critical on every
+// integrity check until the new chain grew past the old count — a flood of
+// false alerts that hides real ones. The anchor is renamed with the same
+// timestamp as the archived chain (evidence stays paired), and the next check
+// re-anchors on the new file.
+//
+// Returns (archivePath, "") when the anchor was moved, ("", err) when it
+// existed but could not be moved, and ("", "") when there was no anchor.
+func archiveChainLogState(logPath, ts string) (string, string) {
+	statePath := logStatePathFor(logPath)
+	if _, err := os.Stat(statePath); err != nil {
+		return "", ""
+	}
+	dst := fmt.Sprintf("%s.legacy-%s", statePath, ts)
+	if err := os.Rename(statePath, dst); err != nil {
+		return "", err.Error()
+	}
+	return dst, ""
 }
 
 // loadOrCreateChainKey は HMAC 鍵を path から読む。無ければ 32 バイトの
@@ -148,7 +188,9 @@ func NewFileLoggerKeyed(path, keyPath string) (*FileLogger, error) {
 	if info, statErr := f.Stat(); statErr == nil && info.Size() > 0 {
 		if verifyErr := VerifyChainKeyed(path, key); verifyErr != nil {
 			_ = f.Close()
-			archive := fmt.Sprintf("%s.legacy-%s", path, time.Now().Format("20060102_150405"))
+			// 同じ時刻を退避したログと行数アンカーで共有し、対で追えるようにする。
+			ts := time.Now().Format("20060102_150405")
+			archive := fmt.Sprintf("%s.legacy-%s", path, ts)
 			if renameErr := os.Rename(path, archive); renameErr != nil {
 				return nil, fmt.Errorf("既存ログの退避に失敗しました: %w", renameErr)
 			}
@@ -159,7 +201,15 @@ func NewFileLoggerKeyed(path, keyPath string) (*FileLogger, error) {
 			if permErr := os.Chmod(archive, 0600); permErr != nil {
 				archivePermErr = permErr.Error()
 			}
-			quarantined = &chainQuarantine{Archive: archive, Reason: verifyErr.Error()}
+			// 行数アンカーも一緒に退避する。残すと新チェーン（数行）に対して
+			// 「line count decreased」が毎回 critical になり誤検知が続く。
+			stateArchive, stateErr := archiveChainLogState(path, ts)
+			quarantined = &chainQuarantine{
+				Archive:      archive,
+				Reason:       verifyErr.Error(),
+				StateArchive: stateArchive,
+				StateErr:     stateErr,
+			}
 			f, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND|syscall.O_NOFOLLOW, 0600)
 			if err != nil {
 				return nil, fmt.Errorf("ログファイル再作成失敗: %w", err)
