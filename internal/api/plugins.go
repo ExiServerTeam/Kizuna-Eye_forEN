@@ -313,7 +313,16 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "DENY")
+	// X-Frame-Options: サードパーティ UI はラッパーの sandbox iframe 内で
+	// 表示するため、DENY だとブラウザが埋め込みを拒否して何も出ない。
+	// 埋め込み許可は CSP の frame-ancestors で制御する（サードパーティは
+	// 'self' のみ、純正は 'none'）。XFO は CSP 非対応の古いブラウザ向けの
+	// 補助で、サードパーティは SAMEORIGIN、純正は DENY とする。
+	if thirdParty {
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+	} else {
+		h.Set("X-Frame-Options", "DENY")
+	}
 	h.Set("Referrer-Policy", "no-referrer")
 	if thirdParty {
 		// サードパーティ UI: 本体 API へのアクセスを禁止する（多層防御）。

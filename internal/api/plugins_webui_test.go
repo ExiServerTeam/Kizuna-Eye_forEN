@@ -89,6 +89,12 @@ func TestWebUIThirdPartyAssetCSP(t *testing.T) {
 	if !strings.Contains(csp, "connect-src 'none'") {
 		t.Fatalf("third-party asset CSP must forbid connect-src: %q", csp)
 	}
+	// The asset is embedded in the wrapper's sandbox iframe, so it must NOT
+	// carry X-Frame-Options: DENY (which would block the iframe). SAMEORIGIN
+	// allows the same-origin wrapper to embed it.
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo == "DENY" {
+		t.Fatalf("third-party asset must not be X-Frame-Options: DENY (blocks iframe): %q", xfo)
+	}
 	if !strings.Contains(rec.Body.String(), "asset</html>") {
 		t.Fatal("asset content should be served")
 	}
