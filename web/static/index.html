@@ -126,11 +126,12 @@
                 </div>
             </section>
 
-            <!-- セキュリティ状況（集計）セクション -->
-            <!-- CPUカード等の下、メトリクス履歴の上に配置する。
-                 アラート履歴を集計した脅威指標・発生元の傾向・設定の点検結果を表示する。
-                 新しい検知は行わない（既存のアラートの見方）。operator 以上のみ。 -->
-            <section class="alerts-section insight-section" id="insightSection" data-role-min="operator" hidden>
+            <!-- セキュリティ状況カード。
+                 このカードはコアに固定ではなく、モジュール（Kizuna-Security 等）が
+                 DashboardCards() で「出す」と宣言したときだけ表示する。
+                 宣言が無ければ app.js がこの要素を取り除く。
+                 初期状態は hidden（宣言が確認できるまで出さない）。 -->
+            <section class="alerts-section insight-section" id="insightSection" data-module-card="security" hidden>
                 <div class="backup-header" id="insightToggle" role="button" tabindex="0" aria-expanded="true">
                     <div class="backup-header-left">
                         <h2 data-i18n="insight.title">セキュリティ状況</h2>

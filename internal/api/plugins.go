@@ -126,16 +126,21 @@ type PluginMeta struct {
 	// Tag is the short badge the plugin declares via Tag() string
 	// ("GUARD" / "LITE" / "PRO" ...). Empty means the plugin did not
 	// declare one and the UI shows "PLUGIN".
-	Tag          string               `json:"tag,omitempty"`
-	SOFilename   string               `json:"so_filename"`
-	Description  string               `json:"description,omitempty"`
-	IntervalSec  float64              `json:"interval_sec,omitempty"`
-	Fields       []module.ConfigField `json:"fields"`
-	IsBackup     bool                 `json:"is_backup"`
-	UploadedAt   string               `json:"uploaded_at"`
-	UploaderIP   string               `json:"uploader_ip,omitempty"`
-	InspectError string               `json:"inspect_error,omitempty"`
-	HasWebUI     bool                 `json:"has_web_ui,omitempty"`
+	Tag         string               `json:"tag,omitempty"`
+	SOFilename  string               `json:"so_filename"`
+	Description string               `json:"description,omitempty"`
+	IntervalSec float64              `json:"interval_sec,omitempty"`
+	Fields      []module.ConfigField `json:"fields"`
+	IsBackup    bool                 `json:"is_backup"`
+	// DashboardCards is what the module declared via DashboardCards()
+	// (the card it contributes to the dashboard). Empty means the module
+	// contributes no card. The frontend uses it to add/remove cards, so the
+	// card is owned by the module, not hardcoded in the core.
+	DashboardCards []module.DashboardCard `json:"dashboard_cards,omitempty"`
+	UploadedAt     string                 `json:"uploaded_at"`
+	UploaderIP     string                 `json:"uploader_ip,omitempty"`
+	InspectError   string                 `json:"inspect_error,omitempty"`
+	HasWebUI       bool                   `json:"has_web_ui,omitempty"`
 	// Origin is "official" when the upload carried a signature that
 	// verified against the configured public key, and "third_party"
 	// otherwise (unsigned upload, allowed only after explicit
@@ -1158,15 +1163,16 @@ func (p *PluginManager) inspectPlugin(
 	}
 
 	var raw struct {
-		Success      bool                 `json:"success"`
-		Name         string               `json:"name"`
-		DisplayName  string               `json:"display_name"`
-		Tag          string               `json:"tag"`
-		Description  string               `json:"description"`
-		IntervalSec  float64              `json:"interval_sec"`
-		Fields       []module.ConfigField `json:"fields"`
-		IsBackup     bool                 `json:"is_backup"`
-		ErrorMessage string               `json:"error_message"`
+		Success        bool                   `json:"success"`
+		Name           string                 `json:"name"`
+		DisplayName    string                 `json:"display_name"`
+		Tag            string                 `json:"tag"`
+		Description    string                 `json:"description"`
+		IntervalSec    float64                `json:"interval_sec"`
+		Fields         []module.ConfigField   `json:"fields"`
+		IsBackup       bool                   `json:"is_backup"`
+		DashboardCards []module.DashboardCard `json:"dashboard_cards"`
+		ErrorMessage   string                 `json:"error_message"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("plugin-inspect の出力パース失敗: %w", err)
@@ -1185,16 +1191,17 @@ func (p *PluginManager) inspectPlugin(
 	}
 
 	return &PluginMeta{
-		Name:        raw.Name,
-		DisplayName: raw.DisplayName,
-		Tag:         raw.Tag,
-		SOFilename:  name + ".so",
-		Description: raw.Description,
-		IntervalSec: raw.IntervalSec,
-		Fields:      raw.Fields,
-		IsBackup:    raw.IsBackup,
-		UploadedAt:  time.Now().Format(time.RFC3339),
-		UploaderIP:  remoteAddr,
+		Name:           raw.Name,
+		DisplayName:    raw.DisplayName,
+		Tag:            raw.Tag,
+		SOFilename:     name + ".so",
+		Description:    raw.Description,
+		IntervalSec:    raw.IntervalSec,
+		Fields:         raw.Fields,
+		IsBackup:       raw.IsBackup,
+		DashboardCards: raw.DashboardCards,
+		UploadedAt:     time.Now().Format(time.RFC3339),
+		UploaderIP:     remoteAddr,
 	}, nil
 }
 

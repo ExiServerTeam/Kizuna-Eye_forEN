@@ -532,3 +532,41 @@ type DisplayNameProvider interface {
 type TagProvider interface {
 	Tag() string
 }
+
+// ============================================================
+// Dashboard card self-declaration (optional).
+// ============================================================
+
+// DashboardCard declares one card a module contributes to the dashboard.
+// The core renders a known Kind; the module decides whether the card exists,
+// its title and the minimum role, so the card is added by the module rather
+// than hardcoded in the core.
+//
+// Kind is a small closed set the core knows how to render:
+//   - "insight": the aggregated security status served by the core at
+//     /api/insight (threat index + source activity + configuration check).
+//     A security-type module declares this card; the aggregation itself stays
+//     in the core (観測と可視化), the module only says "show it".
+//
+// A module that does not implement DashboardCardProvider contributes no card.
+type DashboardCard struct {
+	// ID is a stable identifier (e.g. "security"). Used for ordering keys.
+	ID string `json:"id"`
+	// Title / TitleEN are the card heading. TitleEN is used when the UI is
+	// in English; an empty TitleEN falls back to Title.
+	Title   string `json:"title"`
+	TitleEN string `json:"title_en,omitempty"`
+	// Kind selects the core renderer (see the type doc).
+	Kind string `json:"kind"`
+	// MinRole is the minimum role that may see the card
+	// (viewer | operator | admin). Empty means operator.
+	MinRole string `json:"min_role,omitempty"`
+}
+
+// DashboardCardProvider lets a module declare dashboard cards (optional).
+// The inspector (cmd/plugin-inspect) reads this method by reflection, so a
+// plugin only has to add a `DashboardCards() []module.DashboardCard` method;
+// the call itself is reflection-based.
+type DashboardCardProvider interface {
+	DashboardCards() []DashboardCard
+}

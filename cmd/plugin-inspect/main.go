@@ -21,14 +21,19 @@ type InspectResult struct {
 	// Tag is the short badge the plugin declares via Tag() string
 	// (e.g. "GUARD" / "LITE" / "PRO"). Empty when the plugin does not
 	// declare one; the UI then shows "PLUGIN".
-	Tag          string          `json:"tag,omitempty"`
-	Description  string          `json:"description"`
-	IntervalSec  float64         `json:"interval_sec"`
-	Fields       json.RawMessage `json:"fields"`
-	IsBackup     bool            `json:"is_backup"`
-	ErrorMessage string          `json:"error_message,omitempty"`
-	PanicStack   string          `json:"panic_stack,omitempty"`
-	LoadedAt     string          `json:"loaded_at"`
+	Tag         string          `json:"tag,omitempty"`
+	Description string          `json:"description"`
+	IntervalSec float64         `json:"interval_sec"`
+	Fields      json.RawMessage `json:"fields"`
+	IsBackup    bool            `json:"is_backup"`
+	// DashboardCards is the JSON form of the module's DashboardCards() return
+	// (an array of {id,title,title_en,kind,min_role}), or omitted when the
+	// module declares none. The dashboard reads it to render the card the
+	// module contributes, so the card is added by the module, not hardcoded.
+	DashboardCards json.RawMessage `json:"dashboard_cards,omitempty"`
+	ErrorMessage   string          `json:"error_message,omitempty"`
+	PanicStack     string          `json:"panic_stack,omitempty"`
+	LoadedAt       string          `json:"loaded_at"`
 }
 
 func main() {
@@ -151,6 +156,12 @@ func inspect(soPath string) (res InspectResult) {
 	if v.MethodByName("RunBackup").IsValid() {
 		res.IsBackup = true
 	}
+	// DashboardCards() is marshalled generically (its concrete slice type may
+	// differ from this binary's module package, so a type assertion is not
+	// usable; json.Marshal works through reflection via the JSON tags).
+	if cards := callJSON(v, "DashboardCards"); cards != nil {
+		res.DashboardCards = cards
+	}
 
 	if res.Name == "" {
 		res.Name = deriveNameFromPath(soPath)
@@ -204,6 +215,40 @@ func callDurationSec(v reflect.Value, methodName string) (out float64) {
 		return time.Duration(i).Seconds()
 	}
 	return 0
+}
+
+// callJSON calls a no-argument method and returns its single return value
+// marshalled to JSON. It is used for slices of shared structs whose concrete
+// type may differ between the plugin and this binary (Go plugin type identity
+// is per-build), so a type assertion would fail but json.Marshal succeeds.
+// Returns nil when the method is missing, has the wrong signature, or the
+// value marshals to an empty array.
+func callJSON(v reflect.Value, methodName string) (out json.RawMessage) {
+	defer func() {
+		if recover() != nil {
+			out = nil
+		}
+	}()
+	m := v.MethodByName(methodName)
+	if !m.IsValid() || m.Type().NumIn() != 0 || m.Type().NumOut() != 1 {
+		return nil
+	}
+	results := m.Call(nil)
+	if len(results) != 1 {
+		return nil
+	}
+	// A nil slice marshals to "null"; treat that as "none declared".
+	if results[0].Kind() == reflect.Slice && results[0].IsNil() {
+		return nil
+	}
+	b, err := json.Marshal(results[0].Interface())
+	if err != nil {
+		return nil
+	}
+	if string(b) == "[]" || string(b) == "null" {
+		return nil
+	}
+	return json.RawMessage(b)
 }
 
 func deriveNameFromPath(soPath string) string {

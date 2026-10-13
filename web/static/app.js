@@ -1314,6 +1314,48 @@
     // 書き換えることで、点滅を防ぎつつホバー等の見た目はそのまま保つ。
     let lastPluginListHtml = null;
 
+    // ============================================================
+    // モジュール提供カード（モジュール側が「出す」と宣言したカード）
+    // ============================================================
+    // insightModulePresent is true only while an enabled module declares a
+    // dashboard card of kind "insight". The core keeps the renderer for that
+    // kind, but the card exists only when a module asks for it, so adding or
+    // removing the security module adds or removes the card.
+    let insightModulePresent = false;
+    let detachedInsight = null;
+
+    // setInsightCardPresent inserts/removes the insight section so it sits
+    // right above the metrics history section (the module card's position is
+    // defined by the core's DOM, not by the module).
+    function setInsightCardPresent(present) {
+        const hist = document.getElementById('historySection');
+        const current = document.getElementById('insightSection');
+        if (present) {
+            if (!current && detachedInsight && hist && hist.parentNode) {
+                hist.parentNode.insertBefore(detachedInsight, hist);
+            } else if (current && hist && hist.parentNode && current.nextElementSibling !== hist) {
+                hist.parentNode.insertBefore(current, hist);
+            }
+        } else if (current && current.parentNode) {
+            detachedInsight = current;
+            current.parentNode.removeChild(current);
+        }
+        // Refresh element references after the DOM change.
+        elements.insightSection = document.getElementById('insightSection');
+        elements.insightToggle = document.getElementById('insightToggle');
+        elements.insightBody = document.getElementById('insightBody');
+        elements.insightPeriodBadge = document.getElementById('insightPeriodBadge');
+        elements.insightGrade = document.getElementById('insightGrade');
+        elements.insightRisk = document.getElementById('insightRisk');
+        elements.insightCounts = document.getElementById('insightCounts');
+        elements.insightPostureGrade = document.getElementById('insightPostureGrade');
+        elements.insightPostureScore = document.getElementById('insightPostureScore');
+        elements.insightPostureMax = document.getElementById('insightPostureMax');
+        elements.insightChecklist = document.getElementById('insightChecklist');
+        elements.insightDrivers = document.getElementById('insightDrivers');
+        elements.insightSources = document.getElementById('insightSources');
+    }
+
     function renderPluginList(modules) {
         if (!elements.pluginList) return;
 
@@ -1350,6 +1392,7 @@
                 pluginMetaMap = new Map();
                 (metaData.plugins || []).forEach(m => pluginMetaMap.set(m.name, m));
                 renderPluginList(lastModules);
+                syncModuleCards();
             }
             // Agent のロード結果を取得して再描画する。
             if (runtimeRes && runtimeRes.ok) {
@@ -1972,6 +2015,32 @@
         }
     }
 
+    // syncModuleCards shows or removes the module-provided cards based on the
+    // registered+enabled modules. A card is present only while an enabled
+    // module declares it (dashboard_cards in its meta), so the card is owned
+    // by the module rather than hardcoded in the core.
+    function syncModuleCards() {
+        const enabledNames = new Set(
+            (lastModules || []).filter(m => m.enabled).map(m => m.name)
+        );
+        let insight = false;
+        for (const [name, meta] of pluginMetaMap) {
+            if (!enabledNames.has(name)) continue;
+            const cards = Array.isArray(meta.dashboard_cards) ? meta.dashboard_cards : [];
+            if (cards.some(c => c && c.kind === 'insight')) {
+                insight = true;
+                break;
+            }
+        }
+        if (insight !== insightModulePresent) {
+            insightModulePresent = insight;
+            setInsightCardPresent(insight);
+            // A newly inserted card needs its drag handle and pointerdown
+            // listener; re-run the section reorder setup (idempotent).
+            setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
+        }
+    }
+
     // ============================================================
     // セキュリティ状況（アラート履歴の集計）
     // 新しい検知は行わない。サーバーの /api/insight を表示するだけ。
@@ -2121,12 +2190,13 @@
         }
 
         // Only reveal the section once real data is rendered, so a viewer or
-        // a failed fetch never shows an empty shell.
+        // a failed fetch never shows an empty shell. The section exists only
+        // while a module declares it.
         elements.insightSection.hidden = false;
     }
 
     async function loadInsight() {
-        if (!insightAllowed || !elements.insightSection) return;
+        if (!insightAllowed || !insightModulePresent || !elements.insightSection) return;
         try {
             const res = await fetch('/api/insight');
             if (!res.ok) return;   // 403/401 は権限どおり。黙って諦める。
@@ -2152,7 +2222,11 @@
     // マウスとタッチの両方に対応するため Pointer Events を使用する。
     // ============================================================
     const CARD_ORDER_KEY = 'kizuna-card-order';
-    const SECTION_ORDER_KEY = 'kizuna-section-order';
+    // v2: the section order changed when the module-provided card was added,
+    // and a stale saved order would put the card back at the bottom (or drop
+    // it). Bumping the key discards the stale order once so the new default
+    // order applies; the user can re-save a new order afterwards.
+    const SECTION_ORDER_KEY = 'kizuna-section-order-v2';
 
     // 並べ替え対象。ゲージカード4枚は .gauge-grid 内、履歴・プラグイン・
     // アラートの3セクションは .main 直下で、それぞれ独立に並べ替えられる。
@@ -2243,12 +2317,14 @@
         let pointerId = null;
 
         function onDown(e, item) {
-            // つまみを掴んだ場合、または（つまみ非表示のカードでは）カード本体の
-            // 余白部分を掴んだ場合にドラッグを開始する。ボタン・リンク・入力など
-            // 操作可能な要素の上では開始しない（クリックを奪わないため）。
-            const fromHandle = e.target.classList.contains('drag-handle');
-            const interactive = e.target.closest('button, a, input, select, textarea, [role="button"]');
+            // つまみを掴んだ場合、またはカード本体の余白部分を掴んだ場合に
+            // ドラッグを開始する。ボタン・リンク・入力など操作可能な要素の上では
+            // 開始しない（クリックを奪わないため）。
+            const fromHandle = e.target.closest && e.target.closest('.drag-handle');
+            const interactive = e.target.closest && e.target.closest('button, a, input, select, textarea, [role="button"]');
             if (!fromHandle && interactive) return;
+            // 左ボタン以外（右クリック・中クリック）では開始しない。
+            if (typeof e.button === 'number' && e.button !== 0) return;
             e.preventDefault();
             dragging = item;
             pointerId = e.pointerId;
@@ -2257,17 +2333,43 @@
             try { item.setPointerCapture(e.pointerId); } catch (_) {}
         }
 
+        // autoScroll scrolls the window while the pointer is near the top or
+        // bottom edge, so a tall card/section can be dropped far away without
+        // letting go to scroll (the previous implementation required the
+        // pointer to be over another card, which is hard when items are taller
+        // than the viewport).
+        function autoScroll(clientY) {
+            const margin = 64;
+            const step = 14;
+            if (clientY < margin) {
+                window.scrollBy(0, -step);
+            } else if (clientY > window.innerHeight - margin) {
+                window.scrollBy(0, step);
+            }
+        }
+
+        // onMove inserts the dragged element at the midpoint between the other
+        // items, based only on their bounding rectangles. It does not use
+        // elementFromPoint (which returns the dragged element while the
+        // pointer is over it) and does not require hovering a specific target,
+        // so reordering is smooth even for full-width sections.
         function onMove(e) {
             if (!dragging) return;
             e.preventDefault();
-            const target = document.elementFromPoint(e.clientX, e.clientY);
-            const over = target && target.closest(selector);
-            items.forEach(c => c.classList.remove('drop-target'));
-            if (!over || over === dragging || !container.contains(over) || !isTarget(over)) return;
-            over.classList.add('drop-target');
-            const rect = over.getBoundingClientRect();
-            const after = (e.clientY - rect.top) > rect.height / 2;
-            container.insertBefore(dragging, after ? over.nextSibling : over);
+            autoScroll(e.clientY);
+            const y = e.clientY;
+            const others = Array.from(container.children)
+                .filter(el => el !== dragging && isTarget(el) && el.style.display !== 'none');
+            let inserted = false;
+            for (const el of others) {
+                const r = el.getBoundingClientRect();
+                if (y < r.top + r.height / 2) {
+                    container.insertBefore(dragging, el);
+                    inserted = true;
+                    break;
+                }
+            }
+            if (!inserted) container.appendChild(dragging);
         }
 
         function onUp() {
@@ -2282,11 +2384,21 @@
         }
 
         items.forEach(item => {
+            // Guard so re-running setup (e.g. after a module-provided card is
+            // inserted) does not attach a second listener to the same item.
+            if (item.dataset.reorderBound === '1') return;
+            item.dataset.reorderBound = '1';
             item.addEventListener('pointerdown', (e) => onDown(e, item));
         });
-        document.addEventListener('pointermove', onMove);
-        document.addEventListener('pointerup', onUp);
-        document.addEventListener('pointercancel', onUp);
+        // Document-level listeners are bound once per container. onMove/onUp
+        // operate on the closure's `dragging`, so they must belong to this
+        // container's closure, not a global singleton.
+        if (container.dataset.reorderGlobalBound !== '1') {
+            container.dataset.reorderGlobalBound = '1';
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+        }
     }
 
     // カードは .gauge-grid 内、セクションは .main 直下で、それぞれ独立に
@@ -2355,6 +2467,9 @@
             loadInsight();
             setInterval(loadInsight, 60000);
         }
+        // ロールは満たしていても、モジュールがカードを宣言していなければ
+        // syncModuleCards が要素を取り除いている。
+        syncModuleCards();
     }
 
     function checkAccessMode() {
