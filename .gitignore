@@ -15,7 +15,13 @@ logs/
 *.log.*
 *.so
 *.meta.json
-plugins/
+# プラグインのソースは追跡する。かつては plugins/ 全体を無視していたが、
+# Kizuna-Security のソースを plugins/Kizuna-Security/ へ取り込んだため、
+# ディレクトリ丸ごとの無視はやめ、ビルド成果物と鍵だけを除外する。
+plugins/**/keys/
+plugins/**/*.so
+plugins/**/logs/
+plugins/Kizuna-Security/plugin/kizuna-security-plugin
 # Root-level build outputs only. A bare "dashboard" / "agent" /
 # "plugin-inspect" pattern also matches cmd/dashboard/, cmd/agent/ and
 # cmd/plugin-inspect/, which silently ignored real source files.
@@ -53,7 +59,6 @@ scripts/new_*.tpl
 scripts/attack_*.py
 scripts/ws_agent_attack.py
 scripts/d_poc_plugin.go
-_pentest_backup_*/
 
 # ---- merged 2026-10-04: restore broader secret/build/os patterns ----
 # secrets
