@@ -1455,11 +1455,111 @@
         drawGauge(elements.diskGauge, 0, 'disk');
     }
 
+    // ============================================================
+    // カード並べ替え（ドラッグ & ドロップ）
+    // 並び順は localStorage の kizuna-card-order に保存し、次回起動時に復元する。
+    // マウスとタッチの両方に対応するため Pointer Events を使用する。
+    // ============================================================
+    const CARD_ORDER_KEY = 'kizuna-card-order';
+
+    function cardKey(card) {
+        return card.id || card.className;
+    }
+
+    function saveCardOrder(grid) {
+        try {
+            const order = Array.from(grid.children).map(cardKey);
+            localStorage.setItem(CARD_ORDER_KEY, JSON.stringify(order));
+        } catch (e) { /* localStorage 不可の環境では無視 */ }
+    }
+
+    function applyCardOrder(grid) {
+        let order;
+        try {
+            order = JSON.parse(localStorage.getItem(CARD_ORDER_KEY) || '[]');
+        } catch (e) { order = []; }
+        if (!Array.isArray(order) || order.length === 0) return;
+
+        const byKey = new Map();
+        Array.from(grid.children).forEach(card => byKey.set(cardKey(card), card));
+        // Append in the saved order; anything not in the saved order keeps
+        // its relative position at the end.
+        order.forEach(key => {
+            const card = byKey.get(key);
+            if (card) grid.appendChild(card);
+        });
+    }
+
+    function setupCardReorder() {
+        const grid = document.querySelector('.gauge-grid');
+        if (!grid) return;
+
+        applyCardOrder(grid);
+
+        const cards = Array.from(grid.children);
+        cards.forEach(card => {
+            // Add a drag handle so the whole card can stay clickable.
+            const handle = document.createElement('button');
+            handle.type = 'button';
+            handle.className = 'drag-handle';
+            handle.textContent = '⣿';
+            handle.setAttribute('aria-label', t('card.reorder'));
+            handle.addEventListener('click', (e) => e.stopPropagation());
+            card.appendChild(handle);
+        });
+
+        let dragging = null;
+        let pointerId = null;
+
+        function onDown(e, card) {
+            // Only start a drag from the handle.
+            if (!e.target.classList.contains('drag-handle')) return;
+            e.preventDefault();
+            dragging = card;
+            pointerId = e.pointerId;
+            card.classList.add('dragging');
+            document.body.classList.add('card-dragging');
+            try { card.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+
+        function onMove(e) {
+            if (!dragging) return;
+            e.preventDefault();
+            const target = document.elementFromPoint(e.clientX, e.clientY);
+            const over = target && target.closest('.gauge-card');
+            cards.forEach(c => c.classList.remove('drop-target'));
+            if (!over || over === dragging || !grid.contains(over)) return;
+            over.classList.add('drop-target');
+            const rect = over.getBoundingClientRect();
+            const after = (e.clientY - rect.top) > rect.height / 2;
+            grid.insertBefore(dragging, after ? over.nextSibling : over);
+        }
+
+        function onUp() {
+            if (!dragging) return;
+            dragging.classList.remove('dragging');
+            cards.forEach(c => c.classList.remove('drop-target'));
+            document.body.classList.remove('card-dragging');
+            try { dragging.releasePointerCapture(pointerId); } catch (_) {}
+            dragging = null;
+            pointerId = null;
+            saveCardOrder(grid);
+        }
+
+        cards.forEach(card => {
+            card.addEventListener('pointerdown', (e) => onDown(e, card));
+        });
+        document.addEventListener('pointermove', onMove);
+        document.addEventListener('pointerup', onUp);
+        document.addEventListener('pointercancel', onUp);
+    }
+
     function init() {
         console.log(`[Kizuna-Eye] ${VERSION}`);
         drawInitialGauges();
         startClock();
         setupProcessCardClicks();
+        setupCardReorder();
         connectWebSocket();
         loadAlerts();
         setInterval(loadAlerts, 30000);

@@ -160,12 +160,16 @@ body {
     display: flex;
     align-items: center;
     gap: 16px;
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .logo {
     font-size: 1.5rem;
     font-weight: 700;
     letter-spacing: -0.02em;
+    white-space: nowrap;
+    flex: 0 0 auto;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -174,8 +178,10 @@ body {
 
 .nav-tabs {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
     margin-left: 20px;
+    min-width: 0;
 }
 
 .nav-tab {
@@ -186,6 +192,7 @@ body {
     color: var(--text-muted);
     text-decoration: none;
     transition: background 0.2s, color 0.2s;
+    white-space: nowrap;
 }
 
 .nav-tab:hover {
@@ -240,6 +247,9 @@ body {
     display: flex;
     align-items: center;
     gap: 12px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
 }
 
 .version-badge {
@@ -334,6 +344,64 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
     gap: 24px;
+}
+
+/* ===== カード並べ替え ===== */
+/* Each gauge card can be dragged to reorder. The order is saved to
+   localStorage (kizuna-card-order) and restored on load. */
+.gauge-card {
+    position: relative;
+}
+
+.drag-handle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    cursor: grab;
+    font-size: 1rem;
+    line-height: 1;
+    opacity: 0.5;
+    transition: opacity 0.2s, background 0.2s;
+    touch-action: none;
+    z-index: 5;
+}
+
+.drag-handle:hover {
+    opacity: 1;
+    background: var(--bg-card-hover);
+}
+
+.drag-handle:active {
+    cursor: grabbing;
+}
+
+/* While dragging, lift the card and stop the hover lift transform. */
+.gauge-card.dragging {
+    opacity: 0.6;
+    transform: none !important;
+    box-shadow: var(--shadow-hover);
+    cursor: grabbing;
+    z-index: 50;
+}
+
+.gauge-card.drop-target {
+    outline: 2px dashed var(--primary-color);
+    outline-offset: 3px;
+}
+
+/* Prevent text selection while dragging on desktop. */
+body.card-dragging {
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 /* ===== ゲージカード ===== */
@@ -2258,21 +2326,39 @@ body {
         gap: 10px;
     }
 
+    /* 1行目: ロゴ + 右側コントロール / 2行目: ナビ（横スクロール） */
     .header-left {
         flex-wrap: wrap;
         gap: 10px;
-        flex: 1;
-        min-width: 100%;
+        flex: 1 1 100%;
+        min-width: 0;
+        order: 1;
     }
 
-    .logo { font-size: 1.3rem; }
+    .logo {
+        font-size: 1.3rem;
+        order: 1;
+    }
 
+    /* ステータスはロゴの右へ */
+    .status-badge {
+        order: 2;
+        margin-left: auto;
+    }
+
+    /* ナビは次の行に全幅で横スクロール */
     .nav-tabs {
         margin-left: 0;
         gap: 2px;
         overflow-x: auto;
         -webkit-overflow-scrolling: touch;
-        flex: 1;
+        flex: 1 1 100%;
+        order: 3;
+    }
+
+    .header-right {
+        flex: 1 1 100%;
+        order: 2;
     }
 
     .nav-tab {
@@ -2296,6 +2382,13 @@ body {
     .gauge-grid {
         grid-template-columns: 1fr;
         gap: 16px;
+    }
+
+    /* 並べ替えハンドルはタッチでも押しやすいサイズに */
+    .drag-handle {
+        width: 34px;
+        height: 34px;
+        opacity: 0.7;
     }
 
     .gauge-card { padding: 16px 14px 16px; }

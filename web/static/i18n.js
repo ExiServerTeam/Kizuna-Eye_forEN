@@ -29,6 +29,7 @@
             // --- dashboard cards ---
             'card.cpu': 'CPU',
             'card.memory': 'メモリ',
+            'card.reorder': 'ドラッグして並べ替え',
             'card.storage': 'ストレージ',
             'card.uptime': '稼働時間',
             'card.usage': '使用率 {0}%',
@@ -304,6 +305,7 @@
 
             'card.cpu': 'CPU',
             'card.memory': 'Memory',
+            'card.reorder': 'Drag to reorder',
             'card.storage': 'Storage',
             'card.uptime': 'Uptime',
             'card.usage': 'Usage {0}%',
