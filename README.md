@@ -87,7 +87,7 @@ Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from its 
 
 ### Install via APT (recommended, Debian/Ubuntu)
 
-No build required; dependencies are installed automatically.
+No build required; dependencies (`python3` / `smartmontools` / `rsync` / `bubblewrap`) are installed automatically.
 
     # Register the public key (dearmor is required)
     curl -fsSL https://exiserverteam.github.io/Kizuna-Eye_forEN/kizuna.gpg \
@@ -100,8 +100,25 @@ No build required; dependencies are installed automatically.
     sudo apt update
     sudo apt install kizuna-eye
 
-First access: `http://<host>:8080` → create an admin account at `/setup`.
-Uninstall with `sudo apt remove kizuna-eye` (keep data) or `sudo apt purge kizuna-eye` (full removal).
+`apt install kizuna-eye` performs the whole setup, so no extra step is required:
+
+- Creates the system user `kizuna-eye` and the data directory `/var/lib/kizuna-eye/data`.
+- Generates `dashboard_config.json` / `agent_config.json` and a random `agent_token` (configs are mode 0600).
+- **Enables authentication** (`auth.enabled: true`, `public_viewer: false`) and writes the UI language.
+- Installs and starts the systemd units (`kizuna-eye-agent`, `kizuna-dashboard`, `kizuna-action.socket`).
+
+First access: open `http://<host>:8080`. Authentication is on, so the browser redirects to `/setup.html` — **the first user you create becomes the administrator**. Create it before anyone else can reach the host.
+
+Installed files:
+
+| Path | Contents |
+|---|---|
+| `/opt/kizuna-eye/bin/` | Binaries (agent / dashboard / plugin-inspect / plugin-sign) and plugins |
+| `/usr/share/kizuna-eye/` | Web UI, example configs, systemd unit templates (read-only) |
+| `/var/lib/kizuna-eye/data` | Config, state, logs (`kizuna-eye` owned; configs 0600) |
+| `/lib/systemd/system/` | `kizuna-eye-agent.service`, `kizuna-dashboard.service`, `kizuna-action.socket` |
+
+Uninstall with `sudo apt remove kizuna-eye` (stops services, keeps data) or `sudo apt purge kizuna-eye` (also removes the data directory and the `kizuna-eye` user).
 
 > Built for Ubuntu 20.04+ / Debian 11+.
 
@@ -217,7 +234,7 @@ Open `http://<server-ip>:8080` in your browser.
 
 ## Authentication (optional)
 
-Kizuna-Eye works with or without authentication. Authentication is **disabled by default**. To enable it, set `enabled: true` in the `auth` block of `dashboard_config.json` (`secure_cookies` / `session_ttl_hours` / `agent_token` are also available).
+Kizuna-Eye works with or without authentication. Authentication is **enabled automatically by the installer**: both `install.sh` and the `.deb` (`apt install`) path set `auth.enabled: true` and `public_viewer: false` on a brand-new config. It stays **disabled only when you place a config manually** from `dashboard_config.example.json` (which ships `auth.enabled: false` for quick local testing). To change it, edit the `auth` block of `dashboard_config.json` (`secure_cookies` / `session_ttl_hours` / `agent_token` are also available).
 
 When enabled, the first visit redirects to `/setup.html` to create the first user. **The first user created becomes the administrator.**
 

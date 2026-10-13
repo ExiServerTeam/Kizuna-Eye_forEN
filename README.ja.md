@@ -100,8 +100,25 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
     sudo apt update
     sudo apt install kizuna-eye
 
-初回アクセス: `http://<ホスト>:8080` → `/setup` で管理者アカウントを作成。
-アンインストールは `sudo apt remove kizuna-eye`（データ温存）/ `sudo apt purge kizuna-eye`（完全削除）。
+`apt install kizuna-eye` がセットアップを全部やるため、追加作業は不要です:
+
+- 専用ユーザー `kizuna-eye` とデータディレクトリ `/var/lib/kizuna-eye/data` を作成する。
+- `dashboard_config.json` / `agent_config.json` を生成し、ランダムな `agent_token` を入れる（設定は 0600）。
+- **認証を有効化**（`auth.enabled: true` / `public_viewer: false`）し、UI 言語を書き込む。
+- systemd unit（`kizuna-eye-agent` / `kizuna-dashboard` / `kizuna-action.socket`）を導入して起動する。
+
+初回アクセス: `http://<ホスト>:8080` を開く。認証が有効なのでブラウザは `/setup.html` へリダイレクトされる。**最初に作成したユーザーが管理者になる。**他の誰かが到達する前に作成すること。
+
+配置されるファイル:
+
+| 配置 | 内容 |
+|---|---|
+| `/opt/kizuna-eye/bin/` | バイナリ（agent / dashboard / plugin-inspect / plugin-sign）とプラグイン |
+| `/usr/share/kizuna-eye/` | Web UI・example 設定・systemd unit テンプレート（読み取り専用） |
+| `/var/lib/kizuna-eye/data` | 設定・状態・ログ（`kizuna-eye` 所有。設定は 0600） |
+| `/lib/systemd/system/` | `kizuna-eye-agent.service` / `kizuna-dashboard.service` / `kizuna-action.socket` |
+
+アンインストールは `sudo apt remove kizuna-eye`（サービス停止・データ温存）または `sudo apt purge kizuna-eye`（データディレクトリと `kizuna-eye` ユーザーも削除）。
 
 > Ubuntu 20.04 以降 / Debian 11 以降を対象にビルドしています。
 
@@ -234,7 +251,7 @@ critical だけは集約せず即時送信します。
 
 ## 認証（任意）
 
-Kizuna-Eye は認証あり・なしの両方で動作します。認証は**既定で無効**です。有効にするには `dashboard_config.json` の `auth` ブロックで `enabled: true` を設定します（`secure_cookies` / `session_ttl_hours` / `agent_token` も指定可能）。
+Kizuna-Eye は認証あり・なしの両方で動作します。認証は**インストーラが自動で有効化**します。`install.sh` も `.deb`（`apt install`）経路も、新規作成した設定で `auth.enabled: true` / `public_viewer: false` にします。**無効のままになるのは、`dashboard_config.example.json`（簡易ローカル検証用に `auth.enabled: false` を同梱）から手動で設定を置いた場合だけ**です。変更するには `dashboard_config.json` の `auth` ブロックを編集します（`secure_cookies` / `session_ttl_hours` / `agent_token` も指定可能）。
 
 有効にすると、初回アクセス時に `/setup.html` へリダイレクトされ、最初のユーザーを作成します。**最初に作成したユーザーが管理者になります。**
 
