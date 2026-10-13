@@ -30,6 +30,8 @@ umask 077  # New files/dirs: 0600/0700 (secrets, pid, logs)
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
+# 表示言語（install.sh から export される。未設定は日本語）。
+UI_LANG="${UI_LANG:-ja}"
 
 resolve_run_dir() {
     local d="${KIZUNA_RUN_DIR:-/opt/kizuna-eye/run}"
@@ -46,8 +48,13 @@ case "$WANT" in
     all|dashboard|agent) ;;
     -h|--help)
         echo "usage: $0 [all|dashboard|agent]"
-        echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を起動しません。"
-        echo "  agent の再起動: sudo systemctl restart kizuna-eye-agent"
+        if [ "$UI_LANG" = "en" ]; then
+            echo "  When the agent is managed by systemd (kizuna-eye-agent), it is not started."
+            echo "  Restart the agent: sudo systemctl restart kizuna-eye-agent"
+        else
+            echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を起動しません。"
+            echo "  agent の再起動: sudo systemctl restart kizuna-eye-agent"
+        fi
         exit 0 ;;
     *)
         echo "usage: $0 [all|dashboard|agent]" >&2
@@ -73,7 +80,11 @@ fi
 
 for bin in dashboard_linux agent_linux; do
     if [ ! -x "$BIN_DIR/$bin" ]; then
-        echo "❌ $BIN_DIR/$bin が見つかりません。./build.sh を実行してください。"
+        if [ "$UI_LANG" = "en" ]; then
+            echo "❌ $BIN_DIR/$bin not found. Run ./build.sh first."
+        else
+            echo "❌ $BIN_DIR/$bin が見つかりません。./build.sh を実行してください。"
+        fi
         exit 1
     fi
 done
@@ -147,13 +158,18 @@ fi
 
 echo ""
 if [ "$skipped_systemd" -eq 1 ]; then
-    echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。手動起動はしません。"
-    echo "    状態: systemctl status kizuna-eye-agent / 再起動: sudo systemctl restart kizuna-eye-agent"
+    if [ "$UI_LANG" = "en" ]; then
+        echo "ℹ️  agent is managed by systemd (kizuna-eye-agent); not starting it manually."
+        echo "    Status: systemctl status kizuna-eye-agent / Restart: sudo systemctl restart kizuna-eye-agent"
+    else
+        echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。手動起動はしません。"
+        echo "    状態: systemctl status kizuna-eye-agent / 再起動: sudo systemctl restart kizuna-eye-agent"
+    fi
 fi
 if [ "$new_started" -eq 1 ]; then
-    echo "✅ Kizuna-Eyeを起動しました。"
+    if [ "$UI_LANG" = "en" ]; then echo "✅ Started Kizuna-Eye."; else echo "✅ Kizuna-Eyeを起動しました。"; fi
 elif [ "$already_running" -eq 1 ]; then
-    echo "ℹ️  Kizuna-Eyeは既に起動しています。"
+    if [ "$UI_LANG" = "en" ]; then echo "ℹ️  Kizuna-Eye is already running."; else echo "ℹ️  Kizuna-Eyeは既に起動しています。"; fi
 fi
 echo ""
 echo "🌐 http://localhost:8080"

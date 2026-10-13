@@ -27,6 +27,8 @@ umask 077  # New files/dirs: 0600/0700 (secrets, pid, logs)
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
+# 表示言語（install.sh / migrate から export される。未設定は日本語）。
+UI_LANG="${UI_LANG:-ja}"
 
 resolve_run_dir() {
     local d="${KIZUNA_RUN_DIR:-/opt/kizuna-eye/run}"
@@ -118,9 +120,14 @@ case "$WANT" in
     all|dashboard|agent) ;;
     -h|--help)
         echo "usage: $0 [all|dashboard|agent]"
-        echo "       $0 --purge [--yes|--dry-run]   # 完全削除 (uninstall.sh --purge)"
-        echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を停止しません。"
-        echo "  agent の停止: sudo systemctl stop kizuna-eye-agent"
+        echo "       $0 --purge [--yes|--dry-run]   # full removal (uninstall.sh --purge)"
+        if [ "$UI_LANG" = "en" ]; then
+            echo "  When the agent is managed by systemd (kizuna-eye-agent), it is not stopped."
+            echo "  Stop the agent: sudo systemctl stop kizuna-eye-agent"
+        else
+            echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を停止しません。"
+            echo "  agent の停止: sudo systemctl stop kizuna-eye-agent"
+        fi
         exit 0 ;;
     *)
         echo "usage: $0 [all|dashboard|agent]" >&2
@@ -168,19 +175,31 @@ if [ "$WANT" != "dashboard" ]; then
 fi
 
 if [ "$skipped_systemd" -eq 1 ]; then
-    echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。ここからは停止しません:"
+    if [ "$UI_LANG" = "en" ]; then
+        echo "ℹ️  agent is managed by systemd (kizuna-eye-agent); not stopping it here:"
+    else
+        echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。ここからは停止しません:"
+    fi
     echo "    sudo systemctl stop kizuna-eye-agent"
 fi
 if [ "$any_failed" -eq 1 ]; then
-    echo "⚠️  Kizuna-Eyeを完全に停止できませんでした（別ユーザー所有のプロセスは kill できません）。"
+    if [ "$UI_LANG" = "en" ]; then
+        echo "⚠️  Could not fully stop Kizuna-Eye (cannot kill processes owned by another user)."
+    else
+        echo "⚠️  Kizuna-Eyeを完全に停止できませんでした（別ユーザー所有のプロセスは kill できません）。"
+    fi
 elif [ "$any_stopped" -eq 1 ]; then
-    echo "🛑 Kizuna-Eyeを停止しました。"
+    if [ "$UI_LANG" = "en" ]; then echo "🛑 Stopped Kizuna-Eye."; else echo "🛑 Kizuna-Eyeを停止しました。"; fi
 elif [ "$skipped_systemd" -eq 1 ]; then
     # agent は systemd 管理下で動いている。ここで「起動していません」と言うと
     # 「agent も止まっている」と誤解されるため区別する。
-    echo "ℹ️  このスクリプトが管理するプロセス（dashboard など）は起動していません。"
+    if [ "$UI_LANG" = "en" ]; then
+        echo "ℹ️  Processes managed by this script (dashboard etc.) are not running."
+    else
+        echo "ℹ️  このスクリプトが管理するプロセス（dashboard など）は起動していません。"
+    fi
 else
-    echo "ℹ️  Kizuna-Eyeは起動していません。"
+    if [ "$UI_LANG" = "en" ]; then echo "ℹ️  Kizuna-Eye is not running."; else echo "ℹ️  Kizuna-Eyeは起動していません。"; fi
 fi
 [ "$any_failed" -eq 1 ] && exit 1
 exit 0
