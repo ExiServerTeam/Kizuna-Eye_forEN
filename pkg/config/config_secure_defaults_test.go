@@ -85,3 +85,51 @@ func TestExplicitPublicViewerHonored(t *testing.T) {
 		})
 	}
 }
+
+// TestSecureDefaultsEnabled: only config_version>=CurrentConfigVersion opts in.
+func TestSecureDefaultsEnabled(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"no version", `{"listen_addr":":8080"}`, false},
+		{"version 1", `{"config_version":1}`, false},
+		{"version 2", `{"config_version":2}`, true},
+		{"version 3", `{"config_version":3}`, true},
+		{"invalid json", `not json`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SecureDefaultsEnabled([]byte(tc.raw)); got != tc.want {
+				t.Fatalf("SecureDefaultsEnabled(%s)=%v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEffectivePublicViewer: absent key resolves by config_version; a present key wins.
+func TestEffectivePublicViewer(t *testing.T) {
+	truePtr := true
+	falsePtr := false
+	cases := []struct {
+		name          string
+		publicViewer  *bool
+		configVersion int
+		want          bool
+	}{
+		{"secure absent -> false", nil, CurrentConfigVersion, false},
+		{"legacy absent -> true", nil, 0, true},
+		{"secure explicit true -> true", &truePtr, CurrentConfigVersion, true},
+		{"secure explicit false -> false", &falsePtr, CurrentConfigVersion, false},
+		{"legacy explicit false -> false", &falsePtr, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := AuthConfig{PublicViewer: tc.publicViewer}
+			if got := a.EffectivePublicViewer(tc.configVersion); got != tc.want {
+				t.Fatalf("EffectivePublicViewer=%v, want %v", got, tc.want)
+			}
+		})
+	}
+}

@@ -511,6 +511,37 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 // secure defaults for keys they leave unset.
 const CurrentConfigVersion = 2
 
+// SecureDefaultsEnabled reports whether a raw config opts into the secure
+// defaults, i.e. it declares config_version >= CurrentConfigVersion. A config
+// with no config_version (legacy) or an older value keeps the historical
+// defaults. It is exported so callers that unmarshal a DashboardConfig outside
+// LoadDashboardConfig (e.g. the insight posture check, which must not perform
+// the loader's side effects) can resolve "absent key" the same way.
+func SecureDefaultsEnabled(raw []byte) bool {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(raw, &m) != nil {
+		return false
+	}
+	v, ok := m["config_version"]
+	if !ok {
+		return false
+	}
+	var ver int
+	return json.Unmarshal(v, &ver) == nil && ver >= CurrentConfigVersion
+}
+
+// EffectivePublicViewer returns the resolved public_viewer value for a config
+// whose config_version is configVersion. When the key is absent, the secure
+// default applies to a secure config_version (false) and the legacy default
+// applies otherwise (true). Use this instead of IsPublicViewer when the struct
+// was produced by a bare json.Unmarshal that did not pre-fill defaults.
+func (a AuthConfig) EffectivePublicViewer(configVersion int) bool {
+	if a.PublicViewer != nil {
+		return *a.PublicViewer
+	}
+	return configVersion < CurrentConfigVersion
+}
+
 // defaultDashboardConfig returns the built-in defaults. When secure is true,
 // the hardened defaults are used for keys a config leaves unset
 // (public_viewer=false: the read-only viewer endpoints stay behind login).
@@ -562,21 +593,7 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 		return nil, fmt.Errorf("設定ファイル読み取りエラー: %w", err)
 	}
 
-	// Peek at config_version before applying defaults: a legacy config (no
-	// version) must keep its historical defaults, while a config that declares
-	// CurrentConfigVersion opts into the secure defaults for absent keys. The
-	// raw map is used because a value pre-filled into the struct cannot be told
-	// apart from an explicitly provided one after Unmarshal.
-	secure := false
-	var raw map[string]json.RawMessage
-	if json.Unmarshal(data, &raw) == nil {
-		if v, ok := raw["config_version"]; ok {
-			var ver int
-			if json.Unmarshal(v, &ver) == nil && ver >= CurrentConfigVersion {
-				secure = true
-			}
-		}
-	}
+	secure := SecureDefaultsEnabled(data)
 
 	cfg := defaultDashboardConfig(secure)
 	if err := json.Unmarshal(data, cfg); err != nil {

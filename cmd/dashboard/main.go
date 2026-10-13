@@ -92,8 +92,13 @@ func postureFromConfig(path string, fallback *config.DashboardConfig) insight.Po
 		return insight.PostureInput{}
 	}
 	return insight.PostureInput{
-		AuthEnabled:          dc.Auth.Enabled,
-		PublicViewerEnabled:  dc.Auth.IsPublicViewer(),
+		AuthEnabled: dc.Auth.Enabled,
+		// Use the config_version-aware resolution, not IsPublicViewer: this
+		// struct was produced by a bare json.Unmarshal that did not pre-fill
+		// defaults, so an absent public_viewer on a secure config
+		// (config_version>=2) must read as OFF here too — otherwise the
+		// security score would wrongly report anonymous viewing as enabled.
+		PublicViewerEnabled:  dc.Auth.EffectivePublicViewer(dc.ConfigVersion),
 		SecureCookies:        dc.Auth.SecureCookies,
 		AgentTokenSet:        strings.TrimSpace(dc.Auth.AgentToken) != "",
 		RequireSignature:     dc.Plugins.RequireSignature,
