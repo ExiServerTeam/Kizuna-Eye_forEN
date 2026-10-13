@@ -111,11 +111,19 @@
 }
 
 /* ===== ベース ===== */
-/* 基準フォントを 16px -> 17px に上げる。ページ内の文字はほぼ rem 指定なので、
-   ここ 1 箇所で全体が連動して大きくなる（個別指定の小さい文字は下で底上げ）。 */
+/* 基準フォントを上げる。
+   注意: 既存 style.css は末尾（約 3730 行目）で html { font-size: 16px } を、
+   さらにメディアクエリで 13〜15px を定義している。同一詳細度で「後勝ち」
+   するため、ここで単に上書きするだけでは負ける。redesign.css は最後に
+   読み込まれるので、同じセレクタを「メディアクエリ込みで」書き直して勝たせる。 */
 html {
     font-size: 17px;
 }
+@media (max-width: 1024px) { html { font-size: 16.5px; } }
+@media (max-width: 768px)  { html { font-size: 16px; } }
+@media (max-width: 600px)  { html { font-size: 15.5px; } }
+@media (max-width: 480px)  { html { font-size: 15px; } }
+@media (max-width: 360px)  { html { font-size: 14.5px; } }
 
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -127,7 +135,9 @@ body {
     -moz-osx-font-smoothing: grayscale;
 }
 
-/* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。 */
+/* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。
+   px 固定の要素（ゲージ値・稼働時間・コア）は rem に置き換えず、元の px を
+   基準に少し大きくして「逆に小さくなる」事故を防ぐ。 */
 .cpu-model,
 .temp-badge,
 .free-badge,
@@ -136,25 +146,50 @@ body {
 .gauge-title,
 .process-hint,
 .storage-hint {
-    font-size: 0.82rem;
+    font-size: 0.86rem;
 }
 
 .nav-tab {
-    font-size: 0.95rem;
-}
-
-.gauge-detail,
-.gauge-value {
-    font-size: 1.05rem;
-}
-
-.backup-header h2,
-.plugin-list-title {
     font-size: 1rem;
 }
 
+.gauge-detail {
+    font-size: 1.2rem;
+}
+
+/* 既存は 34px。拡大して 36px に。 */
+.gauge-value {
+    font-size: 36px;
+}
+
+/* 既存は 42px。拡大して 44px に。 */
+.uptime-value {
+    font-size: 44px;
+}
+
+/* 既存は 9〜11px。可読下限まで引き上げる。 */
+.core-value { font-size: 11px; }
+.core-label { font-size: 10px; }
+
+.backup-header h2,
+.plugin-list-title {
+    font-size: 1.05rem;
+}
+
 .process-table {
-    font-size: 0.95rem;
+    font-size: 1rem;
+}
+
+/* レスポンシブ時も px 固定の値を据え置きにしない（既存の縮小指定に勝たせる）。 */
+@media (max-width: 768px) {
+    .uptime-value { font-size: 38px; }
+    .gauge-value { font-size: 32px; }
+    .core-value { font-size: 10px; }
+    .core-label { font-size: 9px; }
+}
+@media (max-width: 480px) {
+    .uptime-value { font-size: 32px; }
+    .gauge-value { font-size: 28px; }
 }
 
 .app { position: relative; }
