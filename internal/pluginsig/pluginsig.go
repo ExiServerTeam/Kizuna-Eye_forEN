@@ -34,6 +34,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 const (
@@ -125,13 +127,13 @@ func EmbedSignatureFile(soPath string, priv ed25519.PrivateKey) error {
 	if err != nil {
 		return err
 	}
-	tmp := soPath + ".embed.tmp"
-	if err := os.WriteFile(tmp, signed, 0o644); err != nil {
-		return fmt.Errorf("埋め込み署名の書き込みに失敗 (%s): %w", tmp, err)
-	}
-	if err := os.Rename(tmp, soPath); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("埋め込み署名の配置に失敗 (%s): %w", soPath, err)
+	// fsutil.WriteFileAtomic: 同一ディレクトリに一意な一時ファイルを作り、
+	// fsync してから rename する。以前は soPath + ".embed.tmp" という予測可能な
+	// 名前を os.WriteFile で直接書いていたため、pluginsDir (agent ユーザーが
+	// 書き込み可能) に同名の symlink を先に置かれると、そのリンク先を上書き
+	// しうる（CWE-59）。atomic write は最終要素の symlink を拒否する。
+	if err := fsutil.WriteFileAtomic(soPath, signed, 0o644); err != nil {
+		return fmt.Errorf("埋め込み署名の書き込みに失敗 (%s): %w", soPath, err)
 	}
 	return nil
 }

@@ -25,6 +25,12 @@
 # ============================================================
 set -u
 cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
+# 作成するファイルは既定で所有者のみ (0600/0700)。install.sh は
+# agent_config.json / dashboard_config.json (agent_token 等の秘密情報を含む)
+# を example からコピーして書き換えるため、コピー直後から chmod までの
+# 一瞬だけ world-readable になる窓を塞ぐ。後段の明示的な chmod/chown は
+# そのまま有効（この umask より優先される）。
+umask 077
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-/opt/kizuna-eye/bin/plugins}"
