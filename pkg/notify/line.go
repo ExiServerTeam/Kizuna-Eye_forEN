@@ -26,6 +26,10 @@ func NewLINENotifier(token string) *LINENotifier {
 
 func (l *LINENotifier) Name() string { return "line" }
 
+// lineAPIURL is overridable in tests so the notifier can be pointed at an
+// httptest server instead of the real LINE Notify API.
+var lineAPIURL = "https://notify-api.line.me/api/notify"
+
 func (l *LINENotifier) Send(ctx context.Context, a *Alert) error {
 	// LINE Notify rejects messages longer than 1000 characters.
 	// Truncate so one long alert cannot drop the whole notification.
@@ -37,7 +41,7 @@ func (l *LINENotifier) Send(ctx context.Context, a *Alert) error {
 	req, err := http.NewRequestWithContext(
 		ctx,
 		http.MethodPost,
-		"https://notify-api.line.me/api/notify",
+		lineAPIURL,
 		strings.NewReader(data.Encode()),
 	)
 	if err != nil {

@@ -15,7 +15,7 @@ func TestReadLastLines(t *testing.T) {
 	if err := os.WriteFile(p, []byte("1\n2\n3\n4\n5\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := l.readLastLines(p, 2); err != nil || got != "4\n5" {
+	if got, _, err := l.readLastLines(p, 2); err != nil || got != "4\n5" {
 		t.Errorf("trailing: got %q err %v, want %q", got, err, "4\n5")
 	}
 
@@ -23,7 +23,7 @@ func TestReadLastLines(t *testing.T) {
 	if err := os.WriteFile(p, []byte("a\nb\nc"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := l.readLastLines(p, 2); got != "b\nc" {
+	if got, _, _ := l.readLastLines(p, 2); got != "b\nc" {
 		t.Errorf("no-trailing: got %q, want %q", got, "b\nc")
 	}
 
@@ -31,7 +31,7 @@ func TestReadLastLines(t *testing.T) {
 	if err := os.WriteFile(p, []byte("x\ny"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := l.readLastLines(p, 10); got != "x\ny" {
+	if got, _, _ := l.readLastLines(p, 10); got != "x\ny" {
 		t.Errorf("fewer: got %q", got)
 	}
 
@@ -39,12 +39,12 @@ func TestReadLastLines(t *testing.T) {
 	if err := os.WriteFile(p, []byte(""), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if got, _ := l.readLastLines(p, 5); got != "" {
+	if got, _, _ := l.readLastLines(p, 5); got != "" {
 		t.Errorf("empty: got %q", got)
 	}
 
 	// missing file
-	if got, err := l.readLastLines(filepath.Join(dir, "nope.log"), 5); err != nil || got != "" {
+	if got, _, err := l.readLastLines(filepath.Join(dir, "nope.log"), 5); err != nil || got != "" {
 		t.Errorf("missing: got %q err %v", got, err)
 	}
 }

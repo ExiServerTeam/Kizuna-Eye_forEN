@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="ja" data-theme="dark">
+<html lang="ja" data-theme="dark" data-i18n-doc-title="logs.page_title">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye - ログ</title>
-    <link rel="stylesheet" href="/style.css?v=0.7.1">
-    <link rel="stylesheet" href="/logs.css?v=0.7.1">
+    <link rel="stylesheet" href="/style.css?v=0.8.11">
+    <link rel="stylesheet" href="/logs.css?v=0.8.11">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
 <body data-role-min="operator">
@@ -25,12 +25,12 @@
                         <span class="theme-icon" id="langIcon">🌐</span>
                         <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
                     </button>
-                    <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
+                    <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え" data-i18n-aria-label="theme.toggle">
                         <span class="theme-icon" id="themeIcon">🌙</span>
                         <span class="theme-track"><span class="theme-thumb"></span></span>
                         <span class="theme-label" id="themeLabel">ダーク</span>
                     </button>
-                    <span class="version-badge">v0.7.1</span>
+                    <span class="version-badge">v0.8.11</span>
                 </div>
             </div>
             <div class="header-user" id="headerUser"></div>
@@ -42,41 +42,50 @@
                     <h2 data-i18n="logs.title">ログ</h2>
                     <p class="page-desc" data-i18n="logs.desc">Agent / Dashboard のログを表示します。</p>
                 </div>
-                <div class="page-header-right">
-                    <div class="file-actions">
-                        <button type="button" class="btn-secondary active" id="logTypeAgent" data-type="agent">Agent</button>
-                        <button type="button" class="btn-secondary" id="logTypeDashboard" data-type="dashboard">Dashboard</button>
-                        <label class="log-lines-label"><span data-i18n="logs.lines">行数</span>
-                            <select id="logLines" class="log-lines-select">
-                                <option value="50">50</option>
-                                <option value="100" selected>100</option>
-                                <option value="200">200</option>
-                                <option value="500">500</option>
-                                <option value="1000">1000</option>
-                            </select>
-                        </label>
-                        <button type="button" class="btn-secondary" id="logFollowBtn">自動更新: OFF</button>
-                        <button type="button" class="btn-primary" id="logReloadBtn" data-i18n="logs.reload">再読み込み</button>
-                    </div>
+            </div>
+
+            <!-- ツールバー: 左に「種類」のセグメント、右に操作を1行でまとめる。 -->
+            <div class="log-toolbar">
+                <span class="log-toolbar-label" data-i18n="logs.type_label">種類</span>
+                <div class="log-type-buttons" id="logTypeButtons">
+                    <button type="button" class="btn-secondary active" id="logTypeAgent" data-type="agent">Agent</button>
+                    <button type="button" class="btn-secondary" id="logTypeDashboard" data-type="dashboard">Dashboard</button>
+                    <!-- プラグイン等の別ログファイルは /api/logs/types からこの中へ動的に追加 -->
+                </div>
+                <div class="log-toolbar-ops">
+                    <label class="log-lines-label"><span data-i18n="logs.lines">行数</span>
+                        <select id="logLines" class="log-lines-select">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </label>
+                    <!-- テキストは logs.js が言語と状態に応じて設定するため、
+                         data-i18n を付けない（付けると i18n が状態を無視して
+                         上書きしてしまう）。 -->
+                    <button type="button" class="btn-secondary" id="logFormatBtn">表示: JSON</button>
+                    <button type="button" class="btn-secondary" id="logFollowBtn">自動更新: ON</button>
+                    <button type="button" class="btn-primary" id="logReloadBtn" data-i18n="logs.reload">再読み込み</button>
                 </div>
             </div>
 
             <div class="log-viewer-container">
-                <pre class="log-viewer" id="logViewer">読み込み中...</pre>
+                <pre class="log-viewer" id="logViewer" data-i18n="logs.loading">読み込み中...</pre>
                 <div class="log-status" id="logStatus"></div>
             </div>
         </main>
 
         <footer class="footer">
-            <p>Kizuna-Eye v0.7.1 &middot; リアルタイムシステムモニタリング</p>
+            <p>Kizuna-Eye v0.8.11 &middot; <span data-i18n="footer.tagline">リアルタイムシステムモニタリング</span></p>
         </footer>
     </div>
 
     <div id="toastContainer"></div>
 
-    <script src="/i18n.js?v=0.7.1"></script>
-    <script src="/auth-guard.js?v=0.7.1"></script>
-    <script src="/connection.js?v=0.7.1"></script>
-    <script src="/logs.js?v=0.7.1"></script>
+    <script src="/i18n.js?v=0.8.11"></script>
+    <script src="/auth-guard.js?v=0.8.11"></script>
+    <script src="/connection.js?v=0.8.11"></script>
+    <script src="/logs.js?v=0.8.11"></script>
 </body>
 </html>

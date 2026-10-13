@@ -13,13 +13,21 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
-BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-/opt/kizuna-eye/backup}"
+PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-$BIN_DIR/plugins}"
+# Must match update.sh's default (/var/backups/kizuna-eye). If the two
+# scripts resolve different directories, this wrapper cannot find the backup
+# update.sh just made, so the health-check rollback below silently does
+# nothing and a broken binary is left in place.
+BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-/var/backups/kizuna-eye}"
 HEALTH_URL="${KIZUNA_HEALTH_URL:-http://127.0.0.1:8080/health}"
 
 # update.sh と同じ規則でバックアップ先を解決する（/opt が sudo 所有のときは
 # HOME 配下へ退避）。ここがずれるとロールバック先を見失う。
 if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
-    BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-$HOME/.kizuna-eye/backup}"
+    # Mirror update.sh's fallback exactly ($HOME/.kizuna-eye/backup), ignoring
+    # KIZUNA_BACKUP_DIR here: update.sh does the same, so both scripts point at
+    # the same directory even when the env var names an unwritable path.
+    BACKUP_ROOT="$HOME/.kizuna-eye/backup"
     mkdir -p "$BACKUP_ROOT" 2>/dev/null || true
 fi
 
@@ -66,6 +74,16 @@ if [ -n "$LATEST_BACKUP" ]; then
     for f in agent_linux dashboard_linux plugin-inspect; do
         [ -f "$LATEST_BACKUP/$f" ] && cp -a "$LATEST_BACKUP/$f" "$BIN_DIR/$f"
     done
+    # Restore the plugins too. Go plugins must match the host binary's package
+    # hashes exactly, so rolling back only the binaries while leaving the
+    # newly built .so files in place makes the old host fail to load them
+    # ("plugin was built with a different version of package ..."). update.sh's
+    # own rollback restores plugins for this reason; this wrapper must do the
+    # same or the rollback leaves the service in a broken state.
+    if [ -d "$LATEST_BACKUP/plugins" ]; then
+        mkdir -p "$PLUGIN_OUT_DIR" 2>/dev/null || true
+        cp -a "$LATEST_BACKUP/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+    fi
     ./stop.sh || true
     ./start.sh || true
     echo "⚠️  前のバージョンへ戻しました。"

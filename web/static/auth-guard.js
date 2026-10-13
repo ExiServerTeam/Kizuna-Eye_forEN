@@ -226,18 +226,18 @@
         fetch('/api/auth/avatar', { method: 'POST', credentials: 'same-origin', body: fd })
             .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
             .then(function (res) {
-                if (!res.ok) { alert((res.body && res.body.error) || 'アップロードに失敗しました'); return; }
+                if (!res.ok) { alert((res.body && res.body.error) || t('account.err_upload', 'Upload failed')); return; }
                 me.avatar = res.body.avatar;
                 wrap.querySelectorAll('.account-avatar').forEach(function (el) { renderAvatar(el, me); });
             })
-            .catch(function () { alert('通信エラー'); });
+            .catch(function () { alert(t('account.err_network', 'Network error')); });
     }
 
     // changeOwnPassword prompts for the current and new password.
     function changeOwnPassword() {
-        const current = prompt('現在のパスワード');
+        const current = prompt(t('account.prompt_current_pw', 'Current password'));
         if (current === null) return;
-        const next = prompt('新しいパスワード（8文字以上）');
+        const next = prompt(t('account.prompt_new_pw', 'New password (at least 8 characters)'));
         if (next === null) return;
         fetch('/api/auth/password', {
             method: 'PUT', credentials: 'same-origin',
@@ -246,11 +246,11 @@
         })
             .then(function (r) { return r.json().then(function (b) { return { ok: r.ok, body: b }; }); })
             .then(function (res) {
-                if (!res.ok) { alert((res.body && res.body.error) || '変更に失敗しました'); return; }
-                alert('パスワードを変更しました。再度ログインしてください。');
+                if (!res.ok) { alert((res.body && res.body.error) || t('account.err_change', 'Change failed')); return; }
+                alert(t('account.pw_changed_relogin', 'Password changed. Please log in again.'));
                 location.replace('/login.html');
             })
-            .catch(function () { alert('通信エラー'); });
+            .catch(function () { alert(t('account.err_network', 'Network error')); });
     }
 
     // closeAllAccountMenus hides every open dropdown.

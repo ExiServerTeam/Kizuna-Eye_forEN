@@ -6,7 +6,7 @@ BIN_DIR="/opt/kizuna-eye/bin"
 mkdir -p "$BIN_DIR"
 
 # バージョン情報を ldflags で埋め込む
-VERSION="${VERSION:-v0.7.1}"
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 

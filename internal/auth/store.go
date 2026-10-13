@@ -79,6 +79,16 @@ var (
 
 var usernameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
 
+// dummyPasswordHash is a syntactically VALID bcrypt hash used to equalise the
+// timing of a login attempt for an unknown user. It must parse cleanly:
+// bcrypt.CompareHashAndPassword rejects a malformed hash before doing the
+// (expensive) key derivation, so a placeholder like "$2a$10$invalid..." would
+// return almost instantly and let an attacker tell an unknown username from a
+// known one by response time (username enumeration). This hash has cost 10,
+// the same as bcrypt.DefaultCost used when creating users, so both paths do
+// equivalent work. The value it encodes is irrelevant: the result is discarded.
+const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
+
 // Store holds users and persists them to a JSON file.
 type Store struct {
 	mu    sync.RWMutex
@@ -263,31 +273,50 @@ func (s *Store) Create(username, password string, role Role) (*User, error) {
 		delete(s.users, username)
 		return nil, err
 	}
-	return u, nil
+	// Return a copy, not the live *User: a caller that keeps the pointer
+	// could otherwise race with ChangePassword/ChangeRole writing it under
+	// the write lock.
+	cp := *u
+	return &cp, nil
 }
 
 // Authenticate verifies a username/password pair.
+//
+// It returns a COPY of the user, never the store's live *User. The hash is
+// also captured while the read lock is held: reading u.PasswordHash after
+// RUnlock would race with a concurrent ChangePassword/ChangeRole that writes
+// the same fields under the write lock (a data race the race detector flags).
 func (s *Store) Authenticate(username, password string) (*User, bool) {
 	s.mu.RLock()
 	u, ok := s.users[username]
-	s.mu.RUnlock()
 	if !ok {
-		// Compare against a dummy hash to keep timing similar.
-		_ = bcrypt.CompareHashAndPassword([]byte("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidinva"), []byte(password))
+		s.mu.RUnlock()
+		// Compare against a valid dummy hash so an unknown username costs the
+		// same as a wrong password for a known user (prevents timing-based
+		// username enumeration).
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
 		return nil, false
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(u.PasswordHash), []byte(password)); err != nil {
+	hash := u.PasswordHash
+	cp := *u
+	s.mu.RUnlock()
+
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		return nil, false
 	}
-	return u, true
+	return &cp, true
 }
 
-// Get returns a user by name.
+// Get returns a copy of a user by name.
 func (s *Store) Get(username string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	u, ok := s.users[username]
-	return u, ok
+	if !ok {
+		return nil, false
+	}
+	cp := *u
+	return &cp, true
 }
 
 // SetAvatar records the user's avatar file name (empty to clear).

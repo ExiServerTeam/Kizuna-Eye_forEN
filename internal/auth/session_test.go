@@ -61,6 +61,46 @@ func TestSessionDelete(t *testing.T) {
 	}
 }
 
+// A negative idle duration disables the inactivity timeout: the session
+// survives well past the former 2h default as long as the absolute TTL holds.
+func TestSessionIdleDisabled(t *testing.T) {
+	m := NewSessionManager(time.Hour, -1) // idle disabled, TTL 1h
+	defer m.Stop()
+
+	s, err := m.Create("bob", RoleAdmin, "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Simulate an old LastSeen (3h ago) by writing it directly under the lock.
+	m.mu.Lock()
+	for _, sess := range m.sessions {
+		sess.LastSeen = time.Now().Add(-3 * time.Hour)
+	}
+	m.mu.Unlock()
+
+	if _, ok := m.Get(s.ID); !ok {
+		t.Fatal("session should stay valid when the idle timeout is disabled")
+	}
+}
+
+// The default (idle == 0) still applies a 2h inactivity timeout.
+func TestSessionIdleDefaultApplies(t *testing.T) {
+	m := NewSessionManager(time.Hour, 0)
+	defer m.Stop()
+
+	s, _ := m.Create("bob", RoleAdmin, "")
+	m.mu.Lock()
+	for _, sess := range m.sessions {
+		sess.LastSeen = time.Now().Add(-3 * time.Hour)
+	}
+	m.mu.Unlock()
+
+	if _, ok := m.Get(s.ID); ok {
+		t.Fatal("session should expire on inactivity when idle is the default")
+	}
+}
+
 func TestSessionExpiry(t *testing.T) {
 	// ttl very short so it expires immediately.
 	m := NewSessionManager(time.Millisecond, time.Hour)

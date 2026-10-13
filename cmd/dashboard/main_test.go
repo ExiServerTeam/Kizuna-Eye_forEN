@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"testing"
 
 	"Kizuna-Eye/pkg/logger"
@@ -104,5 +105,32 @@ func TestHubSetLastStatusIgnoresNil(t *testing.T) {
 	hub.SetLastStatus(statusSample)
 	if got := hub.GetLastStatus(); got == nil || got.DiskTotal != 100 || got.DiskUsed != 20 {
 		t.Fatalf("expected status to be stored, got %#v", got)
+	}
+}
+
+// Regression: a public-viewer broadcast must not expose the process list or
+// disk S.M.A.R.T metadata (model/serial/health/temp), and non-status messages
+// (events) must pass through unchanged.
+func TestSanitizeStatusJSON(t *testing.T) {
+	statusMsg := []byte(`{"timestamp":1,"cpu_usage":10,"processes":[{"pid":1,"name":"init","user":"root"}],"disks":[{"path":"/","percent":40,"model":"SSD","serial":"S1","health":"PASSED","temp":35}]}`)
+	out := sanitizeStatusJSON(statusMsg)
+	var s status.SystemStatus
+	if err := json.Unmarshal(out, &s); err != nil {
+		t.Fatalf("sanitized output is not valid JSON: %v", err)
+	}
+	if s.Processes != nil {
+		t.Errorf("processes must be stripped: %#v", s.Processes)
+	}
+	if len(s.Disks) != 1 || s.Disks[0].Model != "" || s.Disks[0].Serial != "" || s.Disks[0].Health != "" || s.Disks[0].Temp != 0 {
+		t.Errorf("disk S.M.A.R.T metadata must be stripped: %#v", s.Disks)
+	}
+	if s.CPUUsage != 10 || s.Disks[0].Percent != 40 {
+		t.Errorf("usage fields must be preserved: %#v", s)
+	}
+
+	// A non-status message (event) must pass through unchanged.
+	eventMsg := []byte(`{"event":"backup_result","plugin":"p","status":"success"}`)
+	if got := sanitizeStatusJSON(eventMsg); string(got) != string(eventMsg) {
+		t.Errorf("event message must be unchanged, got %s", got)
 	}
 }

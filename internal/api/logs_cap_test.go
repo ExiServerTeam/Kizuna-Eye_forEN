@@ -21,7 +21,7 @@ func TestReadLastLinesCapsMemoryOnNewlineFreeFile(t *testing.T) {
 	}
 
 	l := &LogHandler{}
-	got, err := l.readLastLines(p, 100)
+	got, _, err := l.readLastLines(p, 100)
 	if err != nil {
 		t.Fatalf("readLastLines: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestReadLastLinesNormal(t *testing.T) {
 		t.Fatal(err)
 	}
 	l := &LogHandler{}
-	got, err := l.readLastLines(p, 2)
+	got, _, err := l.readLastLines(p, 2)
 	if err != nil {
 		t.Fatalf("readLastLines: %v", err)
 	}

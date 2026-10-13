@@ -18,8 +18,18 @@ func TestResolveBlockDevice(t *testing.T) {
 		{"/dev/nvme0n1", "/dev/nvme0n1"},
 		// mmcblk partition -> strip p<num>.
 		{"/dev/mmcblk0p1", "/dev/mmcblk0"},
+		// Whole mmcblk device (no partition suffix) -> unchanged. Regression:
+		// sdRe matched "mmcblk0" and stripped the digit to /dev/mmcblk.
+		{"/dev/mmcblk0", "/dev/mmcblk0"},
 		// LVM / mapper -> unchanged.
 		{"/dev/mapper/ubuntu--vg-ubuntu--lv", "/dev/mapper/ubuntu--vg-ubuntu--lv"},
+		// Virtual / RAID whole devices whose trailing digits are part of the
+		// name must NOT be treated as partitions (regression).
+		{"/dev/md0", "/dev/md0"},
+		{"/dev/dm-0", "/dev/dm-0"},
+		{"/dev/loop0", "/dev/loop0"},
+		{"/dev/sr0", "/dev/sr0"},
+		{"/dev/nbd0", "/dev/nbd0"},
 		// Non-/dev input -> unchanged.
 		{"tmpfs", "tmpfs"},
 	}

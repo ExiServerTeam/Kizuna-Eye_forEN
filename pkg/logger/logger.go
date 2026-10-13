@@ -36,8 +36,8 @@ type Options struct {
 	Prefix  string
 	UseUTC  bool
 
-	// MaxSizeMB is the size threshold that triggers rotation (default: 10).
-	// 0 disables rotation.
+	// MaxSizeMB is the size threshold that triggers rotation. 0 (or unset)
+	// uses the default of 10 MB; a negative value disables rotation.
 	MaxSizeMB int
 	// MaxBackups is the number of rotated files to keep (default: 5).
 	MaxBackups int
@@ -172,12 +172,20 @@ func (w *rotatingWriter) cleanup() {
 func (w *rotatingWriter) Sync() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// w.file is nil after a failed rotation whose reopen also failed, so a
+	// Sync/Close during shutdown must not dereference it (nil panic).
+	if w.file == nil {
+		return nil
+	}
 	return w.file.Sync()
 }
 
 func (w *rotatingWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.file == nil {
+		return nil
+	}
 	return w.file.Close()
 }
 
@@ -250,7 +258,9 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	l.logger.Println(prefix + msg)
 
 	if level == FATAL {
-		l.Close()
+		// Close under the lock we already hold (Close would re-lock and
+		// deadlock). os.Exit does not return, so no unlock is needed.
+		l.closeLocked()
 		os.Exit(1)
 	}
 }
@@ -261,7 +271,11 @@ func (l *Logger) Warn(format string, args ...interface{})  { l.log(WARN, format,
 func (l *Logger) Error(format string, args ...interface{}) { l.log(ERROR, format, args...) }
 func (l *Logger) Fatal(format string, args ...interface{}) { l.log(FATAL, format, args...) }
 
+// Sync flushes buffered log data. It takes the logger mutex so it cannot run
+// concurrently with a log write (which would touch the same file/writer).
 func (l *Logger) Sync() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if rw, ok := l.writer.(*rotatingWriter); ok {
 		return rw.Sync()
 	}
@@ -271,7 +285,16 @@ func (l *Logger) Sync() error {
 	return nil
 }
 
+// Close closes the log file. It takes the logger mutex for the same reason as
+// Sync. The FATAL path calls closeLocked directly because it already holds it.
 func (l *Logger) Close() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.closeLocked()
+}
+
+// closeLocked performs the actual close. Caller must hold l.mu.
+func (l *Logger) closeLocked() {
 	if rw, ok := l.writer.(*rotatingWriter); ok {
 		_ = rw.Close()
 		return

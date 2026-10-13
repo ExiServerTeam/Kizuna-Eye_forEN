@@ -42,6 +42,17 @@ func TestSessionPersistence(t *testing.T) {
 	if !ok || got.Username != "alice" || got.Role != RoleAdmin {
 		t.Fatalf("session did not survive restart: %+v ok=%v", got, ok)
 	}
+
+	// Regression: a session loaded from disk must expose its raw ID so that
+	// Delete(id) actually removes the server-side session. Before this fix
+	// Get returned ID="" and logout after a restart was a no-op.
+	if got.ID != s.ID {
+		t.Fatalf("restored session ID = %q, want %q", got.ID, s.ID)
+	}
+	m2.Delete(got.ID)
+	if _, ok := m2.Get(s.ID); ok {
+		t.Fatal("Delete(restoredID) must remove the session after a restart")
+	}
 }
 
 // TestSessionPersistenceDisabled verifies that without EnablePersistence the

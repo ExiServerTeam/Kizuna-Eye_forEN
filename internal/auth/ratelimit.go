@@ -117,6 +117,15 @@ func (l *loginLimiter) Allow(ip string) bool {
 	if now.Before(info.lockedTill) {
 		return false
 	}
+	// Lockout expired: clear the failure counter so one later failure does
+	// not immediately hit the threshold again while the old window is still
+	// open.
+	if !info.lockedTill.IsZero() {
+		info.count = 0
+		info.firstAt = now
+		info.lockedTill = time.Time{}
+		return true
+	}
 	// Window expired: reset the counter.
 	if now.Sub(info.firstAt) > l.window {
 		delete(l.attempts, ip)

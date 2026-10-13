@@ -12,7 +12,8 @@
     --primary-hover: #764ba2;
     --bg-card: rgba(255, 255, 255, 0.05);
     --bg-card-hover: rgba(255, 255, 255, 0.08);
-    --bg-header: rgba(255, 255, 255, 0.05);
+    --bg-header: rgba(24, 27, 46, 0.7);
+    --border-strong: rgba(255, 255, 255, 0.12);
     --bg-footer: rgba(255, 255, 255, 0.02);
     --bg-backup-item: rgba(255, 255, 255, 0.035);
     --bg-disk-item: rgba(255, 255, 255, 0.035);
@@ -68,7 +69,8 @@
     --primary-hover: #764ba2;
     --bg-card: rgba(255, 255, 255, 0.92);
     --bg-card-hover: rgba(255, 255, 255, 1);
-    --bg-header: rgba(255, 255, 255, 0.95);
+    --bg-header: rgba(255, 255, 255, 0.7);
+    --border-strong: rgba(140, 110, 80, 0.35);
     --bg-footer: rgba(255, 250, 240, 0.8);
     --bg-backup-item: rgba(180, 160, 130, 0.12);
     --bg-disk-item: rgba(180, 160, 130, 0.12);
@@ -149,16 +151,21 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    /* Keep the header above the cards so the account dropdown is not
-       painted underneath the gauge grid. */
-    position: relative;
+    /* スクロールしても上部に固定し、後ろのコンテンツが透けて見えるように
+       する（sticky + 半透明 + blur）。アカウントドロップダウンがカードの
+       下に描画されないよう z-index も確保する。 */
+    position: sticky;
+    top: 8px;
     z-index: 300;
     padding: 14px 24px;
     border-radius: 16px;
+    /* 半透明 + ぼかしでガラス風。透過度はダーク/ライトで同じ値にして
+       見た目を揃える。backdrop-filter が無いと後ろの文字が混ざって
+       読みにくくなるため併用する。 */
     background: var(--bg-header);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
-    border: 1px solid var(--border-color);
+    border: 1px solid var(--border-strong, var(--border-color));
     box-shadow: var(--shadow);
     margin-bottom: 28px;
     transition: background 0.35s, border-color 0.35s, box-shadow 0.35s;
@@ -733,6 +740,33 @@ body.card-dragging {
     display: none !important;
 }
 
+/* data-tooltip を持つ要素のツールチップ。祖先に overflow（.app の
+   overflow-x: clip 等）があると ::after では見切れるため、body 直下に
+   position: fixed で出す（位置は app.js が計算する）。これで
+   どの祖先のクリップにも影響されない。 */
+.kizuna-tooltip {
+    position: fixed;
+    z-index: 9999;
+    max-width: min(320px, 90vw);
+    padding: 8px 12px;
+    border-radius: 10px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong, var(--border-color));
+    box-shadow: var(--shadow);
+    font-size: 0.75rem;
+    font-weight: 500;
+    font-family: inherit;
+    line-height: 1.5;
+    white-space: pre-line;   /* \n を改行として表示する */
+    text-align: left;
+    pointer-events: none;
+}
+
+.kizuna-tooltip[hidden] {
+    display: none;
+}
+
 /* ===== 空き容量バッジ（カードヘッダー用） ===== */
 .free-badge {
     display: inline-flex;
@@ -1273,6 +1307,20 @@ body.card-dragging {
 .alert-item.warning  { border-left-color: #f59e0b; }
 .alert-item.success  { border-left-color: #22c55e; }
 .alert-item.info     { border-left-color: #3b82f6; }
+
+.alert-level-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+    white-space: nowrap;
+    color: #fff;
+    align-self: flex-start;
+}
+.alert-level-badge.critical { background: #ef4444; }
+.alert-level-badge.warning  { background: #f59e0b; }
+.alert-level-badge.success  { background: #22c55e; }
+.alert-level-badge.info     { background: #3b82f6; }
 
 .alert-item-body {
     flex: 1;
@@ -2959,10 +3007,9 @@ html {
 }
 
 @media (max-width: 768px) {
-    /* ヘッダーを上部固定してスクロール中も操作しやすく */
+    /* ヘッダーは全幅で sticky（基本ルールで指定済み）。ここでは z-index のみ
+       下げてモーダル等の前面要素を邪魔しないようにする。 */
     .header {
-        position: sticky;
-        top: 8px;
         z-index: 100;
     }
 
@@ -3489,3 +3536,21 @@ html {
     html { font-size: 13px; }
 }
 
+/* Phase V5: alert source badge (trusted=dashboard / untrusted=agent) */
+.alert-source-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 8px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+.alert-source-badge.trusted {
+    background: rgba(34, 197, 94, 0.18);
+    color: #22c55e;
+}
+.alert-source-badge.untrusted {
+    background: rgba(234, 179, 8, 0.20);
+    color: #eab308;
+}

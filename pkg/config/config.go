@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // AgentConfig is the agent configuration.
@@ -13,7 +14,10 @@ type AgentConfig struct {
 	DashboardURL string  `json:"dashboard_url"`
 	Interval     float64 `json:"interval"`
 	LogFile      string  `json:"log_file"`
-	DiskPath     string  `json:"disk_path"`
+	// LogLevel is "debug"|"info"|"warn"|"error". Empty defaults to "info".
+	// DEBUG is verbose, so it is opt-in via this setting.
+	LogLevel string `json:"log_level"`
+	DiskPath string `json:"disk_path"`
 	// Token authenticates the agent to the dashboard over WebSocket.
 	// Empty disables agent authentication (backward compatible).
 	Token string `json:"token"`
@@ -100,6 +104,21 @@ type AuthConfig struct {
 	// *bool so an absent key means "default (off)".
 	SessionIPBind *bool `json:"session_ip_bind"`
 
+	// GuestSessionTTLHours is the absolute lifetime of a guest session. A
+	// guest is an anonymous viewer, so its session should expire far sooner
+	// than a real user's. It is a *int so an absent key keeps the default
+	// (12h). 0 or negative uses the manager's default TTL.
+	GuestSessionTTLHours *int `json:"guest_session_ttl_hours"`
+
+	// SessionIdleHours overrides the inactivity timeout. It is a *int so an
+	// absent key keeps the default (2 hours):
+	//   absent / nil    -> default (2h)
+	//   0 (or negative) -> never time out on inactivity (the session lives
+	//                      until SessionTTLHours expires)
+	//   N > 0           -> N hours
+	// Set this to 0 when "logged out when I come back" is unwanted.
+	SessionIdleHours *int `json:"session_idle_hours"`
+
 	// PublicViewer exposes the dashboard and the read-only monitoring
 	// endpoints (CPU/memory/disk usage) to unauthenticated clients.
 	// When true, a viewer can open the dashboard without logging in, but
@@ -141,6 +160,21 @@ func (a AuthConfig) IsSessionIPBind() bool {
 	return *a.SessionIPBind
 }
 
+// SessionIdleDuration returns the inactivity timeout for SessionManager.
+//
+//	 0 -> caller default (2h), when the key is absent
+//	-1 -> idle timeout disabled
+//	>0 -> that many hours
+func (a AuthConfig) SessionIdleDuration() time.Duration {
+	if a.SessionIdleHours == nil {
+		return 0
+	}
+	if *a.SessionIdleHours <= 0 {
+		return -1
+	}
+	return time.Duration(*a.SessionIdleHours) * time.Hour
+}
+
 // IsPublicViewer reports whether login-free viewer access is enabled.
 // Defaults to true when unset.
 func (a AuthConfig) IsPublicViewer() bool {
@@ -148,6 +182,19 @@ func (a AuthConfig) IsPublicViewer() bool {
 		return true
 	}
 	return *a.PublicViewer
+}
+
+// GuestSessionTTL returns the absolute lifetime of a guest session. An absent
+// key uses the default (12h); 0 or negative returns 0, which makes the auth
+// handler fall back to the manager's own TTL.
+func (a AuthConfig) GuestSessionTTL() time.Duration {
+	if a.GuestSessionTTLHours == nil {
+		return 12 * time.Hour
+	}
+	if *a.GuestSessionTTLHours <= 0 {
+		return 0
+	}
+	return time.Duration(*a.GuestSessionTTLHours) * time.Hour
 }
 
 // DashboardConfig is the dashboard configuration.
@@ -333,8 +380,8 @@ func validateAgentConfig(cfg *AgentConfig) error {
 	if strings.TrimSpace(cfg.DashboardURL) == "" {
 		return fmt.Errorf("DashboardURL が空です（必須）")
 	}
-	if !strings.HasPrefix(cfg.DashboardURL, "ws://") && !strings.HasPrefix(cfg.DashboardURL, "wss://") {
-		fmt.Printf("[CONFIG] warning: DashboardURL does not start with ws:// or wss://: %s\n", cfg.DashboardURL)
+	if err := ValidateAgentURL(cfg.DashboardURL); err != nil {
+		return fmt.Errorf("dashboard_url が不正です: %w", err)
 	}
 	if cfg.Interval <= 0 {
 		return fmt.Errorf("interval は 0 より大きい値を指定してください (現在: %f)", cfg.Interval)
@@ -385,6 +432,9 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 				if ch.WebhookURL == "" {
 					return fmt.Errorf("通知設定: discord には webhook_url が必須です")
 				}
+				if err := ValidateWebhookURL(ch.WebhookURL); err != nil {
+					return fmt.Errorf("通知設定: discord の webhook_url が不正です: %w", err)
+				}
 			case "telegram":
 				if ch.BotToken == "" || ch.ChatID == "" {
 					return fmt.Errorf("通知設定: telegram には bot_token と chat_id が必須です")
@@ -396,6 +446,9 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 			case "slack":
 				if ch.WebhookURL == "" {
 					return fmt.Errorf("通知設定: slack には webhook_url が必須です")
+				}
+				if err := ValidateWebhookURL(ch.WebhookURL); err != nil {
+					return fmt.Errorf("通知設定: slack の webhook_url が不正です: %w", err)
 				}
 			case "email":
 				if ch.SMTPHost == "" || ch.EmailTo == "" {

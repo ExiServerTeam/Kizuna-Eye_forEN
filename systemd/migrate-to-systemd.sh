@@ -41,7 +41,9 @@ fi
 
 # 2. unit 導入
 echo "▶ systemd unit を導入 (User=$RUN_USER)"
-sed "s/__USER__/$RUN_USER/g" "$UNIT_SRC" > "$UNIT_DST"
+# Substitute both __USER__ (run user) and __DIR__ (this repo's location),
+# so the unit does not hardcode a path the repo may not live at.
+sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$PWD|g" "$UNIT_SRC" > "$UNIT_DST"
 chmod 0644 "$UNIT_DST"
 
 # 3. 有効化

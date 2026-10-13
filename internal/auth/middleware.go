@@ -33,10 +33,30 @@ var protectedRules = []routeRule{
 	{"", "/api/plugins/upload", RoleAdmin},
 	{"DELETE", "/api/plugins", RoleAdmin},
 
+	// Self-account writes are for real users only. A guest session is a
+	// throw-away viewer that has no entry in users.json, so an avatar
+	// upload/delete would fail internally (500). An operator-level rule
+	// keeps guests out of these endpoints while still letting a logged-in
+	// operator/admin manage their own avatar. Reads (GET
+	// /api/auth/avatar/{name}) stay public for <img> tags.
+	{"POST", "/api/auth/avatar", RoleOperator},
+	{"DELETE", "/api/auth/avatar", RoleOperator},
+
 	// Admin only: configuration management.
 	{"", "/api/config", RoleAdmin},
 
-	// Operator: module management, manual backup runs, plugin metadata/UI,
+	// Module registration and deletion are admin-only: adding a module means
+	// supplying a plugin_path, which the agent will load as code (a .so), so it
+	// is a code-execution boundary, not a routine operation. An operator may
+	// still CHANGE an existing module's settings (PUT) and read the list (GET),
+	// which the modules page needs.
+	{"POST", "/api/modules", RoleAdmin},
+	{"DELETE", "/api/modules", RoleAdmin},
+	// Reload re-reads modules.json and applies new plugin paths; treat it like
+	// a registration action and require admin.
+	{"POST", "/api/modules/reload", RoleAdmin},
+
+	// Operator: manual backup runs, plugin metadata/UI, module config edits,
 	// and alert threshold changes.
 	{"", "/api/plugins", RoleOperator},
 	{"", "/api/alert-config", RoleOperator},
@@ -127,9 +147,9 @@ func csrfOriginOK(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	originHost := strings.ToLower(u.Host)
+	originHost := canonicalHost(u.Host)
 	// r.Host is the Host the browser sent, which the reverse proxy forwards.
-	if originHost == strings.ToLower(r.Host) {
+	if originHost == canonicalHost(r.Host) {
 		return true
 	}
 	// Behind a reverse proxy the Host may be rewritten, so the request can
@@ -138,11 +158,36 @@ func csrfOriginOK(r *http.Request) bool {
 	// X-Forwarded-Host and bypass the check. The request is accepted if Origin
 	// matches either value, so a correct r.Host is never broken by a stray XFH.
 	if peer, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && isLoopback(peer) {
-		if xfh := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))); xfh != "" && originHost == xfh {
+		if xfh := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))); xfh != "" && originHost == canonicalHost(xfh) {
 			return true
 		}
 	}
 	return false
+}
+
+// canonicalHost normalizes a Host/Origin value for comparison. It lowercases
+// the value, drops a trailing dot (FQDN form) and maps the loopback aliases
+// localhost / 127.0.0.1 / [::1] to a single canonical form, so the same host
+// reached via any of its usual spellings is treated as same-origin. Without
+// this, a browser that reached the dashboard via http://127.0.0.1:8080 would
+// have its state-changing requests rejected with 403 even though the Origin is
+// the very host it is talking to.
+func canonicalHost(host string) string {
+	h := strings.ToLower(strings.TrimSpace(host))
+	h = strings.TrimSuffix(h, ".")
+	// Split host:port so the loopback mapping does not depend on the port.
+	hostPart, portPart := h, ""
+	if hp, p, err := net.SplitHostPort(h); err == nil {
+		hostPart, portPart = hp, p
+	}
+	switch hostPart {
+	case "localhost", "127.0.0.1", "::1", "[::1]", "0:0:0:0:0:0:0:1":
+		hostPart = "localhost"
+	}
+	if portPart != "" {
+		return net.JoinHostPort(hostPart, portPart)
+	}
+	return hostPart
 }
 
 // isPluginUploadPath reports whether p is the plugin upload endpoint, which is
@@ -158,6 +203,26 @@ func isPublicPath(p string) bool {
 	if strings.HasPrefix(p, "/api/auth/avatar/") {
 		return true
 	}
+
+	// Static assets (CSS / JS / fonts / images) are shared by every page,
+	// including the login and setup screens which are shown before a session
+	// exists. Serving them without a session is safe: they contain no user
+	// data, and gating them caused the login page to receive a 302 instead of
+	// its stylesheet (broken UI). Only .html pages stay gated (per-page rules
+	// below), so an admin shell is never served to a lower role.
+	switch {
+	case strings.HasSuffix(p, ".css"),
+		strings.HasSuffix(p, ".js"),
+		strings.HasSuffix(p, ".woff"),
+		strings.HasSuffix(p, ".woff2"),
+		strings.HasSuffix(p, ".ttf"),
+		strings.HasSuffix(p, ".png"),
+		strings.HasSuffix(p, ".svg"),
+		strings.HasSuffix(p, ".ico"),
+		strings.HasSuffix(p, ".webp"):
+		return true
+	}
+
 	switch p {
 	case "/health",
 		"/api/auth/status",
@@ -165,12 +230,7 @@ func isPublicPath(p string) bool {
 		"/api/auth/login",
 		"/api/auth/guest",
 		"/login.html",
-		"/setup.html",
-		"/login.js",
-		"/setup.js",
-		"/auth-theme.js",
-		"/auth.css",
-		"/style.css":
+		"/setup.html":
 		return true
 	}
 	return false

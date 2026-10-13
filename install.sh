@@ -102,12 +102,33 @@ fi
 
 log ""
 log "▶ パッケージ確認 (PM=${PM:-none})"
+# pkg_installed reports whether a package is already installed, using the
+# detected package manager. Without this check EXTRA_PKGS (e.g.
+# ca-certificates) were appended unconditionally, so `apt-get install` ran on
+# every invocation even when nothing was missing.
+pkg_installed() {
+    local pkg="$1"
+    case "$PM" in
+        apt)    dpkg -s "$pkg" >/dev/null 2>&1 ;;
+        dnf|yum) rpm -q "$pkg" >/dev/null 2>&1 ;;
+        pacman) pacman -Q "$pkg" >/dev/null 2>&1 ;;
+        *)      return 1 ;;
+    esac
+}
+
 MISSING_PKGS=()
 for entry in "${REQUIRED[@]}"; do
     cmd="${entry%%:*}"; pkg="${entry##*:}"
     if command -v "$cmd" >/dev/null 2>&1; then ok "$cmd"; else err "$cmd （未導入 → $pkg）"; MISSING_PKGS+=("$pkg"); fi
 done
-for pkg in "${EXTRA_PKGS[@]}"; do MISSING_PKGS+=("$pkg"); done
+# Only add an extra package when it is not already installed. Guard the loop
+# against an empty EXTRA_PKGS under `set -u`: `"${arr[@]}"` on an empty array
+# is an unbound-variable error on bash < 4.4.
+if [ "${#EXTRA_PKGS[@]}" -gt 0 ]; then
+    for pkg in "${EXTRA_PKGS[@]}"; do
+        if pkg_installed "$pkg"; then ok "$pkg"; else err "$pkg （未導入）"; MISSING_PKGS+=("$pkg"); fi
+    done
+fi
 
 if [ ${#MISSING_PKGS[@]} -gt 0 ]; then
     if [ -z "$PM" ]; then
@@ -155,7 +176,8 @@ ok "$BIN_DIR / $PLUGIN_OUT_DIR / logs / plugins"
 if [ "$DO_BUILD" -eq 1 ]; then
     log ""
     log "▶ 本体をビルド中..."
-    VERSION="${VERSION:-$(git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+    # Prefer the repo VERSION file (single source of truth), then the git tag.
+    VERSION="${VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
     export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
@@ -239,7 +261,11 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
     RUN_USER="${SUDO_USER:-$(id -un)}"
     UNIT_SRC="systemd/kizuna-eye.service"
     if [ -f "$UNIT_SRC" ] && [ -n "$SUDO" ]; then
-        sed "s/__USER__/$RUN_USER/g" "$UNIT_SRC" | $SUDO tee /etc/systemd/system/kizuna-eye.service >/dev/null
+        # Replace BOTH placeholders: __USER__ (run user) and __DIR__ (the
+        # actual repo location). The unit previously hardcoded /samba/share/
+        # Kizuna-Eye, so installing from any other path produced a unit that
+        # pointed at a non-existent directory and the service failed to start.
+        sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$PWD|g" "$UNIT_SRC" | $SUDO tee /etc/systemd/system/kizuna-eye.service >/dev/null
         if $SUDO systemctl daemon-reload && $SUDO systemctl enable kizuna-eye; then
             ok "systemd unit 有効化: kizuna-eye.service (User=$RUN_USER)"
             DO_START=0   # systemd で起動するため、ここでの start.sh は行わない

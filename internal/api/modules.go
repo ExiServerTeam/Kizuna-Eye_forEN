@@ -3,12 +3,19 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"sync"
 )
+
+// ErrModuleNotFound is returned when a module name does not exist, so
+// handlers can answer 404 instead of masking a save failure as "not found".
+var ErrModuleNotFound = errors.New("module not found")
 
 // ModuleConfig represents a module config.
 type ModuleConfig struct {
@@ -140,9 +147,30 @@ func (s *ModulesStorage) Get(name string) *ModuleConfig {
 }
 
 // Add appends a module.
+// moduleNameRe matches a safe module identifier. Module names appear in API
+// paths and log lines, and for plugins they become file names, so the same
+// character set the plugin upload path enforces is required here too. Without
+// this, a name like "a/b" or ".." could be stored and later used to build a
+// file path or to confuse the UI.
+var moduleNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// ValidateModuleName reports whether name is an acceptable module identifier.
+func ValidateModuleName(name string) error {
+	if name == "" {
+		return fmt.Errorf("モジュール名が空です")
+	}
+	if len(name) > 64 {
+		return fmt.Errorf("モジュール名が長すぎます（64文字以内）: %d", len(name))
+	}
+	if !moduleNameRe.MatchString(name) {
+		return fmt.Errorf("モジュール名に使用できるのは英数字・ハイフン・アンダースコアのみです: %s", name)
+	}
+	return nil
+}
+
 func (s *ModulesStorage) Add(mod ModuleConfig) error {
-	if mod.Name == "" {
-		return fmt.Errorf("モジュール名は必須です")
+	if err := ValidateModuleName(mod.Name); err != nil {
+		return err
 	}
 
 	s.mu.Lock()
@@ -196,7 +224,7 @@ func (s *ModulesStorage) Update(name string, mod ModuleConfig) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("モジュール '%s' が見つかりません", name)
+	return fmt.Errorf("%w: モジュール '%s' が見つかりません", ErrModuleNotFound, name)
 }
 
 // isEmptyConfig reports whether the raw config is empty or an empty object.
@@ -227,7 +255,7 @@ func (s *ModulesStorage) Delete(name string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("モジュール '%s' が見つかりません", name)
+	return fmt.Errorf("%w: モジュール '%s' が見つかりません", ErrModuleNotFound, name)
 }
 
 // ---------- HTTP handlers ----------
@@ -235,11 +263,18 @@ func (s *ModulesStorage) Delete(name string) error {
 // ModuleHandler serves the module management API.
 type ModuleHandler struct {
 	storage *ModulesStorage
+	// pluginsDir is where a plugin's .so lives. It is used to remove the
+	// runnable artifact when a plugin module is deleted, so a later upload
+	// with the same name cannot silently overwrite it and so no orphan .so
+	// stays loadable after the module is gone.
+	pluginsDir string
 }
 
 // NewModuleHandler creates a ModuleHandler.
-func NewModuleHandler(storage *ModulesStorage) *ModuleHandler {
-	return &ModuleHandler{storage: storage}
+// pluginsDir may be empty, in which case only the modules.json entry is
+// removed (no file cleanup).
+func NewModuleHandler(storage *ModulesStorage, pluginsDir string) *ModuleHandler {
+	return &ModuleHandler{storage: storage, pluginsDir: pluginsDir}
 }
 
 // RegisterRoutes registers the module routes.
@@ -290,7 +325,11 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Update persists internally and rolls back on save failure.
 	if err := h.storage.Update(name, mod); err != nil {
-		writeJSONError(w, http.StatusNotFound, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrModuleNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, status, err.Error())
 		return
 	}
 
@@ -306,10 +345,56 @@ func (h *ModuleHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture the module's plugin path before deletion so its .so can be
+	// removed too. A module entry removed from modules.json while its .so
+	// stays on disk is dangerous: a later upload with the same name would
+	// pass the duplicate check and overwrite the installed plugin.
+	var pluginPath string
+	if mod := h.storage.Get(name); mod != nil && len(mod.Config) > 0 {
+		var cfg struct {
+			PluginPath string `json:"plugin_path"`
+		}
+		if json.Unmarshal(mod.Config, &cfg) == nil {
+			pluginPath = cfg.PluginPath
+		}
+	}
+
 	// Delete persists internally and rolls back on save failure.
 	if err := h.storage.Delete(name); err != nil {
-		writeJSONError(w, http.StatusNotFound, err.Error())
+		status := http.StatusInternalServerError
+		if errors.Is(err, ErrModuleNotFound) {
+			status = http.StatusNotFound
+		}
+		writeJSONError(w, status, err.Error())
 		return
+	}
+
+	// Remove the runnable artifacts. Only paths inside pluginsDir are
+	// touched, so a crafted plugin_path cannot delete an arbitrary file.
+	if h.pluginsDir != "" {
+		candidates := []string{}
+		if pluginPath != "" {
+			candidates = append(candidates, pluginPath)
+		}
+		candidates = append(candidates,
+			filepath.Join(h.pluginsDir, name+".so"),
+			filepath.Join(h.pluginsDir, name+".meta.json"),
+		)
+		for _, p := range candidates {
+			abs, err := filepath.Abs(p)
+			if err != nil {
+				continue
+			}
+			dir, err := filepath.Abs(h.pluginsDir)
+			if err != nil {
+				continue
+			}
+			if !strings.HasPrefix(abs, dir+string(os.PathSeparator)) {
+				continue
+			}
+			_ = os.Remove(abs)
+		}
+		_ = os.RemoveAll(filepath.Join(h.pluginsDir, name+".web"))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
@@ -328,6 +413,9 @@ func (h *ModuleHandler) handleReload(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	// Keep session-scoped API responses (module configs, plugin metadata,
+	// log/alert data) out of shared proxy and browser caches.
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }

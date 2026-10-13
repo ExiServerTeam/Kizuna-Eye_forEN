@@ -140,6 +140,16 @@ func (m *Manager) Notify(a *Alert) {
 func (m *Manager) sendAsync(notifier Notifier, a *Alert) {
 	go func() {
 		defer func() { <-m.sem }()
+		// Recover so a panic inside a notifier's Send cannot crash the whole
+		// process (which would stop all monitoring). The slot is still
+		// released by the deferred receive above.
+		defer func() {
+			if r := recover(); r != nil {
+				if m.log != nil {
+					m.log.Error("通知送信でパニック [%s]: %v", notifier.Name(), r)
+				}
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if err := notifier.Send(ctx, a); err != nil {

@@ -6,6 +6,8 @@
     const btn = document.getElementById('setupBtn');
     const errEl = document.getElementById('authError');
 
+    const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
+
     function showError(msg) {
         if (!errEl) return;
         errEl.textContent = msg;
@@ -37,11 +39,11 @@
             const password2 = document.getElementById('password2').value;
 
             if (password !== password2) {
-                showError('パスワードが一致しません');
+                showError(t('setup.err_mismatch'));
                 return;
             }
             if (password.length < 8) {
-                showError('パスワードは8文字以上にしてください');
+                showError(t('setup.err_short'));
                 return;
             }
 
@@ -61,11 +63,11 @@
                         return;
                     }
                     btn.disabled = false;
-                    showError((res.body && res.body.error) || 'セットアップに失敗しました');
+                    showError((res.body && res.body.error) || t('setup.err_failed'));
                 })
                 .catch(function () {
                     btn.disabled = false;
-                    showError('通信エラーが発生しました');
+                    showError(t('setup.err_network'));
                 });
         });
     }
