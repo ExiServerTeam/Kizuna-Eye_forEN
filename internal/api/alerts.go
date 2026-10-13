@@ -31,8 +31,31 @@ func NewAlertHandler(provider AlertHistoryProvider) *AlertHandler {
 
 // RegisterRoutes registers the alert routes.
 func (h *AlertHandler) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/alerts/{id}", h.handleGet)
 	mux.HandleFunc("GET /api/alerts", h.handleList)
 	mux.HandleFunc("DELETE /api/alerts", h.handleClear)
+}
+
+// handleGet returns one alert by its ID (task 1: detail view).
+// The ID is a locator derived from timestamp/type/title, so the first
+// matching entry is returned. 404 when nothing matches.
+func (h *AlertHandler) handleGet(w http.ResponseWriter, r *http.Request) {
+	if h.provider == nil {
+		writeJSONError(w, http.StatusNotFound, "alert not found")
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSONError(w, http.StatusBadRequest, "missing alert id")
+		return
+	}
+	for _, a := range h.provider.Alerts() {
+		if a.ID == id {
+			writeJSON(w, http.StatusOK, a)
+			return
+		}
+	}
+	writeJSONError(w, http.StatusNotFound, "alert not found")
 }
 
 // handleList returns the alert history as JSON.

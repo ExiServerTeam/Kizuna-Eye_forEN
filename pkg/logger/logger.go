@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -284,11 +285,56 @@ func (l *Logger) log(level Level, format string, args ...interface{}) {
 	}
 }
 
+// logT writes one JSON Lines entry carrying BOTH language renderings. The
+// base "message" is the Japanese rendering (the existing UI default) and
+// "message_en" is the English one, so web/static/logs.js can pick per the UI
+// language. Unlike log(), the output is a single JSON object per line, not
+// the legacy "[LEVEL] [PREFIX] ts msg" text; the two formats may be mixed in
+// one file during migration (logs.js already tolerates that).
+func (l *Logger) logT(level Level, key string, args ...interface{}) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if level < l.level {
+		return
+	}
+
+	entry := map[string]interface{}{
+		"ts":         time.Now().Format(time.RFC3339),
+		"level":      levelNames[level],
+		"message":    msg("ja", key, args...),
+		"message_en": msg("en", key, args...),
+	}
+	if l.prefix != "" {
+		entry["prefix"] = strings.Trim(l.prefix, "[]")
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		// Never drop the event: fall back to a minimal plain line.
+		l.logger.Println(levelNames[level] + " " + key)
+	} else {
+		l.logger.Println(string(data))
+	}
+
+	if level == FATAL {
+		l.closeLocked()
+		os.Exit(1)
+	}
+}
+
 func (l *Logger) Debug(format string, args ...interface{}) { l.log(DEBUG, format, args...) }
 func (l *Logger) Info(format string, args ...interface{})  { l.log(INFO, format, args...) }
 func (l *Logger) Warn(format string, args ...interface{})  { l.log(WARN, format, args...) }
 func (l *Logger) Error(format string, args ...interface{}) { l.log(ERROR, format, args...) }
 func (l *Logger) Fatal(format string, args ...interface{}) { l.log(FATAL, format, args...) }
+
+// *T methods take a catalog key (see catalog.go) instead of a literal format
+// string and emit a JSON Lines entry with both ja/en renderings.
+func (l *Logger) DebugT(key string, args ...interface{}) { l.logT(DEBUG, key, args...) }
+func (l *Logger) InfoT(key string, args ...interface{})  { l.logT(INFO, key, args...) }
+func (l *Logger) WarnT(key string, args ...interface{})  { l.logT(WARN, key, args...) }
+func (l *Logger) ErrorT(key string, args ...interface{}) { l.logT(ERROR, key, args...) }
+func (l *Logger) FatalT(key string, args ...interface{}) { l.logT(FATAL, key, args...) }
 
 // Sync flushes buffered log data. It takes the logger mutex so it cannot run
 // concurrently with a log write (which would touch the same file/writer).

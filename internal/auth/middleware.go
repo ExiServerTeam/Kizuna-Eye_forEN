@@ -22,6 +22,12 @@ type routeRule struct {
 // More specific prefixes (and method-qualified rules) must be listed before
 // broader ones; the first match wins. Order matters.
 var protectedRules = []routeRule{
+	// One-click remediation (task 2) runs a privileged sudo helper
+	// (kill / firewall / cron delete), so it is admin-only. The rule must
+	// precede the generic /api/alerts viewer rule; a POST without it would
+	// fall through to viewer and let a read-only user change system state.
+	{"POST", "/api/alerts", RoleAdmin},
+
 	// Destructive operations that share a path with a read-only endpoint
 	// must come first. Clearing the alert history is state-changing and
 	// destroys the audit trail, so it needs operator. A viewer is read-only

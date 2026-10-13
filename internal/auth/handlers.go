@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	kelog "Kizuna-Eye/pkg/logger"
 	"Kizuna-Eye/pkg/logsafe"
 )
 
@@ -263,7 +264,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.logger != nil {
-		h.logger.Info("初回セットアップ完了: 管理者 '%s' を作成しました", body.Username)
+		kelog.LogInfo(h.logger, "auth.setup_done", body.Username)
 	}
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
@@ -283,7 +284,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	if h.limiter != nil && !h.limiter.Allow(ip) {
 		if h.logger != nil {
-			h.logger.Warn("ログイン試行がロック中: ip=%s", ip)
+			kelog.LogWarn(h.logger, "auth.login_locked", ip)
 		}
 		// A lockout means the per-IP failure threshold was reached: report it
 		// as a security event so it lands in the alert history / notifications,
@@ -299,7 +300,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 			h.limiter.RecordFailure(ip)
 		}
 		if h.logger != nil {
-			h.logger.Warn("ログイン失敗: user=%s from=%s", logsafe.Field(body.Username), ip)
+			kelog.LogWarn(h.logger, "auth.login_failed", logsafe.Field(body.Username), ip)
 		}
 		writeError(w, http.StatusUnauthorized, "ユーザー名またはパスワードが違います")
 		return
@@ -321,7 +322,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	h.setCookie(w, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
-		h.logger.Info("ログイン成功: user=%s role=%s from=%s", logsafe.Field(u.Username), u.Role, r.RemoteAddr)
+		kelog.LogInfo(h.logger, "auth.login_success", logsafe.Field(u.Username), u.Role, r.RemoteAddr)
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"username": u.Username,
@@ -366,7 +367,7 @@ func (h *Handler) handleGuestLogin(w http.ResponseWriter, r *http.Request) {
 	h.setCookie(w, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
-		h.logger.Info("ゲストログイン: role=viewer from=%s", clientIP(r))
+		kelog.LogInfo(h.logger, "auth.guest_login", clientIP(r))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"username": "guest",
@@ -428,7 +429,7 @@ func (h *Handler) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request
 	h.manager.DeleteUserSessions(s.Username)
 	h.clearCookie(w)
 	if h.logger != nil {
-		h.logger.Info("パスワード変更: user=%s", s.Username)
+		kelog.LogInfo(h.logger, "auth.password_changed", s.Username)
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
@@ -479,7 +480,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.logger != nil {
-		h.logger.Info("ユーザー作成: %s (role=%s)", body.Username, role)
+		kelog.LogInfo(h.logger, "auth.user_created", body.Username, role)
 	}
 	// Audit: a new account (especially an admin) is a privilege change and
 	// must be recorded, not only logged.
@@ -513,7 +514,7 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	h.manager.DeleteUserSessions(name)
 	if h.logger != nil {
-		h.logger.Info("ユーザー削除: %s", name)
+		kelog.LogInfo(h.logger, "auth.user_deleted", name)
 	}
 	h.reportSecurityEvent("user_delete", "ユーザー '"+name+"' を削除しました", clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})

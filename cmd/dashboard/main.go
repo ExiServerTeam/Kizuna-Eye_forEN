@@ -100,14 +100,21 @@ func writeDashboardJSON(w http.ResponseWriter, status int, data interface{}) {
 // notification (Discord etc.) and an alert-history entry.
 func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 	var env struct {
-		Event    string `json:"event"`
-		Plugin   string `json:"plugin"`
-		Category string `json:"category"`
-		Level    string `json:"level"`
-		Title    string `json:"title"`
-		Message  string `json:"message"`
-		Actor    string `json:"actor"`
-		IP       string `json:"ip"`
+		Event       string `json:"event"`
+		Plugin      string `json:"plugin"`
+		Category    string `json:"category"`
+		Level       string `json:"level"`
+		Title       string `json:"title"`
+		Message     string `json:"message"`
+		Actor       string `json:"actor"`
+		IP          string `json:"ip"`
+		Command     string `json:"command"`
+		DetectFile  string `json:"detect_file"`
+		DetectLine  int    `json:"detect_line"`
+		Remediation string `json:"remediation"`
+		RelatedLog  string `json:"related_log"`
+		TitleEN     string `json:"title_en"`
+		MessageEN   string `json:"message_en"`
 	}
 	if err := json.Unmarshal(msg, &env); err != nil {
 		return
@@ -134,30 +141,48 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 	}
 
 	body := env.Message
+	// bodyEn mirrors body with English labels so the alert history can be
+	// shown in English (task 9). It is only meaningful when MessageEN exists
+	// (older plugins send only Message).
+	bodyEn := env.MessageEN
 	if env.Actor != "" || env.IP != "" {
 		parts := make([]string, 0, 2)
+		partsEn := make([]string, 0, 2)
 		if env.Actor != "" {
 			parts = append(parts, "ユーザー: "+env.Actor)
+			partsEn = append(partsEn, "User: "+env.Actor)
 		}
 		if env.IP != "" {
 			parts = append(parts, "接続元: "+env.IP)
+			partsEn = append(partsEn, "From: "+env.IP)
 		}
 		if len(parts) > 0 {
 			body += " (" + strings.Join(parts, " / ") + ")"
 		}
+		if bodyEn != "" && len(partsEn) > 0 {
+			bodyEn += " (" + strings.Join(partsEn, " / ") + ")"
+		}
 	}
 
-	engine.ReportAlert(&notify.Alert{
+	engine.ReportAlertDetail(&notify.Alert{
 		Type:      "security_" + env.Category,
 		Level:     level,
 		Icon:      icon,
 		Title:     env.Title,
 		Message:   body,
 		Timestamp: time.Now(),
-	}, "agent", false) // agent-reported: derived from a forgeable log line
+	}, "agent", false, alert.AlertDetail{ // agent-reported: derived from a forgeable log line
+		Command:     env.Command,
+		DetectFile:  env.DetectFile,
+		DetectLine:  env.DetectLine,
+		Remediation: env.Remediation,
+		RelatedLog:  env.RelatedLog,
+		TitleEN:     env.TitleEN,
+		MessageEN:   bodyEn,
+	})
 
 	if lg != nil {
-		lg.Info("セキュリティアラート: [%s] %s", logsafe.Field(env.Level), logsafe.Field(env.Title))
+		lg.InfoT("dash.security_alert", logsafe.Field(env.Level), logsafe.Field(env.Title))
 	}
 }
 
@@ -453,7 +478,7 @@ func (h *Hub) Broadcast(msg []byte) {
 			out = sanitized
 		}
 		if err := c.writeMessage(websocket.TextMessage, out, 30*time.Second); err != nil {
-			h.log.Debug("Broadcast 送信エラー: %v, クライアントを削除します", err)
+			h.log.DebugT("dash.broadcast_error", err)
 			h.Remove(c)
 		}
 	}
@@ -479,7 +504,7 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 			}
 		}
 		if h.maxViewers > 0 && viewers >= h.maxViewers {
-			h.log.Warn("未認証ビューアの上限 (%d) に達したため、接続を拒否しました", h.maxViewers)
+			h.log.WarnT("dash.viewer_cap", h.maxViewers)
 			h.noteRejected("unauthenticated viewer cap")
 			return nil, false
 		}
@@ -490,14 +515,14 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 		// anonymous viewer, evict it so the Agent / a real user can connect.
 		if authed || isAgent {
 			if evicted := h.evictViewerLocked(); evicted {
-				h.log.Warn("認証済みクライアントのため、未認証ビューアを1件切断しました (上限 %d)", h.maxClients)
+				h.log.WarnT("dash.evict_viewer", h.maxClients)
 			} else {
-				h.log.Warn("最大接続数 (%d) に達したため、接続を拒否しました", h.maxClients)
+				h.log.WarnT("dash.max_clients", h.maxClients)
 				h.noteRejected("max clients reached")
 				return nil, false
 			}
 		} else {
-			h.log.Warn("最大接続数 (%d) に達したため、接続を拒否しました", h.maxClients)
+			h.log.WarnT("dash.max_clients", h.maxClients)
 			h.noteRejected("max clients reached")
 			return nil, false
 		}
@@ -505,7 +530,7 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 
 	client := &wsClient{conn: conn, authed: authed || isAgent}
 	h.clients[client] = true
-	h.log.Debug("クライアント追加: %s (現在 %d 接続)", conn.RemoteAddr(), len(h.clients))
+	h.log.DebugT("dash.client_added", conn.RemoteAddr(), len(h.clients))
 	return client, true
 }
 
@@ -531,7 +556,7 @@ func (h *Hub) Remove(client *wsClient) {
 	h.Lock()
 	if _, ok := h.clients[client]; ok {
 		delete(h.clients, client)
-		h.log.Debug("クライアント削除: %s (残り %d 接続)", client.conn.RemoteAddr(), len(h.clients))
+		h.log.DebugT("dash.client_removed", client.conn.RemoteAddr(), len(h.clients))
 	}
 	wasAgent := (h.agentConn == client)
 	if wasAgent {
@@ -550,7 +575,7 @@ func (h *Hub) Remove(client *wsClient) {
 	}
 
 	if err := client.conn.Close(); err != nil {
-		h.log.Debug("クライアント Close エラー: %v", err)
+		h.log.DebugT("dash.client_close_error", err)
 	}
 }
 
@@ -577,7 +602,7 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 	// (e.g. cpu_usage=1e9 or negative percentages).
 	if err := s.Validate(); err != nil {
 		if h.log != nil {
-			h.log.Warn("不正なステータスを破棄しました: %v", err)
+			h.log.WarnT("dash.invalid_status", err)
 		}
 		h.Unlock()
 		return
@@ -676,7 +701,7 @@ func (h *Hub) BroadcastToBrowsers(msg []byte) {
 			continue
 		}
 		if err := c.writeMessage(websocket.TextMessage, msg, 30*time.Second); err != nil {
-			h.log.Debug("BroadcastToBrowsers 送信エラー: %v", err)
+			h.log.DebugT("dash.broadcast_browsers_error", err)
 			h.Remove(c)
 		}
 	}
@@ -709,9 +734,9 @@ func main() {
 	})
 	defer lg.Sync()
 
-	lg.Info("ダッシュボード起動 (listen: %s)", cfg.ListenAddr)
+	lg.InfoT("dash.start", cfg.ListenAddr)
 	if cfg.StaticDir != "" {
-		lg.Info("静的ファイルディレクトリ: %s", cfg.StaticDir)
+		lg.InfoT("dash.static_dir", cfg.StaticDir)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -719,15 +744,15 @@ func main() {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		lg.Info("シャットダウンシグナル受信")
+		lg.InfoT("dash.shutdown_signal")
 		cancel()
 	}()
 
 	notifierMgr := notify.FromConfig(cfg.Notifications, lg)
 	if notifierMgr.HasChannels() {
-		lg.Info("通知機能: 有効")
+		lg.InfoT("dash.notify_on")
 	} else {
-		lg.Info("通知機能: 無効（チャンネル未設定）")
+		lg.InfoT("dash.notify_off")
 	}
 
 	alertCfg := alert.Config{
@@ -750,8 +775,22 @@ func main() {
 	if historyFile == "" {
 		historyFile = "logs/alert_history.jsonl"
 	}
-	engine.EnableHistoryPersistence(historyFile)
-	lg.Info("アラート履歴の永続化: %s", historyFile)
+	// Optional HMAC signing of alert history lines (dedicated key; never the
+	// security-log chain key). If the key cannot be loaded, fall back to
+	// unsigned persistence rather than failing to start: the history is still
+	// protected by the plugin's V2-B consistency check.
+	var alertHistKey []byte
+	if cfg.AlertHistoryKeyPath != "" {
+		k, kerr := alert.LoadOrCreateAlertHistoryKey(cfg.AlertHistoryKeyPath)
+		if kerr != nil {
+			lg.WarnT("dash.alert_history_key_failed", kerr)
+		} else {
+			alertHistKey = k
+			lg.InfoT("dash.alert_history_signed", cfg.AlertHistoryKeyPath)
+		}
+	}
+	engine.EnableHistoryPersistenceKeyed(historyFile, alertHistKey)
+	lg.InfoT("dash.alert_history", historyFile)
 
 	// Resolve sibling config paths relative to the dashboard config, so a
 	// custom -config path keeps the agent/modules configs in the same
@@ -762,9 +801,9 @@ func main() {
 	modulesPath := filepath.Join(configDir, "modules.json")
 	storage := api.NewModulesStorage(modulesPath)
 	if err := storage.Load(); err != nil {
-		lg.Warn("モジュール設定読み込みエラー: %v", err)
+		lg.WarnT("dash.modules_load_error", err)
 	}
-	lg.Info("モジュール設定読み込み: %s (%d モジュール)", modulesPath, len(storage.GetAll()))
+	lg.InfoT("dash.modules_loaded", modulesPath, len(storage.GetAll()))
 
 	hub := NewHub(100, lg)
 	hub.agentToken = cfg.Auth.AgentToken
@@ -784,7 +823,7 @@ func main() {
 			Message:   fmt.Sprintf("短時間に %d 件の接続を拒否しました（%s）。接続枯渇型のDoS攻撃の可能性があります。", rejected, detail),
 			Timestamp: time.Now(),
 		}, "dashboard", true)
-		lg.Warn("接続フラッド検知: %d 件拒否 (%s)", rejected, detail)
+		lg.WarnT("dash.flood_detected", rejected, detail)
 	})
 	// Raise a warning when suspicious agent connections (token mismatch
 	// or a duplicate agent) are rejected, so brute-force / hijack attempts
@@ -805,10 +844,10 @@ func main() {
 			Message:   fmt.Sprintf("短時間に %d 回の不正なAgent接続を拒否しました（%s）。", count, reason),
 			Timestamp: time.Now(),
 		}, "dashboard", true)
-		lg.Warn("不正Agent接続検知: %s x%d", reason, count)
+		lg.WarnT("dash.auth_reject_detected", reason, count)
 	})
 	if cfg.Auth.AgentToken != "" {
-		lg.Info("Agent トークン認証: 有効")
+		lg.InfoT("dash.agent_token_on")
 	}
 
 	go func() {
@@ -843,7 +882,7 @@ func main() {
 			token := r.Header.Get("X-Kizuna-Agent-Token")
 			if subtle.ConstantTimeCompare([]byte(token), []byte(hub.agentToken)) != 1 {
 				http.Error(w, "invalid agent token", http.StatusUnauthorized)
-				lg.Warn("Agent トークン不一致の接続を拒否: %s", r.RemoteAddr)
+				lg.WarnT("dash.agent_token_mismatch", r.RemoteAddr)
 				hub.noteAuthReject("agent_token_mismatch")
 				return
 			}
@@ -851,7 +890,7 @@ func main() {
 
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			lg.Error("WebSocket アップグレード失敗: %v", err)
+			lg.ErrorT("dash.ws_upgrade_failed", err)
 			return
 		}
 
@@ -867,7 +906,7 @@ func main() {
 			return
 		}
 
-		lg.Info("クライアント接続: %s", conn.RemoteAddr())
+		lg.InfoT("dash.client_connected", conn.RemoteAddr())
 
 		// Cap incoming message size so a huge frame cannot exhaust memory.
 		// A status message (processes/disks) is well under a few hundred KB.
@@ -909,19 +948,19 @@ func main() {
 			canPromoteHeuristically := eligibleForHeuristicPromotion(hub.agentToken, isAgentRole, r.Header.Get("Origin"))
 			if isAgent {
 				if !hub.MarkAgentConn(client) {
-					lg.Warn("既にAgent接続があるため、2つ目のAgent接続を拒否: %s", conn.RemoteAddr())
+					lg.WarnT("dash.agent_dup_rejected", conn.RemoteAddr())
 					hub.noteAuthReject("agent_duplicate")
 					conn.WriteMessage(websocket.CloseMessage, []byte("another agent is connected"))
 					conn.Close()
 					return
 				}
-				lg.Info("Agent 認証済み接続: %s", conn.RemoteAddr())
+				lg.InfoT("dash.agent_authenticated", conn.RemoteAddr())
 			}
 			for {
 				_, msg, err := conn.ReadMessage()
 				if err != nil {
 					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-						lg.Debug("読み取りエラー: %v", err)
+						lg.DebugT("dash.read_error", err)
 					}
 					break
 				}
@@ -940,10 +979,10 @@ func main() {
 					// event-shaped message must not be able to forge notifications
 					// (e.g. a fake security_alert) or alert-history entries.
 					if !isAgent {
-						lg.Debug("非Agentからのイベントを無視: %s", envelope.Event)
+						lg.DebugT("dash.event_ignored", envelope.Event)
 						continue
 					}
-					lg.Debug("イベント受信: %s", envelope.Event)
+					lg.DebugT("dash.event_received", envelope.Event)
 					if fn := hub.onEventFn(); fn != nil {
 						fn(msg)
 					}
@@ -952,7 +991,7 @@ func main() {
 				}
 
 				if envelope.Action != "" {
-					lg.Debug("コマンド受信（無視）: %s", envelope.Action)
+					lg.DebugT("dash.cmd_ignored", envelope.Action)
 					continue
 				}
 
@@ -976,16 +1015,16 @@ func main() {
 				// (spoofing metrics/history) or hijack the agent connection.
 				accept, promote := acceptAgentPayload(isAgent, true, canPromoteHeuristically)
 				if !accept {
-					lg.Debug("非Agentからのステータスを無視: %s", conn.RemoteAddr())
+					lg.DebugT("dash.status_ignored", conn.RemoteAddr())
 					continue
 				}
 				if promote {
 					if !hub.MarkAgentConn(client) {
-						lg.Warn("既にAgent接続があるため、ヒューリスティック昇格を拒否: %s", conn.RemoteAddr())
+						lg.WarnT("dash.heuristic_rejected", conn.RemoteAddr())
 						continue
 					}
 					isAgent = true
-					lg.Info("Agent 識別: %s", conn.RemoteAddr())
+					lg.InfoT("dash.agent_identified", conn.RemoteAddr())
 				}
 				hub.SetLastStatus(&s)
 				hub.Broadcast(msg)
@@ -1016,8 +1055,8 @@ func main() {
 	// ---- Plugin management API (passes hub) ----
 	pluginManager, err := api.NewPluginManager(storage, cfg, lg, hub)
 	if err != nil {
-		lg.Error("PluginManager 初期化失敗: %v", err)
-		lg.Warn("プラグイン API は無効化されます")
+		lg.ErrorT("dash.pluginmgr_init_failed", err)
+		lg.WarnT("dash.plugin_api_disabled")
 	} else {
 		// Record plugin upload/delete (a code-execution boundary) in the
 		// alert history and notifications, not only the log.
@@ -1032,7 +1071,7 @@ func main() {
 			}, "dashboard", true)
 		})
 		pluginManager.RegisterRoutes(mux)
-		lg.Info("プラグイン API 有効")
+		lg.InfoT("dash.api_plugins")
 	}
 
 	// Handle agent events: release the plugin run guard AND turn security
@@ -1047,7 +1086,7 @@ func main() {
 	// ---- Metrics API ----
 	metricHandler := api.NewMetricHandler(hub)
 	metricHandler.RegisterRoutes(mux)
-	lg.Info("メトリクス API 有効")
+	lg.InfoT("dash.api_metrics")
 
 	// ---- Logs API ----
 	// Resolve the agent log path from agent_config.json so the viewer
@@ -1056,13 +1095,21 @@ func main() {
 	if ac, err := config.LoadAgentConfig(agentConfigPath); err == nil && ac.LogFile != "" {
 		agentLogPath = ac.LogFile
 	}
+	// The dashboard writes its log via the shell redirection in start.sh
+	// (>> logs/dashboard.log), so cfg.LogFile is often empty. Fall back to
+	// that default path; otherwise /api/logs?type=dashboard resolves to an
+	// empty path and returns 400 "Invalid log type".
+	dashboardLogPath := cfg.LogFile
+	if dashboardLogPath == "" {
+		dashboardLogPath = "logs/dashboard.log"
+	}
 	logHandler := api.NewLogHandler(
-		agentLogPath, // agent log
-		cfg.LogFile,  // dashboard log
-		"logs",       // log directory
+		agentLogPath,     // agent log
+		dashboardLogPath, // dashboard log
+		"logs",           // log directory
 	)
 	logHandler.RegisterRoutes(mux)
-	lg.Info("ログ API 有効")
+	lg.InfoT("dash.api_logs")
 
 	// ---- Config API ----
 	configHandler := api.NewConfigHandler(
@@ -1071,27 +1118,32 @@ func main() {
 		modulesPath,
 	)
 	configHandler.RegisterRoutes(mux)
-	lg.Info("設定 API 有効")
+	lg.InfoT("dash.api_config")
 
 	// ---- Alert history API ----
 	alertHandler := api.NewAlertHandler(engine)
 	alertHandler.RegisterRoutes(mux)
-	lg.Info("アラート履歴 API 有効")
+	lg.InfoT("dash.api_alert_history")
+
+	// ---- One-click remediation API (task 2) ----
+	actionHandler := api.NewActionHandler(engine)
+	actionHandler.RegisterRoutes(mux)
+	lg.InfoT("dash.api_actions")
 
 	// ---- Version API ----
 	versionHandler := api.NewVersionHandler()
 	versionHandler.RegisterRoutes(mux)
-	lg.Info("バージョン API 有効")
+	lg.InfoT("dash.api_version")
 
 	// ---- Metrics history API ----
 	historyHandler := api.NewHistoryHandler(hub)
 	historyHandler.RegisterRoutes(mux)
-	lg.Info("メトリクス履歴 API 有効")
+	lg.InfoT("dash.api_metrics_hist")
 
 	// ---- Alert threshold API ----
 	alertCfgHandler := api.NewAlertConfigHandler(engine, cfg, *configPath, lg)
 	alertCfgHandler.RegisterRoutes(mux)
-	lg.Info("アラート設定 API 有効")
+	lg.InfoT("dash.api_alert_settings")
 
 	// ---- Health check ----
 	// Returns 503 when the Agent is not connected, so external monitors
@@ -1162,7 +1214,7 @@ func main() {
 	}
 	userStore := auth.NewStore(usersFile)
 	if err := userStore.Load(); err != nil {
-		lg.Error("ユーザーストア読み込み失敗: %v", err)
+		lg.ErrorT("dash.users_load_failed", err)
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
 	// Pass the configured idle timeout (0 = default 2h, negative = disabled)
@@ -1170,12 +1222,12 @@ func main() {
 	sessionMgr := auth.NewSessionManager(sessionTTL, cfg.Auth.SessionIdleDuration())
 	sessionMgr.SetLogger(lg.Warn)
 	if err := sessionMgr.EnablePersistence(cfg.Auth.SessionFilePath(configDir), cfg.Auth.IsSessionIPBind()); err != nil {
-		lg.Warn("セッション永続化の読み込みに失敗（メモリのみで続行）: %v", err)
+		lg.WarnT("dash.session_load_failed", err)
 	}
 	if p := cfg.Auth.SessionFilePath(configDir); p != "" {
-		lg.Info("セッション永続化: %s (IPバインド: %v)", p, cfg.Auth.IsSessionIPBind())
+		lg.InfoT("dash.session_persist", p, cfg.Auth.IsSessionIPBind())
 	} else {
-		lg.Info("セッション永続化: 無効（再起動でログアウト）")
+		lg.InfoT("dash.session_no_persist")
 	}
 	defer sessionMgr.Stop()
 	authHandler = auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
@@ -1221,33 +1273,33 @@ func main() {
 	authMiddleware := auth.NewMiddleware(authHandler, cfg.Auth.Enabled)
 	if cfg.Auth.IsPublicViewer() {
 		authMiddleware.SetPublicViewer(true)
-		lg.Info("公開ビューアモード: 有効（ログイン不要で CPU/メモリ/ディスク使用率を閲覧可能）")
+		lg.InfoT("dash.public_viewer")
 	}
 
 	if cfg.Auth.Enabled {
 		switch {
 		case userStore.IsCorrupt():
-			lg.Error("認証は有効ですが users.json が破損しています。管理者が手動で修正するまでログインできません: %s", usersFile)
+			lg.ErrorT("dash.users_corrupt", usersFile)
 		case userStore.NeedsSetup():
-			lg.Warn("認証は有効ですがユーザーが未作成です。ブラウザで /setup.html にアクセスして管理者を作成してください")
+			lg.WarnT("dash.no_users")
 		default:
-			lg.Info("認証: 有効（ユーザー数: %d, users_file: %s）", userStore.Count(), usersFile)
+			lg.InfoT("dash.auth_on", userStore.Count(), usersFile)
 		}
 	} else {
-		lg.Info("認証: 無効（dashboard_config.json の auth.enabled を true にすると有効化）")
+		lg.InfoT("dash.auth_off")
 	}
 
 	// Warn when auth is on but no agent token is set: the agent cannot
 	// authenticate, so it will never connect.
 	if cfg.Auth.Enabled && cfg.Auth.AgentToken == "" {
-		lg.Warn("認証は有効ですが auth.agent_token が未設定です。Agent は接続できません（agent_config.json の token と同じ値を設定してください）。")
+		lg.WarnT("dash.agent_token_missing")
 	}
 
 	// Warn loudly about a dangerous combination: plugin upload enabled while
 	// authentication is off. Anyone on the network could upload and run a
 	// .so, which is effectively remote code execution.
 	if !cfg.Auth.Enabled && cfg.IsUploadEnabled() {
-		lg.Warn("セキュリティ警告: plugins_upload_enabled=true かつ auth.enabled=false です。誰でもプラグイン(.so)を設置・実行できる状態（実質RCE）です。auth.enabled=true にするか plugins_upload_enabled=false にしてください。")
+		lg.WarnT("dash.insecure_upload")
 	}
 
 	srv := &http.Server{
@@ -1271,18 +1323,22 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		lg.Info("シャットダウンシグナル受信、サーバー停止中...")
+		lg.InfoT("dash.shutdown_stopping")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			lg.Error("サーバーシャットダウンエラー: %v", err)
+			lg.ErrorT("dash.shutdown_error", err)
 		}
 	}()
 
-	lg.Info("サーバー開始: http://%s", cfg.ListenAddr)
+	lg.InfoT("dash.server_start", cfg.ListenAddr)
 
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		lg.Fatal("サーバー起動失敗: %v", err)
+		lg.FatalT("dash.server_start_failed", err)
 	}
-	lg.Info("サーバー停止")
+	lg.InfoT("dash.server_stop")
+
+	// シャットダウン時、バッチ集約の窓に残っているアラートを送信する。
+	// Flush しないと、停止直前の数秒に発生した通知が失われる。
+	notifierMgr.Flush()
 }

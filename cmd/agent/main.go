@@ -56,7 +56,7 @@ func checkDependencies(lg *logger.Logger) {
 			missing = append(missing, d.cmd)
 			msg := fmt.Sprintf("必要なコマンドが見つかりません: %s（%s で使用）", d.cmd, d.use)
 			if lg != nil {
-				lg.Warn("%s", msg)
+				lg.WarnT("agent.dep_missing", d.cmd, d.use)
 			}
 			fmt.Fprintln(os.Stderr, "[AGENT] 警告: "+msg)
 		}
@@ -65,7 +65,7 @@ func checkDependencies(lg *logger.Logger) {
 	if len(missing) > 0 {
 		hint := "install.sh を実行するか、お使いのパッケージマネージャで導入してください"
 		if lg != nil {
-			lg.Warn("不足ツール: %v — %s", missing, hint)
+			lg.WarnT("agent.dep_missing_list", missing, hint)
 		}
 		fmt.Fprintf(os.Stderr, "[AGENT] 警告: 不足ツール: %v — %s\n", missing, hint)
 	}
@@ -131,7 +131,7 @@ func main() {
 	})
 	defer lg.Sync()
 
-	lg.Info("エージェント起動 (送信間隔: %.1f秒, 接続先: %s)", cfg.Interval, cfg.DashboardURL)
+	lg.InfoT("agent.start", cfg.Interval, cfg.DashboardURL)
 
 	// 起動時に外部ツールの有無を確認する（致命的ではない）。
 	checkDependencies(lg)
@@ -144,7 +144,7 @@ func main() {
 	// 既定は無効。信頼できるリポジトリでのみ有効化すること。
 	if au := cfg.AutoUpdate; au.Enabled {
 		if lg != nil {
-			lg.Warn("自動更新が有効です。GitHub リポジトリが侵害されると任意コード実行につながります（%s）", au.RepositoryURL)
+			lg.WarnT("agent.autoupdate_on", au.RepositoryURL)
 		}
 		script := au.UpdateScript
 		if script == "" {
@@ -188,27 +188,27 @@ func main() {
 	}
 	sysModule := module.NewSystemModule(lg)
 	if err := sysModule.Configure(sysConfig); err != nil {
-		lg.Error("システムモジュール設定失敗: %v", err)
+		lg.ErrorT("agent.sys_module_cfg_failed", err)
 	}
 	if err := manager.Register(ctx, sysModule); err != nil {
-		lg.Error("システムモジュール登録失敗: %v", err)
+		lg.ErrorT("agent.sys_module_reg_failed", err)
 	}
-	lg.Info("システムモジュール登録: 収集間隔=%d秒", sysInterval)
+	lg.InfoT("agent.sys_modules", sysInterval)
 
 	// ---- Load plugins ----
 	// Only .so files inside the configured plugins directory are allowed,
 	// so a tampered modules.json cannot load an arbitrary library.
 	pluginsDir := cfg.ResolvePluginsDir()
-	lg.Info("プラグインディレクトリ: %s", pluginsDir)
+	lg.InfoT("agent.plugins_dir", pluginsDir)
 	// A-3: log the plugin authentication policy at startup, so an operator can
 	// see immediately whether unsigned .so files are still accepted.
 	if cfg.Plugins.WantSignature() {
-		lg.Info("プラグイン署名検証: 有効（公開鍵: %s）— 未署名・署名不一致の .so は読み込みません", cfg.Plugins.PublicKeyFile)
+		lg.InfoT("agent.sig_verify_enabled", cfg.Plugins.PublicKeyFile)
 	} else {
-		lg.Warn("プラグイン署名検証: 無効 — 未署名の .so も読み込まれます（plugins.require_signature=true で有効化できます）")
+		lg.WarnT("agent.sig_verify_disabled")
 	}
 	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg, pluginsDir, cfg.Plugins); err != nil {
-		lg.Error("プラグイン読み込みエラー: %v", err)
+		lg.ErrorT("agent.plugin_load_error", err)
 	}
 
 	manager.Start(ctx)
@@ -217,20 +217,20 @@ func main() {
 
 	go func() {
 		<-sigCh
-		lg.Info("シャットダウンシグナル受信")
+		lg.InfoT("agent.shutdown_signal")
 		cancel()
 	}()
 
 	for {
 		select {
 		case <-ctx.Done():
-			lg.Info("エージェント終了")
+			lg.InfoT("agent.exit")
 			manager.Stop()
 			return
 		default:
 		}
 		if err := runAgent(ctx, cfg, lg, manager); err != nil {
-			lg.Error("エージェント実行エラー: %v, 5秒後に再接続", err)
+			lg.ErrorT("agent.run_error", err)
 			time.Sleep(5 * time.Second)
 		}
 	}
@@ -284,7 +284,7 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			lg.Info("modules.json が見つかりません（スキップ）: %s", path)
+			lg.InfoT("agent.modules_missing", path)
 			return nil
 		}
 		return fmt.Errorf("modules.json 読み込み失敗: %w", err)
@@ -328,14 +328,14 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			}
 			if loadedPlugins.names[tracked] {
 				if err := manager.Unregister(tracked); err != nil {
-					lg.Error("プラグイン '%s' の停止に失敗: %v", tracked, err)
+					lg.ErrorT("agent.plugin_stop_failed", tracked, err)
 				} else {
 					delete(loadedPlugins.names, tracked)
 					delete(loadedPlugins.byCfg, cfg.Name)
-					lg.Info("プラグイン '%s' を無効化し停止しました", tracked)
+					lg.InfoT("agent.plugin_disabled", tracked)
 				}
 			} else {
-				lg.Info("プラグイン '%s' は無効のためスキップ", cfg.Name)
+				lg.InfoT("agent.plugin_skip", cfg.Name)
 			}
 			continue
 		}
@@ -353,10 +353,10 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 					Configure(config interface{}) error
 				}); ok {
 					if err := configurePlugin(configurable, cfg.Config); err != nil {
-						lg.Error("プラグイン '%s' の再設定失敗: %v", regName, err)
+						lg.ErrorT("agent.plugin_reconfig_failed", regName, err)
 					} else {
 						manager.NotifyConfigChanged(regName)
-						lg.Info("プラグイン '%s' の設定を更新しました", regName)
+						lg.InfoT("agent.plugin_config", regName)
 					}
 				}
 			}
@@ -365,19 +365,19 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 
 		pluginPath, ok := cfg.Config["plugin_path"].(string)
 		if !ok || pluginPath == "" {
-			lg.Error("プラグイン '%s' の plugin_path が不正です", cfg.Name)
+			lg.ErrorT("agent.plugin_path_invalid", cfg.Name)
 			continue
 		}
 
 		safePath, err := resolveAndCheckPluginPath(pluginPath, pluginsDir)
 		if err != nil {
-			lg.Error("プラグイン '%s' を拒否しました: %v", cfg.Name, err)
+			lg.ErrorT("agent.plugin_rejected", cfg.Name, err)
 			continue
 		}
 
 		registeredName, err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg, policy)
 		if err != nil {
-			lg.Error("プラグイン '%s' の読み込み失敗: %v", cfg.Name, err)
+			lg.ErrorT("agent.plugin_load_failed", cfg.Name, err)
 			continue
 		}
 		if registeredName == "" {
@@ -390,12 +390,12 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 		// status. Track the name it actually registered under, and remember
 		// both names as "present" so the removal sweep below does not stop it.
 		if registeredName != cfg.Name {
-			lg.Warn("プラグイン '%s' は自身を '%s' として登録しました（modules.json の name と不一致）。events/backup の欠落を防ぐため '%s' として追跡します", cfg.Name, registeredName, registeredName)
+			lg.WarnT("agent.plugin_name_mismatch", cfg.Name, registeredName, registeredName)
 			present[registeredName] = true
 			loadedPlugins.byCfg[cfg.Name] = registeredName
 		}
 		loadedPlugins.names[registeredName] = true
-		lg.Info("プラグイン '%s' を登録しました", registeredName)
+		lg.InfoT("agent.plugin_registered", registeredName)
 	}
 
 	// Stop plugins that are still loaded but no longer present in modules.json
@@ -407,7 +407,7 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 		if err := manager.Unregister(name); err != nil {
-			lg.Error("プラグイン '%s' の停止に失敗: %v", name, err)
+			lg.ErrorT("agent.plugin_stop_failed", name, err)
 			continue
 		}
 		delete(loadedPlugins.names, name)
@@ -416,7 +416,7 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 				delete(loadedPlugins.byCfg, cfgName)
 			}
 		}
-		lg.Info("プラグイン '%s' を modules.json から削除されたため停止しました", name)
+		lg.InfoT("agent.plugin_removed", name)
 	}
 
 	return nil
@@ -444,7 +444,7 @@ func verifyPluginSignature(soPath string, policy config.PluginSecurityConfig, lg
 		return fmt.Errorf("プラグイン署名の検証に失敗しました（改ざんまたは鍵不一致の可能性）: %w", err)
 	}
 	if lg != nil {
-		lg.Info("プラグイン署名を検証しました: %s", soPath)
+		lg.InfoT("agent.plugin_sig_ok", soPath)
 	}
 	return nil
 }
@@ -509,7 +509,7 @@ func constructPlugin(newFunc func(module.Logger) module.PluginModule, lg *logger
 	defer func() {
 		if r := recover(); r != nil {
 			if lg != nil {
-				lg.Error("プラグインのコンストラクタがパニックしました: %v", r)
+				lg.ErrorT("agent.plugin_ctor_panic", r)
 			}
 			mod = nil
 			err = fmt.Errorf("plugin constructor panicked: %v", r)
@@ -559,10 +559,10 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 			}
 
 			lastMod = info.ModTime()
-			lg.Info("modules.json の変更を検知、再読み込みします")
+			lg.InfoT("agent.modules_changed")
 
 			if err := loadPluginsFromConfig(ctx, path, manager, lg, pluginsDir, policy); err != nil {
-				lg.Error("プラグイン再読み込み失敗: %v", err)
+				lg.ErrorT("agent.plugin_reload_failed", err)
 			}
 		}
 	}
@@ -599,7 +599,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 		return err
 	}
 	defer conn.Close()
-	lg.Info("WebSocket 接続確立")
+	lg.InfoT("agent.ws_connected")
 
 	// Serialize all writes to this connection.
 	writer := &wsWriter{conn: conn}
@@ -625,7 +625,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 				return
 			case <-ticker.C:
 				if err := writer.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(5*time.Second)); err != nil {
-					lg.Debug("Ping 送信失敗: %v", err)
+					lg.DebugT("agent.ping_failed", err)
 					return
 				}
 			}
@@ -647,7 +647,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 			_, msg, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					lg.Debug("読み取りエラー: %v", err)
+					lg.DebugT("agent.read_error", err)
 				}
 				return
 			}
@@ -698,7 +698,7 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 			}
 			ts, err := sendStatus(writer, manager, lg)
 			if err != nil {
-				lg.Error("送信失敗: %v", err)
+				lg.ErrorT("agent.send_failed", err)
 				return err
 			}
 			lastSent = ts
@@ -742,6 +742,29 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 				"ip":        ev.IP,
 				"timestamp": ev.Timestamp.Format(time.RFC3339),
 			}
+			// 英語表示用 (タスク9)。空のときは送らない。
+			if ev.TitleEN != "" {
+				payload["title_en"] = ev.TitleEN
+			}
+			if ev.MessageEN != "" {
+				payload["message_en"] = ev.MessageEN
+			}
+			// 詳細表示用フィールド (タスク1)。空のときは送らない。
+			if ev.Command != "" {
+				payload["command"] = ev.Command
+			}
+			if ev.DetectFile != "" {
+				payload["detect_file"] = ev.DetectFile
+			}
+			if ev.DetectLine != 0 {
+				payload["detect_line"] = ev.DetectLine
+			}
+			if ev.Remediation != "" {
+				payload["remediation"] = ev.Remediation
+			}
+			if ev.RelatedLog != "" {
+				payload["related_log"] = ev.RelatedLog
+			}
 			data, err := json.Marshal(payload)
 			if err != nil {
 				continue
@@ -754,12 +777,12 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 					requeuer.RequeueSecurityEvents(events[i:])
 				}
 				if lg != nil {
-					lg.Error("セキュリティイベント送信失敗: %v", err)
+					lg.ErrorT("agent.sec_event_failed", err)
 				}
 				return
 			}
 			if lg != nil {
-				lg.Info("セキュリティイベント送信: [%s] %s (%s)", ev.Level, ev.Title, ev.Category)
+				lg.InfoT("agent.sec_event_sent", ev.Level, ev.Title, ev.Category)
 			}
 		}
 	}
@@ -771,7 +794,7 @@ func drainSecurityEventsSafe(provider module.SecurityEventProvider, lg *logger.L
 	defer func() {
 		if r := recover(); r != nil {
 			if lg != nil {
-				lg.Error("セキュリティイベント取得でパニック: %v", r)
+				lg.ErrorT("agent.sec_event_panic", r)
 			}
 			events = nil
 		}
@@ -834,7 +857,7 @@ func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) (i
 		return s.Timestamp, err
 	}
 
-	lg.Debug("Status sent successfully")
+	lg.DebugT("agent.status_sent")
 	return s.Timestamp, nil
 }
 
@@ -931,20 +954,20 @@ func handleDashboardCommand(
 	}
 	if err := json.Unmarshal(raw, &cmd); err != nil {
 		if lg != nil {
-			lg.Debug("コマンドのパース失敗: %v", err)
+			lg.DebugT("agent.cmd_parse_failed", err)
 		}
 		return
 	}
 
 	if cmd.Action != "run_backup" {
 		if lg != nil {
-			lg.Debug("未対応のアクション: %s", cmd.Action)
+			lg.DebugT("agent.cmd_unknown", cmd.Action)
 		}
 		return
 	}
 
 	if lg != nil {
-		lg.Info("手動実行リクエスト受信: plugin=%s request_id=%s", cmd.Plugin, cmd.RequestID)
+		lg.InfoT("agent.manual_recv", cmd.Plugin, cmd.RequestID)
 	}
 
 	mod, ok := manager.Get(cmd.Plugin)
@@ -965,7 +988,7 @@ func handleDashboardCommand(
 		defer func() {
 			if r := recover(); r != nil {
 				if lg != nil {
-					lg.Error("バックアップ実行でパニック: %v", r)
+					lg.ErrorT("agent.backup_panic", r)
 				}
 				sendBackupResult(w, cmd.Plugin, cmd.RequestID, "error", 0, 0, fmt.Sprintf("plugin panic: %v", r), lg)
 			}
@@ -1012,17 +1035,17 @@ func sendBackupResult(
 	data, err := json.Marshal(payload)
 	if err != nil {
 		if lg != nil {
-			lg.Error("backup_result のJSON化失敗: %v", err)
+			lg.ErrorT("agent.backup_json_failed", err)
 		}
 		return
 	}
 	if err := w.WriteMessage(websocket.TextMessage, data); err != nil {
 		if lg != nil {
-			lg.Error("backup_result の送信失敗: %v", err)
+			lg.ErrorT("agent.backup_send_failed", err)
 		}
 		return
 	}
 	if lg != nil {
-		lg.Info("手動実行結果送信: plugin=%s status=%s duration=%dms", plugin, status, durationMs)
+		lg.InfoT("agent.manual_sent", plugin, status, durationMs)
 	}
 }
