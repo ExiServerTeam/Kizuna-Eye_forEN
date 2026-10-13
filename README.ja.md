@@ -166,9 +166,8 @@ agent は専用ユーザー `kizuna-eye`（`kizuna-eye-agent.service`）、dashb
 
     cp dashboard_config.example.json dashboard_config.json
     cp agent_config.example.json agent_config.json
-    cp modules.json.example modules.json
 
-各ファイルを環境に合わせて編集してください。全項目は `*.example.json` に記載されています。最小構成は以下のとおりです。
+各ファイルを環境に合わせて編集してください。**`modules.json` はまだ作成しないでください:** モジュールは Web UI の「モジュール管理」から追加するもので、初回インストールでは存在しないのが正しい状態です（無ければ「モジュール無し」として扱われます）。全項目は `*.example.json` に記載されています。最小構成は以下のとおりです。
 
 `dashboard_config.json`:
 
@@ -230,7 +229,7 @@ critical だけは集約せず即時送信します。
         "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
     }
 
-`modules.json`:
+`modules.json` は**ここでは作成しません**。Web UI の「モジュール管理」からモジュールを追加したときに dashboard が書き込みます。参考として、エントリは次のような形です:
 
     [
       {

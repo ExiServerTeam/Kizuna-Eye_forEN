@@ -148,9 +148,8 @@ Uninstall with `sudo apt remove kizuna-eye` (stops services, keeps data) or `sud
 
     cp dashboard_config.example.json dashboard_config.json
     cp agent_config.example.json agent_config.json
-    cp modules.json.example modules.json
 
-Edit each file for your environment. The full example files (`*.example.json`) list every option; a minimal setup is shown below.
+Edit each file for your environment. **Do not create `modules.json` yet:** modules are added from the "Module Management" tab in the UI, so on a fresh install it does not exist (an absent file simply means "no modules"). The full example files (`*.example.json`) list every option; a minimal setup is shown below.
 
 `dashboard_config.json`:
 
@@ -213,7 +212,7 @@ alerts immediately.
         "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
     }
 
-`modules.json`:
+`modules.json` is **not created here**. It is written by the dashboard when you add a module from the "Module Management" tab. For reference, an entry looks like:
 
     [
       {

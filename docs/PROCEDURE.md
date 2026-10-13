@@ -1,7 +1,7 @@
 # Kizuna-Eye 操作手順書
 
 本書は、Kizuna-Eye の導入・設定・運用・プラグイン開発・検証の手順をまとめたものである。
-対象は Ubuntu Server 20.04 以降の Linux 環境とする。
+対象は Ubuntu Server 20.04 以降とする（他の Linux ディストリビューションでも動作する。deb は Ubuntu 20.04+ / Debian 11+ 向け）。
 
 ---
 
@@ -52,7 +52,7 @@
 2. Go の確認
 3. 本体ビルド（`plugin-inspect` / `dashboard_linux` / `agent_linux` / `plugin-sign`）
 4. プラグインのビルドと署名（純正プラグインのみ。署名鍵が無ければ生成）
-5. sudoers の導入（smartctl / cron ヘルパー / ワンクリック対処）
+5. 特権ヘルパーの導入（smartctl 用 sudoers / cron ヘルパー sudoers / ワンクリック対処は**特権ソケット方式**。旧 sudoers 方式は使わない）
 6. **systemd 登録**（dashboard + agent）。agent は専用ユーザー `kizuna-eye` で
    動かす（H-1 権限分離）。`systemd/migrate-agent-user.sh` を内部で呼ぶ
 7. 起動
@@ -163,7 +163,9 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 
 ## 4. 通知
 
-`notifications.channels` は `discord`、`slack`、`telegram`、`line`、`email` に対応する。各タイプに必要な項目は `dashboard_config.example.json` を参照すること。
+`notifications.channels` は5種に対応する: `discord` / `slack` / `telegram` / `line` / `email`。
+
+**設定エディタ（admin）で編集できるのは現在 `discord` のみ**である。他の type も読み込み・送信は正常に動作するが、追加・変更は `dashboard_config.json` を直接編集して行う（UI は既存の非 Discord チャンネルをそのまま保持する）。各タイプの必須項目は `dashboard_config.example.json` を参照すること。
 
 アラート閾値は、設定エディタ（admin）から再起動なしで変更できる。
 
@@ -187,7 +189,7 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 
 Web ダッシュボードの「モジュール管理」タブから `.so` をアップロードする。組み込みの `plugin-inspect` がプラグインを解析し、設定項目を抽出して動的な設定フォームを生成する。
 
-署名必須（`plugins.require_signature: true`、既定）の場合は、事前に `plugin-sign -sign my_plugin.so -private-key <秘密鍵>` で `my_plugin.so.sig` を作り、`.so` と同時にアップロードする。署名検証は `plugin-inspect`（＝`plugin.Open` による `init()` 実行）より**前**に行われ、署名が無い/一致しない `.so` は拒否される。
+署名必須（`plugins.require_signature: true`）の場合は、事前に `plugin-sign -sign my_plugin.so -private-key <秘密鍵>` で `my_plugin.so.sig` を作り、`.so` と同時にアップロードする。**既定は導入経路で異なる**: ソース導入（`install.sh`）は example の `true`、deb 導入（`apt install`）は postinst が `false` に書き換える。署名検証は `plugin-inspect`（＝`plugin.Open` による `init()` 実行）より**前**に行われ、署名が無い/一致しない `.so` は拒否される。
 
 ### 5.3 再ビルドが必要な場合
 
