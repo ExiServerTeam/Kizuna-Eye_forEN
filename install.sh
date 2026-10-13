@@ -447,6 +447,11 @@ if [ "$DO_BUILD" -eq 1 ]; then
 fi
 
 # ---- 6. プラグイン ----
+# Plugin builds are opt-in (the sources live in separate repositories), so a
+# failure must not abort the whole install. It must NOT be silent either:
+# `|| true` used to hide a compile error, leaving the operator convinced the
+# plugin was installed while no .so (or a stale one) was deployed.
+PLUGIN_BUILD_FAILED=""
 build_plugin() {
     local dir="$1" name="$2"
     [ -d "$dir" ] || { log "ℹ️  プラグインソース無し: $dir"; return 0; }
@@ -461,7 +466,9 @@ build_plugin() {
     fi
     log "🔌 ビルド: $dir → $PLUGIN_OUT_DIR/${name}.so"
     if ! ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . ); then
-        err "プラグインビルド失敗: $dir"; return 1
+        err "プラグインビルド失敗: $dir"
+        PLUGIN_BUILD_FAILED="$PLUGIN_BUILD_FAILED $name"
+        return 1
     fi
     ok "plugin ${name}.so"
 }
@@ -932,6 +939,13 @@ else
 fi
 echo "╚══════════════════════════════════════════════════╝"
 log ""
+# プラグインは opt-in（ソースは別リポジトリ）なので失敗しても導入全体は
+# 止めない。ただし黙って隠すと「入ったつもり」の事故になるため、明示する。
+if [ -n "${PLUGIN_BUILD_FAILED:-}" ]; then
+    warn "以下のプラグインはビルドに失敗しました:${PLUGIN_BUILD_FAILED}"
+    warn "  KIZUNA_SEC_PLUGIN_DIR / KIZUNA_LITE_PLUGIN_DIR の指定と、go build のエラー内容を確認してください。"
+    warn "  プラグインが古いままだと ABI 不一致でロードに失敗します（再ビルド推奨）。"
+fi
 log "  アクセス        : http://${LAN_IP:-<server-ip>}:8080"
 log ""
 log "  ── はじめにお読みください ──────────────────────"

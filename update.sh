@@ -170,9 +170,15 @@ rollback() {
 NEED_PLUGIN_REBUILD=0
 if [ "$DO_GIT" -eq 1 ]; then
     CHANGED="$(git diff --name-only HEAD "$REMOTE_NAME/$BRANCH" 2>/dev/null || true)"
-    if echo "$CHANGED" | grep -qE '^pkg/(module|status)/'; then
+    # プラグインが import する共有パッケージは pkg/module だけではない。
+    # 出荷している Kizuna-Security は pkg/fsutil も import しており、そこを
+    # 変更すると .so のビルドハッシュが変わる（plugin was built with a
+    # different version of package Kizuna-Eye/pkg/fsutil）。一覧に無いと
+    # 「変更検出漏れ → 再ビルドせず → ABI 不一致で全プラグインがロード不能」
+    # になるため、プラグインが import する共有パッケージを網羅する。
+    if echo "$CHANGED" | grep -qE '^pkg/(module|status|fsutil)/'; then
         NEED_PLUGIN_REBUILD=1
-        warn "pkg/module または pkg/status が変更 → 全プラグイン再ビルドが必要"
+        warn "共有パッケージ (pkg/module, pkg/status, pkg/fsutil) が変更 → 全プラグイン再ビルドが必要"
     fi
 fi
 
@@ -208,12 +214,20 @@ if ! build_one plugin-inspect ./cmd/plugin-inspect \
 fi
 ok "本体再ビルド完了"
 
+# PLUGINS_REBUILT counts how many plugin .so files were actually rebuilt.
+# It is used below to refuse a restart when a shared package changed but no
+# plugin could be rebuilt (the deployed .so would then fail to load).
+PLUGINS_REBUILT=0
 build_plugin() {
     local dir="$1" name="$2"
     [ -d "$dir" ] || { log "ℹ️  プラグインソース無し: $dir"; return 0; }
     grep -rqsE '^package main' "$dir"/*.go || { warn "$name: main パッケージでないためスキップ"; return 0; }
     log "🔌 ビルド: $name"
-    ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . )
+    if ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . ); then
+        PLUGINS_REBUILT=$((PLUGINS_REBUILT + 1))
+        return 0
+    fi
+    return 1
 }
 # ホストを再ビルドしたら、プラグインも必ず同じツールチェーン／依存で
 # 再ビルドする。Go プラグインは共有パッケージのハッシュ完全一致が必須で、
@@ -229,6 +243,19 @@ if [ "$BUILD_PLUGINS" -eq 1 ]; then
     fi
     if ! build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite"; then rollback; err "LITE プラグインビルド失敗。ロールバックしました。"; exit 1; fi
     if ! build_plugin "$SEC_PLUGIN_DIR" "kizuna_security"; then rollback; err "Security プラグインビルド失敗。ロールバックしました。"; exit 1; fi
+
+    # fail-closed: 共有パッケージが変わったのに 1 つもプラグインを再ビルド
+    # できなかった場合、このまま再起動すると配置済み .so は ABI 不一致で
+    # ロードできず、全プラグインの監視が静かに停止する。ソースが手元に無い
+    # （KIZUNA_*_PLUGIN_DIR 未設定）等の理由でこの状態になったら、更新を
+    # 中止してロールバックする。
+    if [ "$NEED_PLUGIN_REBUILD" -eq 1 ] && [ "$PLUGINS_REBUILT" -eq 0 ]; then
+        if ls "$PLUGIN_OUT_DIR"/*.so >/dev/null 2>&1; then
+            rollback
+            err "共有パッケージが変更されましたがプラグインを再ビルドできませんでした（KIZUNA_SEC_PLUGIN_DIR / KIZUNA_LITE_PLUGIN_DIR を設定してください）。ABI 不一致で全プラグインがロード不能になるため更新を中止しました。"
+            exit 1
+        fi
+    fi
 
     # 再ビルドした .so は内容が変わるため、既存の .sig は無効になる。
     # require_signature=true の環境では署名不一致でプラグインがロードされず
