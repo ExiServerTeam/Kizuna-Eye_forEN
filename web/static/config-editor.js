@@ -13,6 +13,10 @@ document.addEventListener('DOMContentLoaded', function () {
     const lineCount = document.getElementById('lineCount');
     const fileBtns = document.querySelectorAll('.config-file-btn');
     const templateBtn = document.getElementById('templateBtn');
+    const historyBtn = document.getElementById('historyBtn');
+    const historyModal = document.getElementById('historyModal');
+    const historyList = document.getElementById('historyList');
+    const historyCloseBtn = document.getElementById('historyCloseBtn');
 
     const editorMode = document.getElementById('editorMode');
     const editorActions = document.getElementById('editorActions');
@@ -424,8 +428,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function saveGui() {
-        const payload = collectGui();
+        // collectGui() can throw (unexpected DOM state). Keep it inside try so
+        // a failure still produces an error toast instead of a silent failure.
         try {
+            const payload = collectGui();
             const res = await fetch(`/api/config/${currentConfigType}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -439,7 +445,7 @@ document.addEventListener('DOMContentLoaded', function () {
             dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (err) {
-            showToast(t('config.save_failed') + ': ' + err.message, 'error');
+            showToast(t('config.save_failed') + ': ' + (err && err.message ? err.message : err), 'error');
         }
     }
 
@@ -471,6 +477,8 @@ document.addEventListener('DOMContentLoaded', function () {
         set(templateBtn, showJsonActions);
         set(formatBtn, showJsonActions);
         set(validateBtn, showJsonActions);
+        // 履歴はエージェント/ダッシュボード設定でのみ表示（アラートは対象外）。
+        set(historyBtn, !isAlerts);
         // 保存ボタンは常に表示する（GUI/JSON どちらの保存手段。アラート時は
         // editorActions 全体が隠れるため、ここで個別に触る必要はない）。
     }
@@ -620,8 +628,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function saveAlertConfig() {
-        const payload = collectAlertPayload();
         try {
+            const payload = collectAlertPayload();
             const res = await fetch('/api/alert-config', {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
@@ -634,7 +642,7 @@ document.addEventListener('DOMContentLoaded', function () {
             dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (err) {
-            showToast(t('config.save_failed'), 'error');
+            showToast(t('config.save_failed') + ': ' + (err && err.message ? err.message : err), 'error');
         }
     }
     if (alertConfigSaveBtn) {
@@ -704,13 +712,18 @@ document.addEventListener('DOMContentLoaded', function () {
                 headers: { 'Content-Type': 'application/json' },
                 body: configEditor.value,
             });
-            if (!response.ok) throw new Error(`Failed to save config: ${response.statusText}`);
+            if (!response.ok) {
+                // Surface the server's validation message (e.g. a placeholder
+                // webhook) instead of the bare status text.
+                const err = await response.json().catch(() => ({}));
+                throw new Error(err.error || response.statusText || `HTTP ${response.status}`);
+            }
             await response.json();
             dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (error) {
             console.error('Failed to save config:', error);
-            showToast(t('config.save_failed'), 'error');
+            showToast(t('config.save_failed') + ': ' + (error && error.message ? error.message : error), 'error');
         }
     }
 
@@ -759,7 +772,10 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // 現在の設定タイプに応じて保存関数を選ぶ。
-    async function currentSaveFn() {
+    // async にしてはいけない: 呼び出し側は `guardedSave(currentSaveFn())` と
+    // 書いており、async だと Promise が fn に渡って `fn is not a function`
+    // になる（ここは関数を「返す」だけで、実行は guardedSave が行う）。
+    function currentSaveFn() {
         if (currentConfigType === 'alerts') return saveAlertConfig;
         if (currentMode === 'gui') return saveGui;
         return saveConfig;
@@ -814,6 +830,12 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!silent) setSavingLabel(true);
         try {
             await fn();
+        } catch (err) {
+            // Safety net: a save function must not fail silently. Each save
+            // function already shows its own toast, but an unexpected throw
+            // here (e.g. a DOM issue) still needs to be visible.
+            console.error('save failed:', err);
+            showToast(t('config.save_failed') + ': ' + (err && err.message ? err.message : err), 'error');
         } finally {
             saving = false;
             if (!silent) setSavingLabel(false);
@@ -823,6 +845,125 @@ document.addEventListener('DOMContentLoaded', function () {
                 try { await fn(); } catch (e) { /* 各 save 関数は内部で通知する */ }
             }
         }
+    }
+
+    // ============================================================
+    // 設定の履歴（スナップショット / タイムトラベル）
+    // ============================================================
+    // サーバーは保存のたびに直前の内容を snapshots/ に退避している。
+    // 履歴ボタンで一覧を出し、任意の時点に復元できる。
+    // アラート（alerts）は /api/config の対象外なので履歴は出さない。
+    function historyAvailable() {
+        return currentConfigType === 'agent' || currentConfigType === 'dashboard';
+    }
+
+    function openHistoryModal() {
+        if (!historyModal) return;
+        historyModal.style.display = 'flex';
+        renderHistory();
+    }
+
+    function closeHistoryModal() {
+        if (historyModal) historyModal.style.display = 'none';
+    }
+
+    async function renderHistory() {
+        if (!historyList) return;
+        historyList.textContent = '';
+        const loading = document.createElement('div');
+        loading.className = 'history-empty';
+        loading.textContent = t('config.loading');
+        historyList.appendChild(loading);
+
+        try {
+            const res = await fetch(`/api/config/${currentConfigType}/snapshots`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const snaps = data.snapshots || [];
+            historyList.textContent = '';
+            if (snaps.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'history-empty';
+                empty.textContent = t('config.history_empty');
+                historyList.appendChild(empty);
+                return;
+            }
+            snaps.forEach((s) => historyList.appendChild(buildHistoryRow(s)));
+        } catch (err) {
+            historyList.textContent = '';
+            const e = document.createElement('div');
+            e.className = 'history-empty';
+            e.textContent = t('config.history_load_failed') + ': ' + (err && err.message ? err.message : err);
+            historyList.appendChild(e);
+        }
+    }
+
+    function buildHistoryRow(snap) {
+        const row = document.createElement('div');
+        row.className = 'history-row';
+
+        const info = document.createElement('div');
+        info.className = 'history-info';
+        const when = document.createElement('div');
+        when.className = 'history-time';
+        when.textContent = formatSnapTime(snap.time);
+        const size = document.createElement('div');
+        size.className = 'history-size';
+        size.textContent = formatBytes(snap.size);
+        info.appendChild(when);
+        info.appendChild(size);
+
+        const btn = document.createElement('button');
+        btn.className = 'btn-secondary history-restore';
+        btn.textContent = t('config.restore');
+        btn.addEventListener('click', () => restoreSnapshot(snap.name));
+
+        row.appendChild(info);
+        row.appendChild(btn);
+        return row;
+    }
+
+    function formatSnapTime(iso) {
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        const p = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+    }
+
+    function formatBytes(n) {
+        n = Number(n) || 0;
+        if (n < 1024) return n + ' B';
+        if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+        return (n / 1024 / 1024).toFixed(2) + ' MB';
+    }
+
+    async function restoreSnapshot(name) {
+        if (!window.confirm(t('config.restore_confirm'))) return;
+        try {
+            const res = await fetch(`/api/config/${currentConfigType}/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name }),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || `HTTP ${res.status}`);
+            }
+            showToast(t('config.restored'), 'success');
+            closeHistoryModal();
+            // 復元後の内容を読み直す。
+            if (currentConfigType !== 'alerts') loadConfig(currentConfigType);
+        } catch (err) {
+            showToast(t('config.restore_failed') + ': ' + (err && err.message ? err.message : err), 'error');
+        }
+    }
+
+    if (historyBtn) historyBtn.addEventListener('click', openHistoryModal);
+    if (historyCloseBtn) historyCloseBtn.addEventListener('click', closeHistoryModal);
+    if (historyModal) {
+        historyModal.addEventListener('click', (e) => {
+            if (e.target === historyModal) closeHistoryModal();
+        });
     }
 
     function showToast(message, type = 'info') {
@@ -869,6 +1010,15 @@ document.addEventListener('DOMContentLoaded', function () {
     if (formatBtn) formatBtn.addEventListener('click', formatJSON);
     if (validateBtn) validateBtn.addEventListener('click', validateJSON);
     if (saveBtn) saveBtn.addEventListener('click', () => guardedSave(currentSaveFn()));
+    // 履歴ボタンはアラート以外でのみ有効。
+    if (historyBtn) {
+        historyBtn.addEventListener('click', () => {
+            if (!historyAvailable()) {
+                showToast(t('config.history_unavailable'), 'info');
+                return;
+            }
+        });
+    }
 
     configEditor.addEventListener('input', () => {
         updateCharCount();

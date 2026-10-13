@@ -13,11 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）
 
 ### Changed
+- ダッシュボードの稼働時間カードで、数字（`.uptime-value`）だけをヘッダーの「ダッシュボード」タブと同じアクセント色（`--primary-color`）にする。カード見出し「稼働時間」やメタ項目（起動日時/平均負荷/ネットワーク）は従来どおりの文字色のまま（`web/static/redesign.css`）
 - 通知チャンネルの webhook が example のプレースホルダのまま有効な場合、保存時は検証エラー、ロード/実行時は警告してスキップする（Discord が HTTP 400 を返し続け、通知が一度も届かないまま再試行ストームになるのを防ぐ）
 - `build-all.sh` を追加。共有パッケージ（`pkg/module` / `pkg/status` / `pkg/fsutil` 等）を変更した際に、host と全プラグインを一括でビルド・署名・配置する（片方だけ更新すると ABI 不一致で全プラグインがロード不能になる事故の恒久対策）
 - プラグイン（モジュール）を本体リポジトリに同梱しない方針に変更。Kizuna-Security のソースは本体リポジトリ内 `plugins/Kizuna-Security/` から撤去し、各モジュール側（`/samba/share/Kizuna-Security` 等）で管理する。`install.sh` / `update.sh` / `scripts/build-plugin.sh` のプラグインソース既定パスを廃止し、`KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` を指定したときのみ扱う opt-in に統一（マシン固有の絶対パスを埋め込まない）。`go.work` のプラグイン参照と `.gitignore` の plugins 固有行も削除
 
+### Added
+- セキュリティ状況（集計）API とダッシュボードの「セキュリティ状況」セクション（`pkg/insight` / `GET /api/insight`）。既存のアラート履歴を集計するだけで、新しい検知や永続データは増やさない（設計書 4.1「コアは観測と可視化に徹する」）。内容は3つ: ①対象期間の脅威指標（レベル別重みから 0..100 のリスク指数と A〜E 評価、寄与の大きい検知種別）②発生元の傾向（メッセージから抽出した接続元アドレスごとの件数・重大数・初回/最終時刻・単一/複数手法、時間帯ヒストグラム）③設定の点検（認証・署名検証・agent_token・履歴署名・通知・ループバック限定待ち受け等を重み付きで採点）。IP はメッセージ本文から抽出するため、断定ではなくヒントとして扱う（`net.ParseIP` で検証し、`0.0.0.0`/ブロードキャストは除外、`"12:34"` や素のポート番号は IP と誤認しない）。集計キーは英数字と `_` に正規化し、一覧は上限10件。設定の弱点（どの対策が無効か）を並べるため **operator 以上のみ**（公開ビューアには非表示・サーバーも 403）。UI 文言は i18n に置き、API は文字列を返さない。回帰テスト `pkg/insight/insight_test.go` / `internal/api/insight_test.go` を追加
+- 週次セキュリティレポート（`pkg/report`＋ダッシュボードのスケジューラ）。アラート履歴（直近7日）から「概要・検知種別・重大アラート・改善提案」を Markdown で生成し、`notifications.weekly_report_enabled` を true にすると指定チャンネル（既定 email）へ毎週送信する。cron ライブラリは追加せず標準 `time` で実装。opt-in（既定 off）で、チャットチャンネルは汚さない。回帰テスト `pkg/report/report_test.go` を追加
+- 設定のスナップショットとタイムトラベル（`pkg/configsnap`）。設定保存の直前に現行ファイルを `snapshots/<name>/`（0600、Samba 共有外）へ退避し、GFS 的（直近20 + 日次7 + 週次8 + 月次12）に世代管理する。`GET /api/config/{type}/snapshots` で一覧、`POST /api/config/{type}/restore` で任意時点へ復元（復元前も退避するため可逆）。`agent_config.json` / `dashboard_config.json` / `modules.json` が対象。回帰テスト `pkg/configsnap/configsnap_test.go` を追加
+
 ### Fixed
+- 認証ミドルウェアの静的アセット公開リストに `.otf` / `.eot` を追加。ロゴ用フォント（`fonts/LogotypeGothic.otf`）が未ログイン時に 302 でブロックされ、公開ビューアやログイン画面でロゴフォントが読み込まれなかった問題を修正（回帰テスト `internal/auth/middleware_assets_test.go` を追加）
 - 隔離 agent（A-4: 専用ユーザー + `NoNewPrivileges=yes`）で S.M.A.R.T が無言で欠落していた問題を修正。実測で `CAP_DAC_READ_SEARCH` だけでは `smartctl` の ATA パススルーが `Operation not permitted` になり、ディスク健康状態・温度・書込量・通電時間が取得できていなかった。unit に `CAP_SYS_RAWIO` を追加し、実際に読み取れたかを起動時と収集時に確認して、失敗する場合は一度だけ警告する（`smartctl --scan` は権限が無くても成功するため可用性判定に使えなかった）
 - `block_mode=enforce` の自動 IP ブロックが `NoNewPrivileges=yes` で必ず失敗していた問題を修正。sudo は no-new-privileges 下で確実に拒否される（実測: `sudo -n true` が `status=1/FAILURE`）ため、firewall 操作は対象バイナリを直接実行する経路を先に試し、失敗時のみ `sudo -n` にフォールバックする。unit に `CAP_NET_ADMIN` を追加（実測で kizuna-eye が `nft add` に成功）。起動時に firewall へ到達できるかを確認し、enforce なのに操作できない場合は警告する
 - `apt`（.deb）経路で特権ヘルパーが導入されず、ワンクリック対処が全て失敗していた問題を修正。`.deb` に `kizuna-action.sh` / `kizuna-cron-read.sh` を同梱し、`postinst` で `/usr/local/bin` へ配置して sudoers（`visudo -cf` 検証付き）を生成、`prerm`/`postrm` で確実に除去する

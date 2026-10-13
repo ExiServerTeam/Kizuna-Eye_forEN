@@ -405,7 +405,9 @@ func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
 // ============================================================
 
 // SignFile writes a detached signature of the file at soPath to sigPath.
-// The signature file is created 0600 because only the verifier needs it.
+// The signature file is created 0644: it is public data, and after the A-4
+// user split the agent (kizuna-eye) must be able to read it to verify the
+// plugin.
 func SignFile(soPath, sigPath string, priv ed25519.PrivateKey) error {
 	if len(priv) != ed25519Priv {
 		return errors.New("署名鍵が不正です")

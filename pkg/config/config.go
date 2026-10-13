@@ -175,6 +175,49 @@ type NotificationsConfig struct {
 	// BatchExcludeCritical sends critical alerts immediately instead of
 	// batching them, so a single critical is never delayed. Default: true.
 	BatchExcludeCritical *bool `json:"batch_exclude_critical"`
+
+	// --- 週次セキュリティレポート (タスク10) ---
+	// WeeklyReportEnabled turns on the weekly security briefing. Opt-in
+	// (nil/false = off): the report is informational and must not start
+	// sending mail without the operator asking for it. *bool so an absent
+	// key means the default (off) instead of Go's zero value.
+	WeeklyReportEnabled *bool `json:"weekly_report_enabled,omitempty"`
+	// WeeklyReportDay is the weekday the report is sent (0=Sunday..6=Saturday).
+	// Default 1 (Monday).
+	WeeklyReportDay int `json:"weekly_report_day"`
+	// WeeklyReportHour is the hour (0-23) the report is sent. Default 9.
+	WeeklyReportHour int `json:"weekly_report_hour"`
+	// WeeklyReportTo lists the notification channels the report is sent to
+	// (e.g. ["email"]). Empty means ["email"], since a report is a document
+	// better suited to mail than to a chat channel.
+	WeeklyReportTo []string `json:"weekly_report_to,omitempty"`
+}
+
+// IsWeeklyReportEnabled reports whether the weekly security report is on.
+func (n *NotificationsConfig) IsWeeklyReportEnabled() bool {
+	return n.WeeklyReportEnabled != nil && *n.WeeklyReportEnabled
+}
+
+// WeeklyReportChannels returns the channels the report is sent to. Default
+// ["email"] when unset.
+func (n *NotificationsConfig) WeeklyReportChannels() []string {
+	if len(n.WeeklyReportTo) == 0 {
+		return []string{"email"}
+	}
+	return n.WeeklyReportTo
+}
+
+// WeeklyReportSchedule normalizes the day/hour, applying the defaults
+// (Monday 09:00).
+func (n *NotificationsConfig) WeeklyReportSchedule() (day, hour int) {
+	day, hour = n.WeeklyReportDay, n.WeeklyReportHour
+	if day < 0 || day > 6 {
+		day = 1
+	}
+	if hour < 0 || hour > 23 {
+		hour = 9
+	}
+	return day, hour
 }
 
 // AuthConfig controls the dashboard login and user management.

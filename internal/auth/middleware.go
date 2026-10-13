@@ -66,6 +66,13 @@ var protectedRules = []routeRule{
 
 	// Operator: manual backup runs, plugin metadata/UI, module config edits,
 	// and alert threshold changes.
+	//
+	// The security insight aggregates the alert history (viewer-level data)
+	// but also scores the configuration posture, which spells out which
+	// controls are off. That is a map of the deployment's weaknesses, so it
+	// must not be readable by an unauthenticated public viewer; operator and
+	// above only.
+	{"", "/api/insight", RoleOperator},
 	{"", "/api/plugins", RoleOperator},
 	{"", "/api/alert-config", RoleOperator},
 	{"", "/api/modules", RoleOperator},
@@ -240,6 +247,8 @@ func isPublicPath(p string) bool {
 		strings.HasSuffix(p, ".woff"),
 		strings.HasSuffix(p, ".woff2"),
 		strings.HasSuffix(p, ".ttf"),
+		strings.HasSuffix(p, ".otf"),
+		strings.HasSuffix(p, ".eot"),
 		strings.HasSuffix(p, ".png"),
 		strings.HasSuffix(p, ".svg"),
 		strings.HasSuffix(p, ".ico"),

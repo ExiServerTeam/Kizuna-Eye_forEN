@@ -40,6 +40,10 @@
         "batch_enabled": true,
         "batch_window_sec": 5,
         "batch_exclude_critical": true,
+        "weekly_report_enabled": false,
+        "weekly_report_day": 1,
+        "weekly_report_hour": 9,
+        "weekly_report_to": ["email"],
         "channels": [
             {
                 "type": "discord",

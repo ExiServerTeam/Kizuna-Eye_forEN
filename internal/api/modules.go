@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"Kizuna-Eye/pkg/configsnap"
 	"Kizuna-Eye/pkg/fsutil"
 )
 
@@ -115,6 +116,11 @@ func (s *ModulesStorage) saveLocked() error {
 	if info, statErr := os.Stat(s.path); statErr == nil {
 		mode = info.Mode().Perm()
 	}
+
+	// Time-travel: keep a snapshot of the pre-change file so an operator can
+	// roll back a bad edit. Best-effort: a snapshot failure must not block the
+	// save (the write itself is still atomic).
+	_ = configsnap.Snapshot(s.path)
 
 	// fsutil.WriteFileAtomic: 一時ファイルに mode を適用し fsync してから
 	// rename する（L-12: 同じ処理が10箇所に重複していた）。上のディレクトリ

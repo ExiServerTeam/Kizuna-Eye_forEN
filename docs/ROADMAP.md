@@ -24,6 +24,7 @@
 - FIM ディレクトリ監視（inotify）＋深さ/監視数/サイズ上限。
 - プラグイン署名検証（Ed25519）、plugin-inspect の bwrap 分離（任意）。
 - ログローテーションの inode 追跡（monitor.go）。
+- セキュリティ状況（集計）: `pkg/insight` がアラート履歴を集計し、脅威指標（リスク 0..100 と A〜E 評価）、発生元アドレスの傾向、設定の点検スコアを `GET /api/insight` で返す。ダッシュボードに「セキュリティ状況」セクション（operator 以上のみ。設定の弱点を並べるため公開ビューアには出さない）。新しい検知・永続データは増やさない。
 - alert_history の最終行ハッシュによる自己圧縮と改ざんの区別。
 - agent 専用ユーザー移行スクリプト（systemd/migrate-agent-user.sh）。
 - **H-1 agent 専用ユーザー化（権限分離）完了**（2026-10-05）。agent は専用ユーザー `kizuna-eye`、unit は `kizuna-eye-agent.service`、dashboard は `kizuna-dashboard.service`。`install.sh` だけで systemd 登録まで完結。`uninstall.sh` で撤去可能。

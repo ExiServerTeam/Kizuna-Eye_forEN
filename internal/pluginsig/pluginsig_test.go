@@ -226,7 +226,10 @@ func TestVerifyBytesRejectsBadSignature(t *testing.T) {
 	}
 }
 
-// SignFile must produce a readable, single-line, owner-only file.
+// SignFile must produce a readable, single-line signature file. The mode is
+// 0644 (not 0600): after the A-4 user split the agent (kizuna-eye) must be
+// able to read the signature to verify the plugin, and a signature is public
+// data.
 func TestSignFileOutputShape(t *testing.T) {
 	dir := t.TempDir()
 	_, priv := mustKeyPair(t)
@@ -242,8 +245,8 @@ func TestSignFileOutputShape(t *testing.T) {
 	// read-only attribute only), so 0600 cannot be asserted there. The
 	// deployment target is Linux, where the check below is what matters.
 	if runtime.GOOS != "windows" {
-		if info.Mode().Perm() != 0o600 {
-			t.Fatalf("mode = %v, want 0600", info.Mode().Perm())
+		if info.Mode().Perm() != 0o644 {
+			t.Fatalf("mode = %v, want 0644", info.Mode().Perm())
 		}
 	}
 	data, err := os.ReadFile(SigPath(so))

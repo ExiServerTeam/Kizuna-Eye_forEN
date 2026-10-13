@@ -200,6 +200,51 @@
                     </div>
                 </div>
             </section>
+
+            <!-- セキュリティ状況（集計）セクション -->
+            <!-- アラート履歴を集計した脅威指標・発生元の傾向・設定の点検結果を表示する。
+                 新しい検知は行わない（既存のアラートの見方）。operator 以上のみ。 -->
+            <section class="alerts-section insight-section" id="insightSection" data-role-min="operator" hidden>
+                <div class="backup-header" id="insightToggle" role="button" tabindex="0" aria-expanded="true">
+                    <div class="backup-header-left">
+                        <h2 data-i18n="insight.title">セキュリティ状況</h2>
+                        <span class="backup-status-badge" id="insightPeriodBadge">--</span>
+                    </div>
+                    <div class="backup-header-actions">
+                        <button class="backup-toggle-btn" aria-label="セキュリティ状況を折りたたむ" data-i18n-aria-label="insight.collapse">
+                            <span class="backup-toggle-icon">▼</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="backup-body" id="insightBody">
+                    <div class="insight-grid">
+                        <div class="insight-card">
+                            <div class="insight-card-head">
+                                <span data-i18n="insight.threat">脅威指標</span>
+                                <span class="insight-grade" id="insightGrade">--</span>
+                            </div>
+                            <div class="insight-risk"><span id="insightRisk">0</span><span class="insight-risk-max">/100</span></div>
+                            <div class="insight-counts" id="insightCounts"></div>
+                        </div>
+                        <div class="insight-card">
+                            <div class="insight-card-head">
+                                <span data-i18n="insight.posture">設定の点検</span>
+                                <span class="insight-grade" id="insightPostureGrade">--</span>
+                            </div>
+                            <div class="insight-risk"><span id="insightPostureScore">0</span><span class="insight-risk-max" id="insightPostureMax">/100</span></div>
+                            <div class="insight-checklist" id="insightChecklist"></div>
+                        </div>
+                    </div>
+                    <div class="insight-sub">
+                        <div class="insight-sub-title" data-i18n="insight.drivers">主な要因</div>
+                        <div class="insight-drivers" id="insightDrivers"></div>
+                    </div>
+                    <div class="insight-sub">
+                        <div class="insight-sub-title" data-i18n="insight.sources">発生元の傾向</div>
+                        <div class="insight-sources" id="insightSources"></div>
+                    </div>
+                </div>
+            </section>
         </main>
 
         <footer class="footer">

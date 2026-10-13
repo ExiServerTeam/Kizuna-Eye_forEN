@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -24,9 +25,11 @@ import (
 	"Kizuna-Eye/internal/auth"
 	"Kizuna-Eye/pkg/alert"
 	"Kizuna-Eye/pkg/config"
+	"Kizuna-Eye/pkg/insight"
 	"Kizuna-Eye/pkg/logger"
 	"Kizuna-Eye/pkg/logsafe"
 	"Kizuna-Eye/pkg/notify"
+	"Kizuna-Eye/pkg/report"
 	"Kizuna-Eye/pkg/status"
 )
 
@@ -48,6 +51,125 @@ var upgrader = websocket.Upgrader{
 	},
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
+}
+
+// nextWeekly returns the next occurrence of the given weekday (0=Sun..6=Sat)
+// and hour strictly after now, in now's location.
+func nextWeekly(day, hour int, now time.Time) time.Time {
+	if day < 0 || day > 6 {
+		day = 1
+	}
+	if hour < 0 || hour > 23 {
+		hour = 9
+	}
+	t := time.Date(now.Year(), now.Month(), now.Day(), hour, 0, 0, 0, now.Location())
+	for i := 0; i < 8; i++ {
+		if int(t.Weekday()) == day && t.After(now) {
+			return t
+		}
+		t = t.AddDate(0, 0, 1)
+	}
+	return t
+}
+
+// postureFromConfig derives the posture score input from the dashboard config
+// file. It reads and decodes the file directly instead of calling
+// config.LoadDashboardConfig: that loader prints to stdout, tightens file
+// permissions and applies defaults, so invoking it on every /api/insight
+// request (the dashboard polls it every 60s per open tab) spammed the log and
+// chmod'd the config file repeatedly. A GET must not have side effects. When
+// the file cannot be read the startup config is used instead, so a transient
+// read error never reports a misleading "everything is off".
+func postureFromConfig(path string, fallback *config.DashboardConfig) insight.PostureInput {
+	dc := fallback
+	if data, err := os.ReadFile(path); err == nil {
+		var loaded config.DashboardConfig
+		if json.Unmarshal(data, &loaded) == nil {
+			dc = &loaded
+		}
+	}
+	if dc == nil {
+		return insight.PostureInput{}
+	}
+	return insight.PostureInput{
+		AuthEnabled:          dc.Auth.Enabled,
+		PublicViewerEnabled:  dc.Auth.IsPublicViewer(),
+		SecureCookies:        dc.Auth.SecureCookies,
+		AgentTokenSet:        strings.TrimSpace(dc.Auth.AgentToken) != "",
+		RequireSignature:     dc.Plugins.RequireSignature,
+		PublicKeySet:         strings.TrimSpace(dc.Plugins.PublicKeyFile) != "",
+		AlertHistorySigned:   strings.TrimSpace(dc.AlertHistoryKeyPath) != "",
+		NotificationsEnabled: dc.Notifications.Enabled,
+		ListenRestricted:     isLoopbackListen(dc.ListenAddr),
+	}
+}
+
+// isLoopbackListen reports whether a listen address is bound to the loopback
+// interface only. "127.0.0.1:8080", "localhost:8080" and "[::1]:8080" are
+// restricted; ":8080" and "0.0.0.0:8080" are not. The address may omit the
+// port (a bare host), in which case the whole value is the host.
+//
+// This is used by the posture score: binding to loopback behind a reverse
+// proxy is the recommended deployment, so it counts as a positive control.
+func isLoopbackListen(addr string) bool {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return false
+	}
+	host := addr
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		host = h
+	}
+	host = strings.Trim(strings.ToLower(host), "[]")
+	switch host {
+	case "localhost", "127.0.0.1", "::1", "0:0:0:0:0:0:0:1":
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// runWeeklyReport sends the security briefing every week at the configured
+// day/hour until the context is cancelled. The report is generated from the
+// current alert history (last 7 days) and sent only to the named channels.
+func runWeeklyReport(
+	ctx context.Context,
+	engine *alert.Engine,
+	notifier *notify.Manager,
+	lg *logger.Logger,
+	day, hour int,
+	channels []string,
+) {
+	for {
+		now := time.Now()
+		next := nextWeekly(day, hour, now)
+		wait := time.Until(next)
+		if wait < 0 {
+			wait = time.Hour
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+
+		entries := engine.Alerts()
+		res := report.Generate(entries, report.Options{
+			Period: 7 * 24 * time.Hour,
+			Now:    time.Now(),
+		})
+		notifier.SendToChannels(&notify.Alert{
+			Type:      "weekly_report",
+			Level:     notify.LevelInfo,
+			Icon:      "📊",
+			Title:     res.Subject,
+			Message:   res.Markdown,
+			Timestamp: time.Now(),
+		}, channels...)
+		if lg != nil {
+			lg.InfoT("dash.weekly_report_sent", res.Total, res.Critical)
+		}
+	}
 }
 
 // acceptAgentPayload reports whether an inbound /ws payload may be treated as
@@ -1276,6 +1398,19 @@ func main() {
 	alertHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_alert_history")
 
+	// ---- Security insight API ----
+	// Aggregates the alert history into a threat index / attacker profile and
+	// scores the configuration posture. The posture callback re-reads the
+	// dashboard config file on every request so a change made in the config
+	// editor is reflected without restarting the dashboard. A read failure
+	// falls back to the startup config rather than reporting a misleading
+	// "everything is off".
+	insightHandler := api.NewInsightHandler(engine, func() insight.PostureInput {
+		return postureFromConfig(*configPath, cfg)
+	})
+	insightHandler.RegisterRoutes(mux)
+	lg.InfoT("dash.api_insight")
+
 	// ---- One-click remediation API (task 2) ----
 	actionHandler := api.NewActionHandler(engine)
 	actionHandler.RegisterRoutes(mux)
@@ -1475,6 +1610,22 @@ func main() {
 	// .so, which is effectively remote code execution.
 	if !cfg.Auth.Enabled && cfg.IsUploadEnabled() {
 		lg.WarnT("dash.insecure_upload")
+	}
+
+	// ---- Weekly security briefing (opt-in) ----
+	// A dependency-free scheduler (standard time package): the dashboard does
+	// not otherwise import a cron library, and one weekly timer does not
+	// justify adding one. The report is sent only to the configured channels
+	// (default email) so it never spams the chat channels.
+	if cfg.Notifications.IsWeeklyReportEnabled() {
+		day, hour := cfg.Notifications.WeeklyReportSchedule()
+		channels := cfg.Notifications.WeeklyReportChannels()
+		if notifierMgr.HasChannels() {
+			go runWeeklyReport(ctx, engine, notifierMgr, lg, day, hour, channels)
+			lg.InfoT("dash.weekly_report_on", day, hour, strings.Join(channels, ","))
+		} else {
+			lg.WarnT("dash.weekly_report_no_channels")
+		}
 	}
 
 	srv := &http.Server{

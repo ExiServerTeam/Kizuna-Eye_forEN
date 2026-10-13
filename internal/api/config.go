@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"Kizuna-Eye/pkg/config"
+	"Kizuna-Eye/pkg/configsnap"
 	"Kizuna-Eye/pkg/fsutil"
 )
 
@@ -39,8 +40,73 @@ func (c *ConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", c.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", c.handleUpdateConfig)
 	mux.HandleFunc("GET /api/config/{type}/template", c.handleGetTemplate)
+	// Time-travel: list snapshots and restore one. More specific than the
+	// bare {type} routes below, so mux routes them distinctly.
+	mux.HandleFunc("GET /api/config/{type}/snapshots", c.handleListSnapshots)
+	mux.HandleFunc("POST /api/config/{type}/restore", c.handleRestoreSnapshot)
 	mux.HandleFunc("GET /api/config/{type}", c.handleGetConfigByType)
 	mux.HandleFunc("PUT /api/config/{type}", c.handleUpdateConfigByType)
+}
+
+// configPathFor resolves a config type to its file path. ok is false for an
+// unknown type.
+func (c *ConfigHandler) configPathFor(configType string) (string, bool) {
+	switch configType {
+	case "agent":
+		return c.agentConfigPath, true
+	case "dashboard":
+		return c.dashboardConfigPath, true
+	case "modules":
+		return c.modulesConfigPath, true
+	default:
+		return "", false
+	}
+}
+
+// handleListSnapshots returns the available snapshots for a config type,
+// newest-first.
+func (c *ConfigHandler) handleListSnapshots(w http.ResponseWriter, r *http.Request) {
+	path, ok := c.configPathFor(r.PathValue("type"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "Invalid config type. Use 'agent', 'dashboard', or 'modules'")
+		return
+	}
+	snaps, err := configsnap.List(path)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "スナップショット一覧の取得に失敗: "+err.Error())
+		return
+	}
+	if snaps == nil {
+		snaps = []configsnap.Entry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"snapshots": snaps})
+}
+
+// handleRestoreSnapshot restores a config type from a named snapshot. The
+// snapshot name comes from the request body ("name") and is validated by the
+// configsnap package (no path separators, must exist in the snapshot dir).
+func (c *ConfigHandler) handleRestoreSnapshot(w http.ResponseWriter, r *http.Request) {
+	path, ok := c.configPathFor(r.PathValue("type"))
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "Invalid config type. Use 'agent', 'dashboard', or 'modules'")
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "リクエストの形式が不正です")
+		return
+	}
+	if body.Name == "" {
+		writeJSONError(w, http.StatusBadRequest, "スナップショット名が指定されていません")
+		return
+	}
+	if err := configsnap.Restore(path, body.Name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "復元に失敗しました: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "restored", "name": body.Name})
 }
 
 // maskedValue is the placeholder returned in place of a secret.
@@ -373,6 +439,7 @@ func (c *ConfigHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	if agentCfg, ok := configs["agent"]; ok {
+		_ = configsnap.Snapshot(c.agentConfigPath)
 		if err := c.saveJSONFile(c.agentConfigPath, agentCfg); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save agent config: %v", err))
 			return
@@ -380,6 +447,7 @@ func (c *ConfigHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	if dashboardCfg, ok := configs["dashboard"]; ok {
+		_ = configsnap.Snapshot(c.dashboardConfigPath)
 		if err := c.saveJSONFile(c.dashboardConfigPath, dashboardCfg); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save dashboard config: %v", err))
 			return
@@ -387,6 +455,7 @@ func (c *ConfigHandler) handleUpdateConfig(w http.ResponseWriter, r *http.Reques
 	}
 
 	if modulesCfg, ok := configs["modules"]; ok {
+		_ = configsnap.Snapshot(c.modulesConfigPath)
 		if err := c.saveJSONFile(c.modulesConfigPath, modulesCfg); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save modules config: %v", err))
 			return
@@ -436,6 +505,7 @@ func (c *ConfigHandler) handleUpdateConfigByType(w http.ResponseWriter, r *http.
 		return
 	}
 
+	_ = configsnap.Snapshot(filePath)
 	if err := c.saveJSONFile(filePath, cfg); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, fmt.Sprintf("Failed to save %s config: %v", configName, err))
 		return

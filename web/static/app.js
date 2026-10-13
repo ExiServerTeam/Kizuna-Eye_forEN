@@ -77,6 +77,19 @@
         alertsCountBadge: $('#alertsCountBadge'),
         alertsClearBtn: $('#alertsClearBtn'),
         alertList: $('#alertList'),
+        insightSection: $('#insightSection'),
+        insightToggle: $('#insightToggle'),
+        insightBody: $('#insightBody'),
+        insightPeriodBadge: $('#insightPeriodBadge'),
+        insightGrade: $('#insightGrade'),
+        insightRisk: $('#insightRisk'),
+        insightCounts: $('#insightCounts'),
+        insightPostureGrade: $('#insightPostureGrade'),
+        insightPostureScore: $('#insightPostureScore'),
+        insightPostureMax: $('#insightPostureMax'),
+        insightChecklist: $('#insightChecklist'),
+        insightDrivers: $('#insightDrivers'),
+        insightSources: $('#insightSources'),
         historySection: $('#historySection'),
         historyToggle: $('#historyToggle'),
         historyBody: $('#historyBody'),
@@ -1960,6 +1973,171 @@
     }
 
     // ============================================================
+    // セキュリティ状況（アラート履歴の集計）
+    // 新しい検知は行わない。サーバーの /api/insight を表示するだけ。
+    // operator 以上のみ（サーバー側でも 403）。
+    // ============================================================
+    let insightCollapsed = false;
+    // insightAllowed is false until the role check confirms operator+.
+    // The fetch is skipped for lower roles so the UI does not spam 403s.
+    let insightAllowed = false;
+
+    function toggleInsight() {
+        insightCollapsed = !insightCollapsed;
+        if (elements.insightBody) elements.insightBody.classList.toggle('collapsed', insightCollapsed);
+        if (elements.insightToggle) {
+            elements.insightToggle.setAttribute('aria-expanded', String(!insightCollapsed));
+            const icon = elements.insightToggle.querySelector('.backup-toggle-btn');
+            if (icon) icon.classList.toggle('collapsed', insightCollapsed);
+        }
+    }
+
+    if (elements.insightToggle) {
+        elements.insightToggle.addEventListener('click', toggleInsight);
+    }
+
+    // gradeLabel maps the A-E grade returned by the API to a word. The
+    // letter itself is shown as-is; the word is the tooltip.
+    function gradeLabel(grade) {
+        return t('insight.grade.' + String(grade || '').toUpperCase());
+    }
+
+    // shortDate formats an ISO timestamp for a compact tooltip.
+    function shortDate(iso) {
+        if (!iso) return '--';
+        const d = new Date(iso);
+        if (isNaN(d.getTime())) return '--';
+        return d.toLocaleString();
+    }
+
+    function renderInsight(data) {
+        if (!elements.insightSection || !data) return;
+
+        const threat = data.threat || {};
+        const posture = data.posture || {};
+        const profile = data.profile || {};
+
+        if (elements.insightPeriodBadge) {
+            const days = Math.max(1, Math.round((data.period_hours || 168) / 24));
+            elements.insightPeriodBadge.textContent = t('insight.period', days);
+        }
+
+        // --- 脅威指標 ---
+        const risk = Number(threat.risk) || 0;
+        if (elements.insightRisk) elements.insightRisk.textContent = String(risk);
+        if (elements.insightGrade) {
+            const g = String(threat.grade || 'A');
+            elements.insightGrade.textContent = g;
+            elements.insightGrade.title = gradeLabel(g);
+            elements.insightGrade.className = 'insight-grade ' + cssClass('grade-' + g.toLowerCase());
+        }
+        if (elements.insightCounts) {
+            elements.insightCounts.textContent = t(
+                'insight.counts',
+                Number(threat.critical) || 0,
+                Number(threat.warning) || 0,
+                Number(threat.total) || 0,
+            );
+        }
+
+        // --- 設定の点検 ---
+        const score = Number(posture.score) || 0;
+        const max = Number(posture.max) || 100;
+        if (elements.insightPostureScore) elements.insightPostureScore.textContent = String(score);
+        if (elements.insightPostureMax) elements.insightPostureMax.textContent = '/' + max;
+        if (elements.insightPostureGrade) {
+            const g = String(posture.grade || 'E');
+            elements.insightPostureGrade.textContent = g;
+            elements.insightPostureGrade.title = gradeLabel(g);
+            elements.insightPostureGrade.className = 'insight-grade ' + cssClass('grade-' + g.toLowerCase());
+        }
+        if (elements.insightChecklist) {
+            const items = Array.isArray(posture.items) ? posture.items : [];
+            if (items.length === 0) {
+                elements.insightChecklist.innerHTML = '';
+            } else {
+                elements.insightChecklist.innerHTML = items.map(it => {
+                    // key はサーバー由来だが、念のため属性にもクラスにも使う前に
+                    // 許可文字だけに落とす（i18n キーは英小文字と _ のみ）。
+                    const key = String(it.key || '').replace(/[^a-z0-9_]/g, '');
+                    const ok = it.ok === true;
+                    const mark = ok ? '✓' : '✕';
+                    const cls = ok ? 'ok' : 'ng';
+                    const label = key ? t('posture.' + key) : '';
+                    return `<div class="insight-check ${cssClass(cls)}">` +
+                        `<span class="insight-check-mark">${escapeHtml(mark)}</span>` +
+                        `<span class="insight-check-label">${escapeHtml(label)}</span>` +
+                        `<span class="insight-check-state">${escapeHtml(ok ? t('insight.posture_ok') : t('insight.posture_ng'))}</span>` +
+                        `</div>`;
+                }).join('');
+            }
+        }
+
+        // --- 主な要因 ---
+        if (elements.insightDrivers) {
+            const drivers = Array.isArray(threat.drivers) ? threat.drivers : [];
+            if (drivers.length === 0) {
+                elements.insightDrivers.innerHTML = `<div class="insight-empty">${escapeHtml(t('insight.no_drivers'))}</div>`;
+            } else {
+                const maxWeight = Math.max.apply(null, drivers.map(d => Number(d.weight) || 0)) || 1;
+                elements.insightDrivers.innerHTML = drivers.map(d => {
+                    const weight = Number(d.weight) || 0;
+                    // 幅は自分で計算した数値なのでそのまま埋め込む。ここを
+                    // cssClass() に通すと '%' が落ちて style="width:50" に
+                    // なり（不正な CSS）、バーが常に満杯になる。数値である
+                    // ことを明示するため clamp してから整数化する。
+                    const pct = Math.min(100, Math.max(4, Math.round((weight / maxWeight) * 100)));
+                    const count = Number(d.count) || 0;
+                    return `<div class="insight-driver">` +
+                        `<span class="insight-driver-key">${escapeHtml(String(d.key || ''))}</span>` +
+                        `<span class="insight-driver-bar"><span style="width:${pct}%"></span></span>` +
+                        `<span class="insight-driver-count">${escapeHtml(String(count))}</span>` +
+                        `</div>`;
+                }).join('');
+            }
+        }
+
+        // --- 発生元の傾向 ---
+        if (elements.insightSources) {
+            const sources = Array.isArray(profile.sources) ? profile.sources : [];
+            if (sources.length === 0) {
+                elements.insightSources.innerHTML = `<div class="insight-empty">${escapeHtml(t('insight.no_sources'))}</div>`;
+            } else {
+                elements.insightSources.innerHTML = sources.map(s => {
+                    const count = Number(s.count) || 0;
+                    const critical = Number(s.critical) || 0;
+                    const tech = s.multi_technique ? t('insight.source_multi') : t('insight.source_single');
+                    const first = shortDate(s.first_seen);
+                    const last = shortDate(s.last_seen);
+                    const sev = critical > 0 ? 'critical' : 'warning';
+                    return `<div class="insight-source ${cssClass(sev)}">` +
+                        `<span class="insight-source-ip">${escapeHtml(String(s.ip || ''))}</span>` +
+                        `<span class="insight-source-meta">${escapeHtml(t('insight.source_meta', count, critical))}</span>` +
+                        `<span class="insight-source-tech">${escapeHtml(tech)}</span>` +
+                        `<span class="insight-source-time" title="${escapeAttr(t('insight.source_first_last', first, last))}">${escapeHtml(last)}</span>` +
+                        `</div>`;
+                }).join('');
+            }
+        }
+
+        // Only reveal the section once real data is rendered, so a viewer or
+        // a failed fetch never shows an empty shell.
+        elements.insightSection.hidden = false;
+    }
+
+    async function loadInsight() {
+        if (!insightAllowed || !elements.insightSection) return;
+        try {
+            const res = await fetch('/api/insight');
+            if (!res.ok) return;   // 403/401 は権限どおり。黙って諦める。
+            const data = await res.json();
+            renderInsight(data);
+        } catch (e) {
+            // 取得失敗は致命的ではないので無視（次の定期更新で再試行）。
+        }
+    }
+
+    // ============================================================
     // 初期描画
     // ============================================================
     function drawInitialGauges() {
@@ -1979,7 +2157,11 @@
     // 並べ替え対象。ゲージカード4枚は .gauge-grid 内、履歴・プラグイン・
     // アラートの3セクションは .main 直下で、それぞれ独立に並べ替えられる。
     const REORDER_CARD_SELECTOR = '.gauge-card';
-    const REORDER_SECTION_SELECTOR = '.history-section, .backup-section, .alerts-section';
+    // .insight-section also carries .alerts-section (it reuses the section
+    // styling), so it is matched by the .alerts-section part already. Listed
+    // explicitly anyway: if the styling class is ever swapped, the section
+    // must stay reorderable.
+    const REORDER_SECTION_SELECTOR = '.history-section, .backup-section, .alerts-section, .insight-section';
 
     function cardKey(card) {
         return card.id || card.className;
@@ -2116,7 +2298,7 @@
 
         if (rank === 0) {
             // 公開ビューア（未ログイン）
-            [elements.historySection, elements.backupSection, elements.alertsSection]
+            [elements.historySection, elements.backupSection, elements.alertsSection, elements.insightSection]
                 .forEach(el => { if (el) el.style.display = 'none'; });
 
             // プロセス詳細（CPU/メモリ）とストレージ詳細（S.M.A.R.T の型番・
@@ -2140,10 +2322,21 @@
         if (rank < 2) {
             // viewer（ゲスト含む）: operator 以上の機能を隠す。
             if (elements.backupSection) elements.backupSection.style.display = 'none';
+            // セキュリティ状況は設定の弱点（どの対策が無効か）を列挙するため、
+            // 未ログインの公開ビューアには見せない（サーバーも 403 で拒否する）。
+            if (elements.insightSection) elements.insightSection.style.display = 'none';
         }
         if (rank < 3) {
             // アラート履歴のクリアは監査証跡を消す操作のため admin のみ。
             if (elements.alertsClearBtn) elements.alertsClearBtn.style.display = 'none';
+        }
+
+        // operator 以上だけがセキュリティ状況を取得する。低いロールでは
+        // セクションも hidden のままにし、fetch も行わない（403 を撒かない）。
+        if (rank >= 2) {
+            insightAllowed = true;
+            loadInsight();
+            setInterval(loadInsight, 60000);
         }
     }
 
@@ -2153,8 +2346,16 @@
         fetch('/api/auth/status', { credentials: 'same-origin' })
             .then(res => res.ok ? res.json() : null)
             .then(status => {
-                if (!status) return;                        // 判定失敗時は通常モードのまま
-                if (status.auth_enabled === false) return;  // 認証無効: 全開放
+                if (!status) return; // 判定失敗時は通常モードのまま
+                // 認証無効は信頼ネットワーク＝全開放。サーバー側ミドルウェアが
+                // その扱い（全リクエストを admin 相当）なので、ここも admin を
+                // 渡して表示制御を揃える。以前は return だけで applyAccessMode を
+                // 呼んでおらず、セキュリティ状況の取得開始（insightAllowed）が
+                // 走らず、認証無効時にセクションが永久に空のままだった。
+                if (status.auth_enabled === false) {
+                    applyAccessMode('admin');
+                    return;
+                }
                 applyAccessMode(status.authenticated ? status.role : null);
             })
             .catch(() => { /* 判定失敗時は通常モードのまま */ });
@@ -2171,6 +2372,7 @@
         connectWebSocket();
         loadAlerts();
         setInterval(loadAlerts, 30000);
+        // セキュリティ状況は権限判定後（applyAccessMode）に取得を始める。
         loadPluginList();
         setInterval(loadPluginList, 30000);
         loadHistory();
@@ -2185,6 +2387,7 @@
             // a status is present, re-renders the dashboard text.
             setTheme(getTheme());
             loadAlerts();
+            loadInsight();
             loadPluginList();
             loadHistory();
         });

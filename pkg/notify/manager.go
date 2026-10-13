@@ -399,6 +399,53 @@ func (m *Manager) HasChannels() bool {
 	return m.enabled && len(m.notifiers) > 0
 }
 
+// HasChannel reports whether a notifier with the given name is registered.
+func (m *Manager) HasChannel(name string) bool {
+	for _, n := range m.notifiers {
+		if n.Name() == name {
+			return true
+		}
+	}
+	return false
+}
+
+// ChannelNames returns the names of the registered notifiers.
+func (m *Manager) ChannelNames() []string {
+	out := make([]string, 0, len(m.notifiers))
+	for _, n := range m.notifiers {
+		out = append(out, n.Name())
+	}
+	return out
+}
+
+// SendToChannels sends an alert only to the named channels (e.g. "email"),
+// bypassing batching and the normal fan-out. It is used for low-frequency
+// operational reports that should not also spam Discord/Telegram. An unknown
+// name is ignored. The alert is NOT recorded in the alert history (the caller
+// decides; a report is not an alert).
+func (m *Manager) SendToChannels(a *Alert, names ...string) {
+	if a == nil || !m.enabled {
+		return
+	}
+	want := make(map[string]bool, len(names))
+	for _, n := range names {
+		want[n] = true
+	}
+	for _, notifier := range m.notifiers {
+		if !want[notifier.Name()] {
+			continue
+		}
+		select {
+		case m.sem <- struct{}{}:
+			m.sendAsync(notifier, a)
+		default:
+			if m.log != nil {
+				m.log.WarnT("notify.concurrent_skip", maxConcurrentSends, notifier.Name())
+			}
+		}
+	}
+}
+
 // Flush sends any pending batched alerts immediately. Call on shutdown so a
 // pending window is not lost.
 func (m *Manager) Flush() {

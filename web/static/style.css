@@ -824,7 +824,7 @@ body.card-dragging {
     top: 55%;
     transform: translate(-50%, -50%);
     z-index: 5;
-    font-size: 34px;
+    font-size: 32px;
     font-weight: 800;
     line-height: 1;
     color: var(--text-primary);
@@ -2762,7 +2762,7 @@ body.card-dragging {
 
     .gauge-card { padding: 16px 14px 16px; }
     .gauge-container { height: 240px; }
-    .gauge-value { font-size: 1.6rem; }
+    .gauge-value { font-size: 1.5rem; }
     .uptime-value { font-size: 32px; }
     .uptime-meta { margin-top: 12px; padding-top: 12px; }
 
@@ -2963,7 +2963,7 @@ body.card-dragging {
     .theme-label { min-width: 34px; font-size: 0.65rem; }
 
     .gauge-container { height: 220px; }
-    .gauge-value { font-size: 1.4rem; }
+    .gauge-value { font-size: 1.3rem; }
     .uptime-value { font-size: 28px; }
     .uptime-meta-item { font-size: 0.75rem; }
     .uptime-meta-item .value { font-size: 0.75rem; }
@@ -3660,7 +3660,7 @@ svg {
     }
 
     .gauge-value {
-        font-size: 1.25rem;
+        font-size: 1.15rem;
     }
 
     .temp-badge,
@@ -3722,6 +3722,8 @@ svg {
    ルートの font-size を画面幅に応じて下げる。本文の大半は rem 基準なので、
    個別ルールを書き換えなくても文字・余白がまとめて縮小され、狭い画面でも
    はみ出しや詰まりを起こしにくい。
+   ※ 実際の基準値は redesign.css（後読み）の html 指定が上書きする。
+      全体の文字サイズを変えるときは redesign.css 側を編集すること。
    ※ 入力欄は iOS の自動ズーム防止で 16px 固定にしてある（既存の指定を維持）。
    ※ ゲージ値など px 固定の要素は各メディアクエリ側で別途調整している。
    ============================================================ */

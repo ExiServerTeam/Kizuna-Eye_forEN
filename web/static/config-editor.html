@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>設定エディタ - Kizuna-Eye</title>
-    <link rel="stylesheet" href="style.css?v=0.7.1">
-    <link rel="stylesheet" href="redesign.css?v=0.7.1">
+    <link rel="stylesheet" href="/style.css?v=0.7.1">
+    <link rel="stylesheet" href="/config-editor.css?v=0.7.1">
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="config-editor.css?v=0.7.1">
+    <link rel="stylesheet" href="/redesign.css?v=0.7.1">
     <!-- テーマは描画前に適用する（一瞬の色反転を防ぐ）。 -->
     <script src="auth-theme.js?v=0.7.1"></script>
 </head>
@@ -65,6 +65,7 @@
                                 <button class="mode-btn" id="modeJsonBtn" data-i18n="config.mode_json">JSON</button>
                             </div>
                             <div class="editor-actions" id="editorActions">
+                                <button class="btn-secondary" id="historyBtn" data-i18n="config.history">履歴</button>
                                 <button class="btn-secondary" id="templateBtn" data-i18n="config.insert_template">ひな形を挿入</button>
                                 <button class="btn-secondary" id="formatBtn" data-i18n="config.format">フォーマット</button>
                                 <button class="btn-secondary" id="validateBtn" data-i18n="config.validate">検証</button>
@@ -146,6 +147,20 @@
                 </div>
             </div>
         </main>
+
+        <!-- 設定スナップショット（タイムトラベル）モーダル -->
+        <div class="modal-overlay" id="historyModal" style="display:none;">
+            <div class="modal">
+                <div class="modal-header">
+                    <h3 data-i18n="config.history_title">設定の履歴</h3>
+                    <button class="modal-close" id="historyCloseBtn" aria-label="close">×</button>
+                </div>
+                <div class="modal-body">
+                    <p class="gui-help" data-i18n="config.history_help">保存のたびに直前の内容が退避されます。任意の時点に復元できます。</p>
+                    <div id="historyList" class="history-list"></div>
+                </div>
+            </div>
+        </div>
 
         <div class="toast-container" id="toastContainer"></div>
     </div>
