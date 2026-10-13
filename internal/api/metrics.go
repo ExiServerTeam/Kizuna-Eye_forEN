@@ -9,15 +9,25 @@ import (
 	"Kizuna-Eye/pkg/status"
 )
 
+// StatusHub は最新のシステム status を提供する。
 // StatusHub provides the latest system status.
 type StatusHub interface {
 	GetLastStatus() *status.SystemStatus
 }
 
+// MetricHandler は Prometheus メトリクスを提供する。
 // MetricHandler serves Prometheus metrics.
 type MetricHandler struct {
 	hub StatusHub
 
+	// sanitizeFor を設定すると、リクエストが viewer 向けに無害化した status を
+	// 返すべきか（セッション無しの public-viewer モード）を報告する。
+	//
+	// /api/status は既にこのフィルタを適用しているが、/api/metrics は
+	// そうしていなかった。未認証のゲストが kizuna_process_count と、/api/status が
+	// 公開ビューから意図的に隠しているディスク単位の S.M.A.R.T 値
+	// （健康状態・温度・マウントパス）を読めてしまっていた。同じ述語を適用して
+	// 2 つのエンドポイントを一致させる。
 	// sanitizeFor, when set, reports whether the request must be served the
 	// viewer-sanitized status (public-viewer mode with no session).
 	//
@@ -29,24 +39,30 @@ type MetricHandler struct {
 	sanitizeFor func(*http.Request) bool
 }
 
+// NewMetricHandler は MetricHandler を作る。
 // NewMetricHandler creates a MetricHandler.
 func NewMetricHandler(hub StatusHub) *MetricHandler {
 	return &MetricHandler{hub: hub}
 }
 
+// SetSanitizer は、リクエストを viewer 向け無害化 status で返すべきかを決める
+// 述語を設定する。起動時に 1 回呼ぶ。
 // SetSanitizer installs the predicate that decides whether a request must be
 // served the viewer-sanitized status. Call once during startup.
 func (m *MetricHandler) SetSanitizer(fn func(*http.Request) bool) {
 	m.sanitizeFor = fn
 }
 
+// RegisterRoutes はメトリクスのルートを登録する。
 // RegisterRoutes registers the metrics route.
 func (m *MetricHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/metrics", m.handlePrometheus)
 }
 
+// handlePrometheus は Prometheus テキスト形式でメトリクスを書く。
 // handlePrometheus writes metrics in Prometheus text format.
 func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request) {
+	// エラー時でも常に text/plain を返す。
 	// Always return text/plain, even on error.
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 
@@ -56,6 +72,9 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		fmt.Fprintln(w, "# No status available")
 		return
 	}
+	// /api/status と揃える。public-viewer モードの未認証クライアントは、
+	// メトリクスエンドポイント経由でもプロセス一覧や S.M.A.R.T メタデータを
+	// 見てはならない。
 	// Mirror /api/status: an unauthenticated client in public-viewer mode must
 	// not see the process list or the S.M.A.R.T metadata through the metrics
 	// endpoint either.
@@ -105,7 +124,8 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 	gaugeInt(&b, "kizuna_disk_free_bytes", "Free disk space in bytes", float64(freeBytes(s.DiskTotal, s.DiskUsed)), ts)
 	gauge(&b, "kizuna_disk_usage_percent", "Disk usage percentage", s.DiskPercent, ts)
 
-	// Per-disk metrics
+	// ディスク単位のメトリクス。
+	// Per-disk metrics.
 	if len(s.Disks) > 0 {
 		fmt.Fprintf(&b, "# HELP kizuna_disk_mount_usage_percent Per-mount disk usage percentage\n")
 		fmt.Fprintf(&b, "# TYPE kizuna_disk_mount_usage_percent gauge\n")
@@ -119,7 +139,8 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 			path := escapeLabel(d.Path)
 			fmt.Fprintf(&b, "kizuna_disk_mount_free_bytes{mount=\"%s\"} %d %d\n", path, freeBytes(d.Total, d.Used), ts)
 		}
-		// Disk temperature (only when available, HELP/TYPE once)
+		// ディスク温度（利用可能な場合のみ、HELP/TYPE は 1 回）。
+		// Disk temperature (only when available, HELP/TYPE once).
 		hasTemp := false
 		for _, d := range s.Disks {
 			if d.Temp > 0 {
@@ -136,6 +157,10 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 				}
 			}
 		}
+		// ディスク健康状態は S.M.A.R.T 由来なので、公開 viewer は決して
+		// 見てはならない（"unknown" としてさえ）。SanitizeForViewer は Health を
+		// クリアするが、系列を出せばチェックの存在を確認でき、このメトリクス名の
+		// 下にマウント一覧が漏れる。ブロックごとスキップする。
 		// Disk health is S.M.A.R.T-derived, so a public viewer must not see it
 		// at all (not even as "unknown"). SanitizeForViewer clears Health, but
 		// emitting the series would still confirm the check exists and leak
@@ -149,7 +174,8 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// CPU temperature (only when > 0)
+	// CPU 温度（> 0 の場合のみ）。
+	// CPU temperature (only when > 0).
 	if s.CPUTemp > 0 {
 		gauge(&b, "kizuna_cpu_temp_celsius", "CPU temperature in Celsius", s.CPUTemp, ts)
 	}
@@ -157,29 +183,34 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 	// Uptime
 	gaugeInt(&b, "kizuna_uptime_seconds", "System uptime in seconds", float64(s.Uptime), ts)
 
-	// Process count
+	// プロセス数。
+	// Process count.
 	if len(s.Processes) > 0 {
 		gaugeInt(&b, "kizuna_process_count", "Number of processes reported (Top N)", float64(len(s.Processes)), ts)
 	}
 
-	// Error and fallback state
+	// エラーとフォールバック状態。
+	// Error and fallback state.
 	gaugeInt(&b, "kizuna_cpu_error_count", "Consecutive CPU collection error count", float64(s.CPUErrorCount), ts)
 	gauge(&b, "kizuna_fallback_active", "1 if the collector is running in fallback mode", boolToFloat(s.Fallback), ts)
 	gauge(&b, "kizuna_collector_error", "1 if the last collection reported an error", boolToFloat(s.LastError != ""), ts)
 
-	// Network counters (cumulative)
+	// ネットワークカウンタ（累積）。
+	// Network counters (cumulative).
 	if s.Network != nil {
 		counterInt(&b, "kizuna_network_up_bytes", "Total bytes sent", float64(s.Network.Up), ts)
 		counterInt(&b, "kizuna_network_down_bytes", "Total bytes received", float64(s.Network.Down), ts)
 	}
 
-	// Network speed
+	// ネットワーク速度。
+	// Network speed.
 	if s.NetworkSpeed != nil {
 		gaugeInt(&b, "kizuna_network_up_speed_bytes_per_second", "Network upload speed in bytes/s", float64(s.NetworkSpeed.Up), ts)
 		gaugeInt(&b, "kizuna_network_down_speed_bytes_per_second", "Network download speed in bytes/s", float64(s.NetworkSpeed.Down), ts)
 	}
 
-	// Backup
+	// バックアップ。
+	// Backup.
 	if s.Backup.Status != "" || s.Backup.LastRun != "" {
 		gaugeInt(&b, "kizuna_backup_size_bytes", "Last backup size in bytes", float64(s.Backup.Size), ts)
 		gauge(&b, "kizuna_backup_success", "1 if the last backup succeeded", boolToFloat(isBackupSuccess(s.Backup.Status)), ts)
@@ -188,21 +219,25 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 	w.Write([]byte(b.String()))
 }
 
+// gauge は float 値の gauge メトリクスを書く。
 // gauge writes a gauge metric with a float value.
 func gauge(b *strings.Builder, name, help string, val float64, ts int64) {
 	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s gauge\n%s %g %d\n", name, help, name, name, val, ts)
 }
 
+// gaugeInt は整数値の gauge メトリクスを書く。
 // gaugeInt writes a gauge metric with an integer value.
 func gaugeInt(b *strings.Builder, name, help string, val float64, ts int64) {
 	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s gauge\n%s %d %d\n", name, help, name, name, int64(val), ts)
 }
 
+// counterInt は整数値の counter メトリクスを書く。
 // counterInt writes a counter metric with an integer value.
 func counterInt(b *strings.Builder, name, help string, val float64, ts int64) {
 	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s counter\n%s %d %d\n", name, help, name, name, int64(val), ts)
 }
 
+// freeBytes は total-used を返し、0 でクランプする。
 // freeBytes returns total-used, clamped to 0.
 func freeBytes(total, used uint64) uint64 {
 	if total > used {
@@ -211,6 +246,7 @@ func freeBytes(total, used uint64) uint64 {
 	return 0
 }
 
+// boolToFloat は bool を 0 か 1 へ変換する。
 // boolToFloat converts a bool to 0 or 1.
 func boolToFloat(v bool) float64 {
 	if v {
@@ -219,6 +255,7 @@ func boolToFloat(v bool) float64 {
 	return 0
 }
 
+// healthValue は S.M.A.R.T 健康状態の文字列をメトリクス値へ変換する。
 // healthValue converts an S.M.A.R.T health string to a metric value.
 func healthValue(health string) int {
 	switch health {
@@ -231,6 +268,7 @@ func healthValue(health string) int {
 	}
 }
 
+// isBackupSuccess はバックアップ状態が成功を意味するかを返す。
 // isBackupSuccess reports whether a backup status means success.
 func isBackupSuccess(status string) bool {
 	switch strings.ToLower(status) {
@@ -241,6 +279,7 @@ func isBackupSuccess(status string) bool {
 	}
 }
 
+// escapeLabel は Prometheus のラベル値をエスケープする。
 // escapeLabel escapes a Prometheus label value.
 func escapeLabel(s string) string {
 	s = strings.ReplaceAll(s, "\\", "\\\\")
