@@ -458,22 +458,32 @@ func (l *LogHandler) sendFileFromPosition(w http.ResponseWriter, filePath string
 		return position, err
 	}
 
-	// Read and send the rest. ReadBytes('\n') tracks exact byte counts for
-	// CRLF files; Scanner would strip '\r' and make position tracking wrong.
+	// Read and send the rest. bufio.Reader.ReadString/ReadBytes track exact
+	// byte counts for CRLF files; Scanner would strip '\r' and make position
+	// tracking wrong.
+	//
+	// The reader buffer is bounded, but a single line is NOT: ReadBytes keeps
+	// accumulating until it finds '\n', so a log with a very long newline-less
+	// span (a runaway plugin writing one enormous line) would be read into
+	// memory in full and could exhaust the dashboard. ReadString is therefore
+	// used with a per-line byte cap: once the cap is hit the rest of the line
+	// is discarded (the stream still advances by the exact byte count, so the
+	// position stays correct and the next poll resumes after the line).
+	const maxStreamLineBytes = 1 << 20 // 1 MiB per line
 	reader := bufio.NewReaderSize(file, 64*1024)
 	var newPosition int64 = position
 	for {
-		line, readErr := reader.ReadBytes('\n')
+		line, readErr := readLineCapped(reader, maxStreamLineBytes)
 		// Only consume complete lines (terminated by '\n'). A partial line at
 		// EOF is left for the next poll, otherwise its tail would be sent
 		// twice: once now and again as part of the completed line later.
-		if readErr == nil && len(line) > 0 {
+		if readErr == nil && line.complete {
 			// Strip CR anywhere in the line (a bare CR is an SSE line
 			// terminator; leaving one in would let a log line inject a
 			// forged "data:" event into the viewer).
-			text := strings.ReplaceAll(strings.TrimRight(string(line), "\r\n"), "\r", "")
+			text := strings.ReplaceAll(strings.TrimRight(line.text, "\r\n"), "\r", "")
 			fmt.Fprintf(w, "data: %s\n\n", text)
-			newPosition += int64(len(line))
+			newPosition += line.consumed
 			continue
 		}
 		if readErr == io.EOF {
@@ -489,4 +499,54 @@ func (l *LogHandler) sendFileFromPosition(w http.ResponseWriter, filePath string
 	}
 
 	return newPosition, nil
+}
+
+// streamLine is one line read from the log stream. consumed is the exact
+// number of bytes taken from the reader (including the '\n' when present), so
+// the caller can advance its position without re-reading. complete is true
+// when a '\n' terminated the line; a capped but unterminated line sets it to
+// false so the caller does not emit a partial line as if it were whole.
+type streamLine struct {
+	text     string
+	consumed int64
+	complete bool
+}
+
+// readLineCapped reads one line from r, up to max bytes. If the line exceeds
+// max before a '\n' is found, the remainder is discarded (drained to the next
+// '\n' or EOF) and complete=false is returned: the bytes are still counted in
+// consumed so the caller's position stays exact and no data is re-sent.
+func readLineCapped(r *bufio.Reader, max int) (streamLine, error) {
+	var (
+		buf      []byte
+		consumed int64
+	)
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			// EOF (or a read error) with no more bytes.
+			return streamLine{text: string(buf), consumed: consumed, complete: false}, err
+		}
+		consumed++
+		if b == '\n' {
+			buf = append(buf, b)
+			return streamLine{text: string(buf), consumed: consumed, complete: true}, nil
+		}
+		if len(buf) < max {
+			buf = append(buf, b)
+			continue
+		}
+		// Cap reached: drain the rest of the line so the next call starts at a
+		// line boundary, counting the discarded bytes.
+		for {
+			d, derr := r.ReadByte()
+			if derr != nil {
+				return streamLine{text: string(buf), consumed: consumed, complete: false}, derr
+			}
+			consumed++
+			if d == '\n' {
+				return streamLine{text: string(buf), consumed: consumed, complete: true}, nil
+			}
+		}
+	}
 }

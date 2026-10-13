@@ -421,8 +421,15 @@ func (h *ModuleHandler) handleCreate(w http.ResponseWriter, r *http.Request) {
 // handleUpdate updates a module.
 func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeJSONError(w, http.StatusBadRequest, "モジュール名が指定されていません")
+	// Validate the path segment before it is used. Go's ServeMux matches
+	// {name} against a single (escaped) segment, but URL-encoded slashes
+	// (%2f) are decoded into the value, so name can contain "/" or "..".
+	// handleDelete turns name into file paths (name+".so", name+".web"),
+	// so an unvalidated name is a path-traversal / arbitrary-delete vector
+	// (e.g. DELETE /api/modules/..%2f..%2fetc). Enforce the same character
+	// set the plugin upload path uses (ValidateModuleName / moduleNameRe).
+	if err := ValidateModuleName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -484,8 +491,14 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 // handleDelete deletes a module.
 func (h *ModuleHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if name == "" {
-		writeJSONError(w, http.StatusBadRequest, "モジュール名が指定されていません")
+	// Validate before the name is used to build file paths below. A
+	// URL-encoded slash (%2f) survives Go's single-segment {name} match and
+	// becomes "/" in the value, so without this check a name such as
+	// "../../etc" would make filepath.Join(pluginsDir, name+".web") escape
+	// pluginsDir and os.RemoveAll would delete outside the plugins
+	// directory. ValidateModuleName rejects anything but [A-Za-z0-9_-].
+	if err := ValidateModuleName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 

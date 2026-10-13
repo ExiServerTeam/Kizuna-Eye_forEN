@@ -115,7 +115,13 @@ func Generate(entries []alert.HistoryEntry, opts Options) Result {
 	if len(typeCount) > 0 {
 		b.WriteString("## 検知種別（多い順）\n\n")
 		for _, kv := range topN(typeCount, 10) {
-			fmt.Fprintf(&b, "- %s: %d 件\n", kv.key, kv.n)
+			// sanitizeLine, not the raw key: the alert Type is derived from
+			// agent/plugin-reported data ("security_" + category), so an
+			// attacker who can emit a security event controls it. A newline
+			// in the key would otherwise inject an extra Markdown bullet or
+			// even a heading into the report (title/message are already
+			// sanitized above; the key was the one field that was not).
+			fmt.Fprintf(&b, "- %s: %d 件\n", sanitizeLine(kv.key), kv.n)
 		}
 		b.WriteString("\n")
 	}
