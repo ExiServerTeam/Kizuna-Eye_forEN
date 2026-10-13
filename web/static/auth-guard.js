@@ -181,11 +181,37 @@
             closeAllAccountMenus();
             dropdown.hidden = !open;
             btn.setAttribute('aria-expanded', String(open));
+            if (open) {
+                clampDropdown(dropdown);
+            }
         });
 
         wrap.appendChild(btn);
         wrap.appendChild(dropdown);
         insertIntoHeader(anchor, wrap);
+    }
+
+    // clampDropdown keeps an absolutely-positioned dropdown on screen.
+    // The dropdown is anchored with right:0 to the avatar; on a narrow
+    // phone the avatar can sit near the LEFT edge (the header wraps), so a
+    // 260px-wide menu would extend past the left edge and get clipped. After
+    // it is laid out, if its left edge is off-screen, flip the anchor to the
+    // left (left:0 / right:auto) and clamp the width to the viewport.
+    function clampDropdown(dropdown) {
+        // Reset to the default anchor before measuring so repeated opens do
+        // not accumulate offsets.
+        dropdown.style.left = '';
+        dropdown.style.right = '';
+        dropdown.style.maxWidth = '';
+        const rect = dropdown.getBoundingClientRect();
+        const margin = 8;
+        if (rect.left < margin) {
+            dropdown.style.right = 'auto';
+            dropdown.style.left = '0';
+            // Keep it within the viewport even after flipping.
+            const maxW = Math.max(180, window.innerWidth - margin * 2);
+            dropdown.style.maxWidth = maxW + 'px';
+        }
     }
 
     // menuItem builds a dropdown row backed by a button.

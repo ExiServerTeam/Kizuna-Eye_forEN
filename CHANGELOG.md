@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- スマホでアカウントメニュー（アバターのドロップダウン）が画面左端からはみ出して切れる問題を修正（`web/static/auth-guard.js`）。ドロップダウンは `right:0` でアバターに固定されるため、ヘッダーが折り返してアバターが画面左寄りになると 260px 幅のメニューが左端を越えていた。開いた直後に実測し、左端が画面外ならアンカーを左（`left:0` / `right:auto`）へ反転し、幅をビューポート内にクランプする `clampDropdown` を追加。
 - スマホでダッシュボードのカード／セクションの上を指でなぞると、ページがスクロールせず並べ替えが始まる（スクロールが止まる）問題を修正（`web/static/app.js`）。カード並べ替えの `onDown` が「カード本体のどこを触っても」`preventDefault()` と `setPointerCapture()` を呼んでいたため、カードの余白を触った時点でスクロールが奪われていた（モジュール管理の `modules.js` は元からハンドル限定で、ダッシュボードだけが本体ドラッグを許していた）。タッチ/ペンでは明示的なつまみ（`.drag-handle`）からのみドラッグを開始し、マウスは従来どおりカード本体からも開始できるようにした（PC の UX は不変）。
 - ログのリモート転送（`pkg/logger/forward.go`）で、`forwardWriter.Close` と `Write` が並行したときに send-on-closed-channel で panic し得る競合を修正。直前の追加では `closed atomic.Bool` を「確認してから送信」の間に置いていたため、その隙間に `Close`（`closed` セット＋`close(ch)`）が入ると Write が閉じたチャネルへ送って panic する TOCTOU が残っていた（logger 経由では Write/Close が直列化されるため未到達だが、writer 単体の将来の誤用に脆い）。`sendMu sync.RWMutex` を追加し、Write は read ロックの下で「closed 確認＋送信」を一体で行い、Close は write ロックの下で `closed` セットと `close(ch)` を行う。Write は `select` の `default` でブロックしないため Close が飢餓になることはない。並行 Close/Write の回帰テスト `TestForwardWriterConcurrentCloseWrite` を追加（`-race` で検出）
 - `docs/ROADMAP.md` の「インストーラは systemd 保護（ProtectSystem / NoNewPrivileges / AmbientCapabilities）で最小権限動作」という記述を、実態に合わせて修正。agent unit は全保護を適用するが、dashboard unit はワンクリック対処（`sudo -n` ヘルパー）と両立させるため `NoNewPrivileges` / `ProtectSystem=strict` / `PrivateTmp` を適用しない（残りの保護は適用）ことを明記
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）
 
 ### Changed
+- モジュール提供カードの iframe URL に現在のテーマ（`&theme=dark|light`）を付与し、テーマ切替時に iframe を再読み込みするようにした（`web/static/app.js`）。iframe は親の CSS 変数を継承しないため、テーマを無視したモジュール UI（背景を固定したもの）はライトモードでも暗いままになっていた。これでモジュール側が `theme` を読んで配色を切り替えられる。Kizuna-Security の Web UI 側で `theme` を解釈する対応は別途必要。
 - モバイル UI の最適化（`web/static/modules.css` / `web/static/redesign.css`）。①モジュール管理のファイル操作（`.file-actions`）が 480px 以下で `display:flex` のまま `grid-template-columns` を指定しており（死んだ宣言）、意図した 2 列等幅になっていなかったため `flex: 1 1 calc(50% - 3px)` に修正。②スマホ横向き（`max-width: 960px and orientation: landscape`）ではゲージグリッドを 2 列に戻し、短い縦幅を有効に使う（縦向きは 1 列のまま）。③スマホ（≤768px）で表示が過大になる問題を修正。`redesign.css` は PC の読みやすさ優先で基準フォント 19px・カード余白 30px・ゲージ canvas max-width 320px と大きくしており、後読みのため `style.css` のスマホ向け縮小（`.gauge-card { padding: 12px 10px }` 等）を上書きしていた。ファイル末尾にスマホ専用のコンパクションブロックを追加し、基準フォント（768px=15px / 600px=14px / 420px=13px）・ヘッダー・カード・ゲージ・コアタイルを縮める。PC（>768px）には影響しない。
 - ダッシュボードの稼働時間カードで、数字（`.uptime-value`）だけをヘッダーの「ダッシュボード」タブと同じアクセント色（`--primary-color`）にする。カード見出し「稼働時間」やメタ項目（起動日時/平均負荷/ネットワーク）は従来どおりの文字色のまま（`web/static/redesign.css`）
 - 通知チャンネルの webhook が example のプレースホルダのまま有効な場合、保存時は検証エラー、ロード/実行時は警告してスキップする（Discord が HTTP 400 を返し続け、通知が一度も届かないまま再試行ストームになるのを防ぐ）

@@ -172,6 +172,12 @@
         }
 
         if (window._lastData) updateDashboard(window._lastData);
+
+        // モジュール提供カードの iframe は親の CSS 変数を継承しないため、
+        // テーマを URL で渡し直す（テーマ切替時に再読み込み）。
+        if (typeof reloadModuleCardFrames === 'function') {
+            reloadModuleCardFrames();
+        }
     }
 
     function toggleTheme() {
@@ -1359,6 +1365,29 @@
         return { viewer: 1, operator: 2, admin: 3 }[String(role || '').toLowerCase()] || 0;
     }
 
+    // moduleCardFrameSrc builds the iframe URL for a module UI, carrying the
+    // current language and theme so the module can adapt. The theme matters
+    // because iframes do not inherit the parent's CSS variables.
+    function moduleCardFrameSrc(moduleName, entry, lang, theme) {
+        const q = entry.indexOf('?') >= 0 ? '&' : '?';
+        return '/plugins/' + encodeURIComponent(moduleName) + '/' + entry +
+            q + 'lang=' + encodeURIComponent(lang) +
+            '&theme=' + encodeURIComponent(theme);
+    }
+
+    // reloadModuleCardFrames re-points every mounted module iframe at the
+    // current theme. Called when the theme changes so plugin UIs follow it.
+    function reloadModuleCardFrames() {
+        const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
+        const theme = getTheme();
+        document.querySelectorAll('iframe.module-card-frame').forEach(function (f) {
+            const plugin = f.dataset.plugin;
+            const entry = f.dataset.entry;
+            if (!plugin || !entry) return;
+            f.src = moduleCardFrameSrc(plugin, entry, lang, theme);
+        });
+    }
+
     // moduleCardSection builds the generic card shell (header + iframe host)
     // for one module card. The shell is the same for every module; only the
     // title and the iframe URL differ, so the core owns no card-specific DOM.
@@ -1407,10 +1436,15 @@
         iframe.className = 'module-card-frame';
         iframe.setAttribute('loading', 'lazy');
         iframe.setAttribute('referrerpolicy', 'no-referrer');
-        // ?lang=<ui> so the module can render in the current language.
+        // ?lang=<ui> so the module can render in the current language, and
+        // &theme=<dark|light> so a module UI can match the dashboard theme.
+        // The parent's CSS variables do NOT cross into an iframe document, so
+        // a module that hardcodes a background otherwise stays dark in light
+        // mode. Modules that honor the parameter switch their own palette.
         const entry = meta.web_ui_path || 'index.html';
-        iframe.src = '/plugins/' + encodeURIComponent(moduleName) + '/' +
-            entry + (entry.indexOf('?') >= 0 ? '&' : '?') + 'lang=' + encodeURIComponent(lang);
+        iframe.dataset.entry = entry;
+        iframe.dataset.plugin = moduleName;
+        iframe.src = moduleCardFrameSrc(moduleName, entry, lang, getTheme());
         body.appendChild(iframe);
 
         header.addEventListener('click', () => {
