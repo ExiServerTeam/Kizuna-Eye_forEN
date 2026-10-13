@@ -146,11 +146,21 @@ case "$1" in
     done
 
     # --- 8. systemd 有効化・起動 ---
-    # enable + restart だけだと、unit の ExecStart が即死しても postinst は成功で
-    # 終わってしまう。is-active を確認して、失敗時は journal の見方を案内する。
+    # systemd が PID 1 でない環境（コンテナ等）では /run/systemd/system が無い。
+    # その場合 systemctl が存在しても実体に繋がらないため、無条件に叩くと
+    # 「System has not been booted with systemd」警告が出る。ここで検出して
+    # 静かにスキップし、偽の「サービスが落ちている」警告を出さない。
+    # Detect a real systemd init (PID 1). In a container it is absent, so the
+    # enable/start step is skipped silently instead of emitting a misleading
+    # "service is not active" warning.
+    HAS_SYSTEMD=0
+    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+      HAS_SYSTEMD=1
+    fi
+
     DASH_OK=0
     AGENT_OK=0
-    if command -v systemctl >/dev/null 2>&1; then
+    if [ "$HAS_SYSTEMD" -eq 1 ]; then
       systemctl daemon-reload || true
       systemctl enable kizuna-eye-agent.service || true
       systemctl enable kizuna-dashboard.service || true
@@ -164,8 +174,6 @@ case "$1" in
       sleep 2
       systemctl is-active --quiet kizuna-dashboard.service && DASH_OK=1 || true
       systemctl is-active --quiet kizuna-eye-agent.service && AGENT_OK=1 || true
-    else
-      echo "kizuna-eye: systemctl not found; services were not started." >&2
     fi
 
     # --- 9. 完了メッセージ ---
@@ -184,15 +192,21 @@ case "$1" in
     echo " Config files (edit by hand only if needed):"
     echo "     $DATA_DIR/dashboard_config.json"
     echo "     $DATA_DIR/agent_config.json"
-    echo " Logs: journalctl -u kizuna-dashboard -u kizuna-eye-agent"
-    echo "================================================================"
-    if [ "$DASH_OK" -ne 1 ]; then
-      echo "WARNING: kizuna-dashboard.service is not active." >&2
-      echo "  Check: journalctl -u kizuna-dashboard -n 50 --no-pager" >&2
+    if [ "$HAS_SYSTEMD" -eq 1 ]; then
+      echo " Logs: journalctl -u kizuna-dashboard -u kizuna-eye-agent"
+    else
+      echo " systemd was not detected; start services manually if needed."
     fi
-    if [ "$AGENT_OK" -ne 1 ]; then
-      echo "WARNING: kizuna-eye-agent.service is not active." >&2
-      echo "  Check: journalctl -u kizuna-eye-agent -n 50 --no-pager" >&2
+    echo "================================================================"
+    if [ "$HAS_SYSTEMD" -eq 1 ]; then
+      if [ "$DASH_OK" -ne 1 ]; then
+        echo "WARNING: kizuna-dashboard.service is not active." >&2
+        echo "  Check: journalctl -u kizuna-dashboard -n 50 --no-pager" >&2
+      fi
+      if [ "$AGENT_OK" -ne 1 ]; then
+        echo "WARNING: kizuna-eye-agent.service is not active." >&2
+        echo "  Check: journalctl -u kizuna-eye-agent -n 50 --no-pager" >&2
+      fi
     fi
     echo ""
     ;;
