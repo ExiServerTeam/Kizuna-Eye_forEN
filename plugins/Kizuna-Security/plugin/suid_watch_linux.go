@@ -37,6 +37,7 @@ func (w *suidWatcher) start() error {
 	w.mu.Lock()
 	w.fd = fd
 	w.running = true
+	w.dirCapped = make(map[string]bool)
 	w.mu.Unlock()
 
 	for _, p := range w.paths {
@@ -223,7 +224,7 @@ func (w *suidWatcher) addTree(root string) {
 			return nil
 		}
 		depth := depthRelative(base, p)
-		if depth < 0 || depth > suidWatchMaxDepth {
+		if depth < 0 || depth > w.maxDepth {
 			return fs.SkipDir
 		}
 		w.addWatch(p)
@@ -232,6 +233,7 @@ func (w *suidWatcher) addTree(root string) {
 }
 
 func (w *suidWatcher) addWatch(dir string) {
+	root := watchRootFor(w.paths, dir)
 	w.mu.Lock()
 	if w.closing {
 		w.mu.Unlock()
@@ -240,6 +242,21 @@ func (w *suidWatcher) addWatch(dir string) {
 	if len(w.wdToPath) >= suidWatchMaxWatches {
 		w.capped = true
 		w.mu.Unlock()
+		return
+	}
+	// ルート毎の上限。1 本のルートが巨大なツリーで予算を食い潰すと、他の
+	// ルートの即時検知まで落ちるため、ルート単位で打ち切って通知する。
+	if root != "" && w.maxDirsPerRoot > 0 && !w.dirCapped[root] &&
+		w.countRootLocked(root) >= w.maxDirsPerRoot {
+		w.dirCapped[root] = true
+		limit := w.maxDirsPerRoot
+		w.mu.Unlock()
+		if w.logger != nil {
+			w.logger.Warn("Kizuna-Security %s: 監視ディレクトリ数の上限 (%d) に達しました（ルート: %s）。これより深い階層は周期走査でのみ検知します。", w.label, limit, root)
+		}
+		if w.dirCapFn != nil {
+			w.dirCapFn(root, limit)
+		}
 		return
 	}
 	fd := w.fd

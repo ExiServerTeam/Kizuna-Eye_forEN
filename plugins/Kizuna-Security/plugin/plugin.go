@@ -439,10 +439,13 @@ func (p *SecurityPlugin) Configure(config interface{}) error {
 	if cfg.FIMWatch && len(cfg.FIMWatchPaths) > 0 {
 		fimDir = NewFIMDirWatcher(cfg.FIMWatchPaths, cfg.FIMWatchIgnore, cfg.FIMWatchBaselinePath,
 			cfg.FIMWatchInterval, cfg.FIMWatchMaxFiles, cfg.FIMWatchMaxSizeKB,
-			p.logger, mon.emit, readChainKey(cfg.ChainKeyPath))
+			p.logger, mon.emit, readChainKey(cfg.ChainKeyPath),
+			WithFIMDirMaxDepth(cfg.FIMWatchMaxDepth))
 		fimDir.SetLang(cfg.Language)
 		// label はログの識別子（SUID 監視と区別する）。
-		fimWatch = newInotifyWatcher(cfg.FIMWatchPaths, "FIM", p.logger, fimDir.HandleChanges)
+		fimWatch = newInotifyWatcher(cfg.FIMWatchPaths, "FIM", p.logger, fimDir.HandleChanges,
+			withMaxDepth(cfg.FIMWatchMaxDepth),
+			withMaxDirsPerRoot(cfg.FIMWatchMaxDirs, fimDir.WarnWatchDirs))
 	}
 
 	p.mu.Lock()
