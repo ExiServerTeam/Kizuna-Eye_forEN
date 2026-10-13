@@ -43,6 +43,13 @@ type smartCache struct {
 	lastCheck time.Time
 	available bool
 	checked   bool
+	// emptyStreak/emptyWarned surface a silent S.M.A.R.T read failure once.
+	// `smartctl --scan` succeeds even without the capability needed for ATA
+	// passthrough, so the availability probe alone cannot tell "works" from
+	// "every real read is denied". The reliable signal is a device that
+	// returns no data at all.
+	emptyStreak int
+	emptyWarned bool
 }
 
 // smartEntry is the cached S.M.A.R.T data for one block device.
@@ -90,6 +97,27 @@ func (s *smartCache) markChecked() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastCheck = time.Now()
+}
+
+// recordResult records whether a S.M.A.R.T read produced data and reports
+// whether the caller should emit a one-time warning. ok=false increments a
+// streak; the warning fires once per streak and re-arms after any success, so
+// a permanently broken read warns once instead of on every interval, while a
+// later recurrence is still reported.
+func (s *smartCache) recordResult(ok bool) (warn bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ok {
+		s.emptyStreak = 0
+		s.emptyWarned = false
+		return false
+	}
+	s.emptyStreak++
+	if !s.emptyWarned {
+		s.emptyWarned = true
+		return true
+	}
+	return false
 }
 
 // smartctlOnce/smartctlPrefix memoize how to invoke smartctl.
@@ -406,8 +434,11 @@ func (m *SystemModule) Init(ctx context.Context) error {
 	m.cacheCPUModel()
 
 	if m.smart.checkAvailable() {
+		// "Detected" must not claim "collecting": smartctl --scan succeeds
+		// even when every real read is denied (the A-4 capability trap). The
+		// authoritative signal is emitted from the collection path below.
 		if m.logger != nil {
-			m.logger.Info("smartctl 検出: ディスクS.M.A.R.T 情報を取得します")
+			m.logger.Info("smartctl 検出: ディスクS.M.A.R.T の取得を試行します")
 		}
 	} else {
 		// Distinguish "not installed" from "installed but every read fails".
@@ -668,6 +699,12 @@ func (m *SystemModule) updateStatus() {
 				}
 				if e, ok := m.smart.get(blockDev); ok {
 					se = e
+					// An entry with no health string means the read produced
+					// nothing (permission denied, unsupported device). Surface
+					// it once instead of showing an empty S.M.A.R.T silently.
+					if m.smart.recordResult(e.health != "") && m.logger != nil {
+						m.logger.Warn("ディスク %s の S.M.A.R.T を取得できません（権限不足の可能性。agent に CAP_SYS_RAWIO が必要です）", blockDev)
+					}
 				}
 			}
 
