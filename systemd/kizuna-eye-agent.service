@@ -17,6 +17,12 @@
 #     「Read Device Identity failed: Operation not permitted」で失敗し、
 #     ディスク健康状態・温度・書込量・通電時間（設計書 4.2 / 4.3）が
 #     無言で欠落していた。CAP_SYS_RAWIO を併せて付与すると PASSED が読める。
+#   - CAP_NET_ADMIN は Kizuna-Security の自動 IP ブロック (block_mode=enforce)
+#     に必要。この unit は NoNewPrivileges=yes なので sudo は必ず失敗する
+#     （"The no new privileges flag is set" を実測で確認）。sudo 依存のままだと
+#     enforce を有効にしても攻撃時に初めてブロックが失敗していた。
+#     blocker は firewall バイナリを直接実行する経路を先に試し、実測で
+#     kizuna-eye が `nft add` に成功することを確認済み。
 #
 # 前提（systemd/migrate-agent-user.sh が作る）:
 #   - ユーザー kizuna-eye (system/nologin, home /var/lib/kizuna-eye)
@@ -65,9 +71,10 @@ ExecStart=__BIN__/agent_linux -config __DATA__/agent_config.json -modules __DATA
 # /etc/shadow 等を読みつつ、agent プロセス自体は非 root のまま。
 # CAP_DAC_READ_SEARCH: DAC を迂回した読み取り（/etc/shadow, crontabs）。
 # CAP_SYS_RAWIO      : S.M.A.R.T の ATA パススルー（smartctl の SG_IO）。
-# どちらも最小限で、書き込み系の権限は与えない。
-AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO
+# CAP_NET_ADMIN      : 自動 IP ブロック（nft / iptables / firewalld の操作）。
+# いずれも最小限で、汎用の root 権限は与えない。
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_RAWIO CAP_NET_ADMIN
 NoNewPrivileges=yes
 # ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
 ProtectSystem=strict

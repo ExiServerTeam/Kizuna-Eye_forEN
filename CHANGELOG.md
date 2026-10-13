@@ -13,9 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）
 
 ### Changed
+- 通知チャンネルの webhook が example のプレースホルダのまま有効な場合、保存時は検証エラー、ロード/実行時は警告してスキップする（Discord が HTTP 400 を返し続け、通知が一度も届かないまま再試行ストームになるのを防ぐ）
+- `build-all.sh` を追加。共有パッケージ（`pkg/module` / `pkg/status` / `pkg/fsutil` 等）を変更した際に、host と全プラグインを一括でビルド・署名・配置する（片方だけ更新すると ABI 不一致で全プラグインがロード不能になる事故の恒久対策）
 - プラグイン（モジュール）を本体リポジトリに同梱しない方針に変更。Kizuna-Security のソースは本体リポジトリ内 `plugins/Kizuna-Security/` から撤去し、各モジュール側（`/samba/share/Kizuna-Security` 等）で管理する。`install.sh` / `update.sh` / `scripts/build-plugin.sh` のプラグインソース既定パスを廃止し、`KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` を指定したときのみ扱う opt-in に統一（マシン固有の絶対パスを埋め込まない）。`go.work` のプラグイン参照と `.gitignore` の plugins 固有行も削除
 
 ### Fixed
+- 隔離 agent（A-4: 専用ユーザー + `NoNewPrivileges=yes`）で S.M.A.R.T が無言で欠落していた問題を修正。実測で `CAP_DAC_READ_SEARCH` だけでは `smartctl` の ATA パススルーが `Operation not permitted` になり、ディスク健康状態・温度・書込量・通電時間が取得できていなかった。unit に `CAP_SYS_RAWIO` を追加し、実際に読み取れたかを起動時と収集時に確認して、失敗する場合は一度だけ警告する（`smartctl --scan` は権限が無くても成功するため可用性判定に使えなかった）
+- `block_mode=enforce` の自動 IP ブロックが `NoNewPrivileges=yes` で必ず失敗していた問題を修正。sudo は no-new-privileges 下で確実に拒否される（実測: `sudo -n true` が `status=1/FAILURE`）ため、firewall 操作は対象バイナリを直接実行する経路を先に試し、失敗時のみ `sudo -n` にフォールバックする。unit に `CAP_NET_ADMIN` を追加（実測で kizuna-eye が `nft add` に成功）。起動時に firewall へ到達できるかを確認し、enforce なのに操作できない場合は警告する
+- `apt`（.deb）経路で特権ヘルパーが導入されず、ワンクリック対処が全て失敗していた問題を修正。`.deb` に `kizuna-action.sh` / `kizuna-cron-read.sh` を同梱し、`postinst` で `/usr/local/bin` へ配置して sudoers（`visudo -cf` 検証付き）を生成、`prerm`/`postrm` で確実に除去する
+- ダッシュボード API がログの書式キーを書式文字列として使い、ログに `%!(EXTRA ...)` が混入していた問題を修正（`pkg/logger` の `LogInfo`/`LogWarn`/`LogError`/`LogDebug` がカタログ値を描画する）。ja/en カタログのキー一致を Go テストで固定
+- `plugins` の署名検証を `require_signature=false` でも行うよう修正。従来は鍵が設定されていても検証自体が走らず、正しく署名された純正プラグインまで `origin=third_party`（赤アラート・未検証バッジ・sandbox iframe）になっていた。origin はファイルの性質として判定する
+- プラグイン署名ファイル（`.so.sig`）と秘密鍵の書き込みを symlink 非追従に（`plugin-sign -gen-key` は `O_EXCL` / atomic、`pluginsig.SignFile` は `fsutil.WriteFileAtomic`）
+- モジュールの `type` 変更（`plugin` 以外へ）を admin 限定に。agent がロードをスキップするため、無効化と同じ保護能力の変更にあたる
+- `/api/metrics` が public viewer にプロセス一覧・S.M.A.R.T（health/temp/mount）を開示していた問題を修正（`/api/status` と同じサニタイズを適用）
+- `plugins.require_signature=true` かつ `public_key_file` 未設定の設定を API が保存でき、次回起動でサービスが fail-closed 停止していた問題を修正（保存時に 400 で拒否）
 - EN モードでアラート履歴が日本語のままだった問題を修正。ダッシュボード自身が生成するアラート（メモリ/ストレージ/CPU温度/ディスクS.M.A.R.T/Agent切断・復帰・未接続、プラグイン監査、認証イベント）に英語文言が無く、`title_en`/`message_en` が空だった。`notify.Alert` に `TitleEN`/`MessageEN` を追加し、履歴保存時に詳細または Alert 本体の EN を採用（`firstNonEmpty`）。監査/認証フックも EN 詳細を渡すよう拡張。これで UI 言語に応じて `pickLocalized` が英語を表示する（Kizuna-Security のイベントは元々 EN 付き）
 - ダッシュボードのモジュールステータス（プラグインカード）が点滅して見える問題を修正。毎秒の status 更新のたびに `renderPluginList` が `innerHTML` を差し替えてカード DOM を作り直し、CSS アニメーション（pulse 等）がリセットされていた。生成 HTML が前回と同一なら書き換えないようにし、ホバー（`translateY(-2px)`）などの見た目は維持する
 - モジュール管理画面がロード失敗を反映していなかった問題を修正。Agent の `/api/plugin-runtime`（および WS `module_status`）を読み、`status=failed` のモジュールは「有効」ではなく赤い「読み込み失敗」バッジと失敗理由を表示する（従来は is_backup=false を「監視中」と誤表示していた）
