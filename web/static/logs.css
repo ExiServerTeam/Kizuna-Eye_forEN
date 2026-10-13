@@ -253,10 +253,13 @@
         flex: 0 0 auto;
     }
 
+    /* 操作群（行数・表示・自動更新・再読み込み）はスマホでは
+       次の行に回し、中央揃えにする。左寄せだと画面左に偏って
+       バランスが悪い（実機のスマホで指摘）。 */
     .log-toolbar-ops {
         margin-left: 0;
         width: 100%;
-        justify-content: flex-start;
+        justify-content: center;
     }
 
     .log-toolbar-ops .btn-secondary,
