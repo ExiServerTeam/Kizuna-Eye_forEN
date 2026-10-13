@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+umask 077  # New files: 0600/0700 (owner-executable binaries)
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 BIN_DIR="/opt/kizuna-eye/bin"

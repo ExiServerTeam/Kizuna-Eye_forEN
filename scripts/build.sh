@@ -1,6 +1,7 @@
 #!/bin/bash
 # Kizuna-Eye ビルドスクリプト（build.sh と同等。リポジトリ直下から実行）
 set -e
+umask 077  # New files: 0600/0700 (owner-executable binaries)
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
