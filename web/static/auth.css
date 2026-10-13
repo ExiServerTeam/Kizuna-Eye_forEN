@@ -347,7 +347,11 @@ html,
 body {
     width: 100%;
     max-width: 100%;
-    overflow-x: hidden;
+}
+
+/* overflow-x:hidden は position:sticky を無効化するため clip を使う。 */
+body {
+    overflow-x: clip;
 }
 
 /* カードは画面幅を超えない。 */
