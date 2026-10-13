@@ -30,14 +30,21 @@ func TestVerifyUpdateScriptRejectsGroupWritable(t *testing.T) {
 	posixOnly(t)
 	dir := t.TempDir()
 	p := filepath.Join(dir, "safe_update.sh")
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o775); err != nil { // group-writable
+	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Chmod explicitly: os.WriteFile applies mode &^ umask, so with a umask
+	// of 022 a 0o775 create yields 0o755 (not group-writable) and the test
+	// would pass trivially (or fail on a different umask). Forcing the mode
+	// makes the assertion independent of the ambient umask.
+	if err := os.Chmod(p, 0o775); err != nil { // group-writable
 		t.Fatal(err)
 	}
 	if _, err := newUpdaterWithScript(p).verifyUpdateScript(); err == nil {
 		t.Fatal("group-writable update script must be refused")
 	}
 
-	if err := os.WriteFile(p, []byte("#!/bin/sh\n"), 0o666); err != nil { // other-writable
+	if err := os.Chmod(p, 0o666); err != nil { // other-writable
 		t.Fatal(err)
 	}
 	if _, err := newUpdaterWithScript(p).verifyUpdateScript(); err == nil {

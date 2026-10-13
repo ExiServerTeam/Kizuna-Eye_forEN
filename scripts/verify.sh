@@ -168,7 +168,7 @@ LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/ap
 
 build_one() {
     local out="$1" pkg="$2"
-    if CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/$out" "$pkg" >/tmp/ke_build.log 2>&1; then
+    if CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$out" "$pkg" >/tmp/ke_build.log 2>&1; then
         ok "build $out"
     else
         ng "build $out (詳細: /tmp/ke_build.log)"; cat /tmp/ke_build.log
@@ -250,10 +250,36 @@ check_json() {
     fi
 }
 
+# check_json_empty_ok: like check_json, but an empty array / null body is
+# also accepted. Used for endpoints that are legitimately empty on a fresh
+# install (e.g. /api/modules before any module is added).
+check_json_empty_ok() {
+    local path="$1" key="$2"
+    local resp body code
+    resp="$(curl -s -w '\n%{http_code}' "$BASE_URL$path")"
+    code="$(printf '%s' "$resp" | tail -n1)"
+    body="$(printf '%s' "$resp" | sed '$d')"
+    if [ "$code" = "401" ]; then
+        skip "GET $path (401: 認証必須。auth.enabled=true)"
+        return
+    fi
+    if printf '%s' "$body" | grep -q "$key"; then
+        ok "GET $path ($key)"
+        return
+    fi
+    # A fresh install has no modules: the response is [] or null (or an
+    # object with an empty list). Accept that as a valid, non-error result.
+    if [ "$code" = "200" ] && { [ "$body" = "[]" ] || [ "$body" = "null" ]; }; then
+        ok "GET $path (空: モジュール未登録は正常)"
+        return
+    fi
+    ng "GET $path ($key が見つからない, HTTP $code)"
+}
+
 check_json /api/status        'cpu_usage'
 check_json /api/history       'samples'
 check_json /api/alerts        'alerts'
-check_json /api/modules       'name'
+check_json_empty_ok /api/modules 'name'
 check_json /api/version       'version'
 check_json /api/alert-config  'memory_warn_pct'
 check_json /api/logs?type=agent\&lines=5 ''

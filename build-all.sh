@@ -105,10 +105,10 @@ if [ -n "$SEC_PLUGIN_DIR" ] || [ -n "$LITE_PLUGIN_DIR" ]; then
 fi
 
 mkdir -p "$BIN_DIR"
-CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
-CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
-CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
-CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 log "    host OK (version=${VERSION})"
 
 build_plugin() {
@@ -127,7 +127,7 @@ build_plugin() {
     # shared-package build IDs, breaking plugin.Open against a workspace-built
     # host. When no combined workspace was created (no plugin dirs), fall back
     # to the plugin's own module (GOWORK=off).
-    ( cd "$dir" && GOWORK=${WORKFILE:-off} CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$PLUGIN_LDFLAGS" -buildmode=plugin -o "$name.so" . )
+    ( cd "$dir" && GOWORK=${WORKFILE:-off} CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$PLUGIN_LDFLAGS" -buildmode=plugin -o "$name.so" . )
     if [ ! -r "$SIGNING_KEY" ]; then
         log "WARN signing key not readable ($SIGNING_KEY); leaving $name.so unsigned"
     else

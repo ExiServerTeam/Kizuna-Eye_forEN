@@ -34,19 +34,19 @@ build: agent dashboard plugin-inspect plugin-sign
 
 agent:
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/agent_linux ./cmd/agent
+	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build -buildvcs=false $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/agent_linux ./cmd/agent
 
 dashboard:
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/dashboard_linux ./cmd/dashboard
+	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build -buildvcs=false $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/dashboard_linux ./cmd/dashboard
 
 plugin-inspect:
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/plugin-inspect ./cmd/plugin-inspect
+	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build -buildvcs=false $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/plugin-inspect ./cmd/plugin-inspect
 
 plugin-sign:
 	mkdir -p $(BIN_DIR)
-	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/plugin-sign ./cmd/plugin-sign
+	CGO_ENABLED=1 GOTOOLCHAIN=$(PINNED_GO) go build -buildvcs=false $(TRIMPATH) -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/plugin-sign ./cmd/plugin-sign
 
 test:
 	go test ./...
