@@ -7,6 +7,14 @@ import (
 	"syscall"
 )
 
+// openAppendNoFollow は最終コンポーネントのシンボリックリンクを辿らずに
+// path を追記用に開く。O_NOFOLLOW が無いと、ログディレクトリにシンボリックリンクを
+// 作れる（またはファイルを差し替えられる）攻撃者が、dashboard に任意ファイルへ
+// 偽造エントリを追記させ得る（G-6）。
+//
+// perm はファイル作成時（O_CREATE）にのみ適用される。呼び出し側は
+// fsutil.SharedFileMode を渡し、狭く共有された宛先（A-4）が移行で与えた
+// グループ読み取りを保ち、所有者のみで再作成されないようにする。
 // openAppendNoFollow opens path for appending without following a symlink at
 // the final component. Without O_NOFOLLOW, an attacker who can create a symlink
 // in the log directory (or replace the file with one) could make the dashboard

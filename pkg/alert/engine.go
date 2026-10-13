@@ -12,6 +12,7 @@ import (
 )
 
 // ============================================================
+// Config はアラートエンジンの設定だ。
 // Config is the alert engine configuration.
 // ============================================================
 type Config struct {
@@ -22,14 +23,15 @@ type Config struct {
 	CPUTempWarn      float64
 	CPUTempCritical  float64
 
-	HoldDuration time.Duration // how long an anomaly must persist
-	RecoveryHold time.Duration // normal duration required to recover (hysteresis)
-	Cooldown     time.Duration // cooldown before re-notifying the same alert
-	AgentTimeout time.Duration // agent timeout
+	HoldDuration time.Duration // 異常が持続すべき時間 / how long an anomaly must persist
+	RecoveryHold time.Duration // 復旧に必要な正常継続時間（ヒステリシス） / normal duration required to recover (hysteresis)
+	Cooldown     time.Duration // 同一アラートの再通知前のクールダウン / cooldown before re-notifying the same alert
+	AgentTimeout time.Duration // agent タイムアウト / agent timeout
 
 	NotifyRecovery bool
 }
 
+// metricState はメトリクス単位の状態だ。
 // metricState is the per-metric state.
 type metricState struct {
 	startedAt    time.Time
@@ -39,6 +41,7 @@ type metricState struct {
 }
 
 // ============================================================
+// Engine はアラートを検知し通知を送る。
 // Engine detects alerts and sends notifications.
 // ============================================================
 type Engine struct {
@@ -52,6 +55,9 @@ type Engine struct {
 	agentOnline        bool
 	agentOfflineReason string
 	agentLastSeen      time.Time
+	// agentOfflineNotified は agent オフライン通知を最後に送った時刻だ。
+	// 接続がフラップする場合を抑制し、切断/復帰のペアが通知チャンネルを
+	// スパムしないようにする。
 	// agentOfflineNotified is the last time an agent-offline notification was
 	// sent. It throttles a flapping connection so 切断/復帰 pairs do not spam
 	// the notification channels.
@@ -70,6 +76,7 @@ func NewEngine(cfg Config, notifier *notify.Manager, log *logger.Logger) *Engine
 	}
 }
 
+// Alerts はアラート履歴を新しい順で返す。
 // Alerts returns the alert history, newest first.
 func (e *Engine) Alerts() []HistoryEntry {
 	if e.history == nil {
@@ -78,6 +85,7 @@ func (e *Engine) Alerts() []HistoryEntry {
 	return e.history.List()
 }
 
+// Snapshot は現在の閾値を返す（スレッドセーフ）。
 // Snapshot returns the current thresholds (thread-safe).
 func (e *Engine) Snapshot() Config {
 	e.mu.Lock()
@@ -85,10 +93,12 @@ func (e *Engine) Snapshot() Config {
 	return e.cfg
 }
 
+// UpdateConfig は実行時に調整可能な閾値を差し替える（スレッドセーフ）。
 // UpdateConfig replaces runtime-adjustable thresholds (thread-safe).
 func (e *Engine) UpdateConfig(c Config) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	// API 経由で編集できない時間設定は保持する。
 	// Preserve durations that are not editable via the API.
 	old := e.cfg
 	if c.HoldDuration == 0 {
@@ -106,11 +116,15 @@ func (e *Engine) UpdateConfig(c Config) {
 	e.cfg = c
 }
 
+// EnableHistoryPersistence は過去の履歴を読み込み、新規エントリを永続化する。
 // EnableHistoryPersistence loads prior history and persists new entries.
 func (e *Engine) EnableHistoryPersistence(path string) {
 	e.EnableHistoryPersistenceKeyed(path, nil)
 }
 
+// EnableHistoryPersistenceKeyed は EnableHistoryPersistence と同様だが、
+// 永続化する各行を指定の HMAC 鍵で署名する。nil/空の鍵は従来の未署名動作を
+// 維持する（完全に後方互換）。
 // EnableHistoryPersistenceKeyed is like EnableHistoryPersistence but also
 // signs each persisted line with the given HMAC key. A nil/empty key keeps
 // the previous unsigned behavior (fully backward compatible).
@@ -128,6 +142,9 @@ func (e *Engine) EnableHistoryPersistenceKeyed(path string, sigKey []byte) {
 	e.history.SetPersistence(path)
 }
 
+// ClearAlerts はアラート履歴レコードをすべて除去する（メモリとファイル）。
+// メトリクス単位の発火状態はリセットしないため、履歴をクリアしても
+// 重複通知は発生しない。
 // ClearAlerts removes every alert history record (memory and file).
 // It does not reset the per-metric fired state, so clearing the history
 // never triggers a duplicate notification.
@@ -138,6 +155,8 @@ func (e *Engine) ClearAlerts() error {
 	return e.history.Clear()
 }
 
+// FindAlertByID は指定 ID のアラートのコピーを返し、一致が無ければ nil を返す。
+// ワンクリック対処 API（タスク2）が ID を対処対象アラートへ解決するのに使う。
 // FindAlertByID returns a copy of the alert with the given ID, or nil when
 // no entry matches. It is used by the one-click action API (task 2) to
 // resolve an ID to the alert it should act on.
@@ -154,6 +173,8 @@ func (e *Engine) FindAlertByID(id string) *HistoryEntry {
 	return nil
 }
 
+// RecordAction はワンクリック対処の結果を記述する監査エントリをアラート履歴へ追記する。
+// エントリは元アラートを type/title で参照し、UI がグループ化できるようにする。
 // RecordAction appends an audit entry to the alert history describing the
 // outcome of a one-click remediation. The entry references the original
 // alert by type/title so the UI can group them.
@@ -187,6 +208,10 @@ func (e *Engine) RecordAction(a *HistoryEntry, action, target, result string) {
 	})
 }
 
+// ReportAlert は外部供給のアラートを履歴に記録し通知する。
+// 独自のイベントを検知するプラグイン（例: security）が使う。
+// source は出所を識別し、trusted は dashboard 自身が生成した（偽造可能な
+// ログ行に由来しない）アラートのみ true だ。
 // ReportAlert records an externally supplied alert to history and notifies.
 // Used by plugins (e.g. security) that detect their own events.
 // source identifies the origin; trusted is true only for alerts the
@@ -195,6 +220,9 @@ func (e *Engine) ReportAlert(a *notify.Alert, source string, trusted bool) {
 	e.dispatch(a, source, trusted)
 }
 
+// ReportAlertDetail は ReportAlert と同様だが、アラート詳細ビュー（タスク1）が使う
+// 任意の詳細フィールド（command、検知ロジックの位置、remediation、関連ログ行）も
+// 保存する。
 // ReportAlertDetail is like ReportAlert but also stores the optional detail
 // fields (command, detection logic location, remediation, related log line)
 // used by the alert-detail view (task 1).
@@ -218,6 +246,9 @@ func (e *Engine) ReportAlertDetail(a *notify.Alert, source string, trusted bool,
 	}
 }
 
+// AlertDetail はアラート詳細ビューに表示する任意フィールドを運ぶ。
+// alert.HistoryEntry の詳細フィールドを鏡写しにし、呼び出し側が history パッケージを
+// 直接インポートしなくて済むようにする。
 // AlertDetail carries the optional fields shown in the alert-detail view.
 // It mirrors the detail fields of alert.HistoryEntry so callers do not need
 // to import the history package directly.
@@ -227,11 +258,13 @@ type AlertDetail struct {
 	DetectLine  int
 	Remediation string
 	RelatedLog  string
+	// TitleEN / MessageEN は英語レンダリングを運ぶ（タスク9）。
 	// TitleEN / MessageEN carry the English rendering (task 9).
 	TitleEN   string
 	MessageEN string
 }
 
+// dispatch は履歴に記録してから通知する。
 // dispatch records to history and then notifies.
 func (e *Engine) dispatch(a *notify.Alert, source string, trusted bool) {
 	if a == nil {
@@ -246,6 +279,7 @@ func (e *Engine) dispatch(a *notify.Alert, source string, trusted bool) {
 }
 
 // ============================================================
+// OnStatus は agent から新しいデータが届いたときに呼ばれる。
 // OnStatus is called when new data arrives from the agent.
 // ============================================================
 func (e *Engine) OnStatus(s *status.SystemStatus) {
@@ -287,6 +321,7 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 		freeBytes = s.DiskTotal - s.DiskUsed
 	}
 	diskFreePct := 100.0 - s.DiskPercent
+	// わずかに範囲外の DiskPercent（丸め、特殊ドライバ）に対してクランプする。
 	// Clamp against slightly out-of-range DiskPercent (rounding, odd drivers).
 	if diskFreePct < 0 {
 		diskFreePct = 0
@@ -315,16 +350,21 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 }
 
 // ============================================================
+// CheckAgentTimeout は定期的に呼ばれる。
 // CheckAgentTimeout is called periodically.
 // ============================================================
 func (e *Engine) CheckAgentTimeout() {
 	e.mu.Lock()
 	if e.agentLastSeen.IsZero() {
+		// agent はまだ一度も見ていない。タイムアウト対象が無い。
 		// The agent has never been seen yet; nothing to time out.
 		e.mu.Unlock()
 		return
 	}
 
+	// 既にオフラインの場合: ここは以前 early return して二度と発火しなかった経路だ。
+	// そのため切断し続ける agent はアラートを 1 回だけ出して沈黙していた。
+	// クールダウンで再アラートし、長期障害が履歴と通知に出続けるようにする。
 	// Already offline: this is the path that used to return early and never
 	// fire again, so an agent that stayed disconnected produced exactly one
 	// alert and then silence. Re-alert on the cooldown so a long outage keeps
@@ -374,11 +414,14 @@ func (e *Engine) CheckAgentTimeout() {
 		return
 	}
 	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。
+	// Do not notify during the cooldown. Clear reason so the recovery
+	// notification is also suppressed.
 	e.agentOfflineReason = ""
 	e.mu.Unlock()
 }
 
 // ============================================================
+// OnAgentDisconnect は agent の WebSocket が落ちたときに呼ばれる。
 // OnAgentDisconnect is called when the agent's WebSocket drops.
 // ============================================================
 func (e *Engine) OnAgentDisconnect() {
@@ -405,10 +448,15 @@ func (e *Engine) OnAgentDisconnect() {
 		return
 	}
 	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。
+	// Do not notify during the cooldown. Clear reason so the recovery
+	// notification is also suppressed.
 	e.agentOfflineReason = ""
 	e.mu.Unlock()
 }
 
+// allowAgentOfflineNotifyLocked は agent オフライン通知を今送ってよいかを返す。
+// 設定されたクールダウンでフラップする接続を抑制し、切断/復帰のペアで
+// チャンネルがスパムされないようにする。呼び出し側は e.mu を保持すること。
 // allowAgentOfflineNotifyLocked reports whether an agent-offline notification
 // may be sent now. It throttles a flapping connection using the configured
 // cooldown so channels are not spammed with 切断/復帰 pairs.
@@ -422,6 +470,7 @@ func (e *Engine) allowAgentOfflineNotifyLocked(now time.Time) bool {
 }
 
 // ============================================================
+// 共通ヘルパー
 // Common helpers
 // ============================================================
 func levelRank(l notify.Level) int {
@@ -463,6 +512,8 @@ func shouldRecover(st *metricState, recoveryHold time.Duration, now time.Time) b
 	return now.Sub(st.normalSince) >= recoveryHold
 }
 
+// iconForLevel は通知レベルの代表的な絵文字を返す。
+// Discord / Slack / Telegram などの通知で使う。
 // iconForLevel returns a representative emoji for a notification level.
 // Discord / Slack / Telegram などの通知で使う。
 func iconForLevel(level notify.Level) string {
@@ -642,12 +693,16 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 // ============================================================
 // CPU temperature
 // ============================================================
+// minValidCPUTemp はセンサ欠落（0）と実際の低値とを区別する。
+// この値以下は利用不可として扱う。
 // minValidCPUTemp distinguishes a missing sensor (0) from a real low value.
 // Values at or below this are treated as unavailable.
 const minValidCPUTemp = 25.0
 
 func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 	if tempC <= minValidCPUTemp {
+		// センサは利用不可（0）か、ありえない低値を報告している。
+		// 発火状態をクリアし、後日の復旧が固まらないようにする。
 		// The sensor is unavailable (0) or reports an implausible low value.
 		// Clear any fired state so a later recovery does not get stuck.
 		st := e.getState("cpu_temp")
@@ -801,6 +856,7 @@ func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.
 }
 
 // ============================================================
+// ヘルパー
 // Helpers
 // ============================================================
 func (e *Engine) getState(key string) *metricState {
@@ -822,6 +878,8 @@ func formatStorage(b uint64) string {
 	case b >= GB:
 		return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
 	default:
+		// ほぼ満杯のディスクこそアラートが重要なときだ。0 に丸められた GB 値
+		// （例: "0.4 GB"）ではなく MB で表示する。
 		// A nearly full disk is exactly when the alert matters, so show MB
 		// instead of a rounded-to-zero GB value (e.g. "0.4 GB").
 		return fmt.Sprintf("%.0f MB", float64(b)/float64(MB))
