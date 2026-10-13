@@ -256,12 +256,18 @@ func DefaultConfig() *SecurityConfig {
 		// 自作の読み取り専用ヘルパー（cronSudoHelper）はポーリングごとに sudo で
 		// 実行されるため既定で通知対象外にする（monitor.go は設定に関わらず
 		// 常にこのヘルパーを無視する）。
-		SudoIgnoreCommands:     []string{cronSudoHelper, "/usr/sbin/smartctl", "smartctl"},
-		ChainKeyPath:           "/samba/share/Kizuna-Eye/keys/chain.key",
+		SudoIgnoreCommands: []string{cronSudoHelper, "/usr/sbin/smartctl", "smartctl"},
+		// These defaults are relative to the agent's working directory, like
+		// the other state files above (./logs/...). Absolute paths used to be
+		// hardcoded here for one specific deployment, which made a fresh
+		// install create the chain key outside the install directory.
+		// install.sh / migrate-agent-user.sh / the .deb write their real
+		// (absolute) paths into modules.json.
+		ChainKeyPath:           "./keys/chain.key",
 		IntegrityCheckInterval: 300,
-		AlertHistoryPath:       "/samba/share/Kizuna-Eye/logs/alert_history.jsonl",
+		AlertHistoryPath:       "./logs/alert_history.jsonl",
 		AlertHistoryStatePath:  "./logs/kizuna-security-alertstate.json",
-		AlertHistoryKeyPath:    "/samba/share/Kizuna-Eye/keys/alert_history.key",
+		AlertHistoryKeyPath:    "./keys/alert_history.key",
 	}
 }
 

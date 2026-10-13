@@ -16,7 +16,7 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 )
 
-// このリポジトリ内の配置（plugins/Kizuna-Security/plugin）から本モジュールの
-// ルートへは3階層上。配備版（/samba/share/Kizuna-Security/plugin）は2階層上で、
-// パスだけが配置ごとに異なる（.go ファイルは同一）。
+// このリポジトリ内の配置（plugins/Kizuna-Security/plugin）から本体モジュールの
+// ルート（go.mod のあるディレクトリ）へは3階層上。ソースを別の場所へ複製した
+// 場合は、この相対パスだけを配置に合わせて直す（.go ファイルは同一）。
 replace Kizuna-Eye => ../../..

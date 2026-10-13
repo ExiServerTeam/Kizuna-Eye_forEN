@@ -31,7 +31,7 @@
 #   sudo systemd/migrate-agent-user.sh [旧ユーザー]
 #   （旧ユーザー省略時は sudo 実行者。状態ファイルの移行元）
 #   ログ方針を変えて再適用（冪等）:
-#   sudo A4_SECURITY_LOG_DIR=/samba/share/Kizuna-Eye/logs systemd/migrate-agent-user.sh user
+#   sudo A4_SECURITY_LOG_DIR=/path/to/Kizuna-Eye/logs systemd/migrate-agent-user.sh user
 #
 # 前提: systemd/kizuna-eye-agent.service が本リポジトリにあること。
 #       設定変更の共有のため、実行前に tmp/_a4_prep.sh を phase1 → phase2 →
@@ -97,7 +97,7 @@ msg() {
         "     agent を触らない（二重起動防止）。dashboard だけを指定する:") m="     do not touch it (prevents double start). Restart only the dashboard:" ;;
         "   - ダッシュボード GET /api/status とアラート/Discord 通知") m="   - Dashboard GET /api/status and alert/Discord notifications" ;;
         "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果）") m="   - The FIM permission INFO is gone (effect of CAP_DAC_READ_SEARCH)" ;;
-        "   - backup プラグインが /samba/share/CD へ書けること") m="   - The backup plugin can write to /samba/share/CD" ;;
+        "   - backup プラグインの書き込み先に agent が書けること（ReadWritePaths を確認）") m="   - The backup plugin can write to its target directory (check ReadWritePaths)" ;;
         "   - 検知ログ（group read なので sudo 不要）: ls -l "*) m="   - Detection log (group read, no sudo needed): ls -l ${m#   - 検知ログ（group read なので sudo 不要）: ls -l }" ;;
         "   - 状態ファイル（agent 専用）: sudo ls -l "*) m="   - State files (agent-only): sudo ls -l ${m#   - 状態ファイル（agent 専用）: sudo ls -l }" ;;
         "   - 共有設定が 0640 kizuna-eye であること: ls -l "*) m="   - Shared config is 0640 kizuna-eye: ls -l ${m#   - 共有設定が 0640 kizuna-eye であること: ls -l }" ;;
@@ -509,7 +509,7 @@ echo "       sudo -u $OLD_USER $DIR/stop.sh dashboard"
 echo "       sudo -u $OLD_USER $DIR/start.sh dashboard"
 echo "$(msg "   - ダッシュボード GET /api/status とアラート/Discord 通知")"
 echo "$(msg "   - FIM の権限 INFO が消えること（CAP_DAC_READ_SEARCH の効果）")"
-echo "$(msg "   - backup プラグインが /samba/share/CD へ書けること")"
+echo "$(msg "   - backup プラグインの書き込み先に agent が書けること（ReadWritePaths を確認）")"
 echo "$(msg "   - 検知ログ（group read なので sudo 不要）: ls -l $A4_SECURITY_LOG_DIR/kizuna-security.log")"
 echo "$(msg "   - 状態ファイル（agent 専用）: sudo ls -l $STATE_DIR")"
 echo "$(msg "   - 共有設定が 0640 kizuna-eye であること: ls -l $SRC_DATA/agent_config.json（modules.json は登録後に作成される）")"

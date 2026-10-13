@@ -233,11 +233,6 @@ func NewFileLoggerKeyed(path, keyPath string) (*FileLogger, error) {
 	return l, nil
 }
 
-// chainHash は鍵なしの SHA-256（後方互換・テスト用）。
-func chainHash(prevHash string, entry map[string]interface{}) (string, error) {
-	return chainHashKeyed(nil, prevHash, entry)
-}
-
 // chainHashKeyed は鍵があれば HMAC-SHA256、無ければ SHA-256 で
 // prevHash + canonical JSON を計算する。json.Marshal はキーをソートするので
 // 正規形は決定的になる。

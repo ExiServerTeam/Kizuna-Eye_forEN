@@ -29,8 +29,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-/opt/kizuna-eye/bin/plugins}"
 GO_REQUIRED="1.27.1"
-LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-/samba/share/Kizuna-Backup/Kizuna-Backup-LITE/plugin}"
-SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-/samba/share/Kizuna-Security/plugin}"
+# プラグインのソース位置。Security は本リポジトリ同梱なのでリポジトリ内を指す。
+# Kizuna-Backup LITE は別リポジトリのため既定では無効（使う場合のみ
+# KIZUNA_LITE_PLUGIN_DIR で場所を指定する）。
+LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-}"
+SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-$PWD/plugins/Kizuna-Security/plugin}"
 
 DO_INSTALL=1
 DO_BUILD=1

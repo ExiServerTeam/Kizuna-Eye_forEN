@@ -69,7 +69,11 @@ ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-ReadWritePaths=/var/lib/kizuna-eye /samba/share/Kizuna-Eye/logs /samba/share/CD
+# ReadWritePaths: /var/lib/kizuna-eye は移行後の状態・鍵、__DIR__/logs は
+# 未移行時のログ用。__DIR__ は install.sh / migrate-agent-user.sh / postinst.sh が
+# 実パスへ置換する。先頭の "-" は「パスが無くても起動を失敗させない」指定。
+# バックアップ等のプラグインが別の場所へ書き込む場合は、そのパスをここに追記する。
+ReadWritePaths=/var/lib/kizuna-eye -__DIR__/logs
 
 Restart=on-failure
 RestartSec=5

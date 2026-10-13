@@ -96,7 +96,7 @@ func stripKeyText(data []byte) []byte {
 		}
 		b.WriteString(line)
 	}
-	return []byte(b.String())
+	return b.Bytes()
 }
 
 // decodeBase64 tries the usual base64 alphabets.

@@ -24,6 +24,38 @@ const criticalSendWait = 5 * time.Second
 // enormous Discord embed (which would be rejected anyway).
 const batchMaxItems = 50
 
+// legacySendTimeout keeps the original 15s budget for a send when retries are
+// disabled, so an installation that never sets the retry keys behaves exactly
+// as before.
+const legacySendTimeout = 15 * time.Second
+
+// maxSendTimeout caps the per-send budget even with a large retry/backoff
+// configuration, so one unreachable webhook cannot hold a send slot forever.
+const maxSendTimeout = 2 * time.Minute
+
+// sendTimeoutFor returns how long a single Send may take: legacySendTimeout
+// plus the worst-case sum of the exponential backoff waits (1s, 2s, 4s, ...
+// capped at backoffMax). Without this, the 15s context cancels the retry loop
+// mid-backoff and the alert is lost even though retrying would have worked.
+func sendTimeoutFor(retries int, backoffMax time.Duration) time.Duration {
+	if retries <= 0 {
+		return legacySendTimeout
+	}
+	total := legacySendTimeout
+	wait := time.Second
+	for i := 0; i < retries; i++ {
+		if wait > backoffMax {
+			wait = backoffMax
+		}
+		total += wait
+		wait *= 2
+	}
+	if total > maxSendTimeout {
+		total = maxSendTimeout
+	}
+	return total
+}
+
 // ============================================================
 // Manager fans out notifications to multiple channels.
 // ============================================================
@@ -44,15 +76,19 @@ type Manager struct {
 	batchMu    sync.Mutex
 	batch      []*Alert
 	batchTimer *time.Timer
+
+	// sendTimeout is the per-send context budget (see sendTimeoutFor).
+	sendTimeout time.Duration
 }
 
 // NewManager creates a Manager.
 func NewManager(log *logger.Logger) *Manager {
 	return &Manager{
-		notifiers: make([]Notifier, 0),
-		log:       log,
-		enabled:   true,
-		sem:       make(chan struct{}, maxConcurrentSends),
+		notifiers:   make([]Notifier, 0),
+		log:         log,
+		enabled:     true,
+		sem:         make(chan struct{}, maxConcurrentSends),
+		sendTimeout: legacySendTimeout,
 	}
 }
 
@@ -78,14 +114,22 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 		return m
 	}
 
-	retries := cfg.DiscordMaxRetries
-	if retries < 0 {
-		retries = 0
+	// *int: an absent key means the default (5). Reading it as a plain int
+	// turned "key not set" into 0, which silently disabled every retry.
+	retries := defaultDiscordMaxRetries
+	if cfg.DiscordMaxRetries != nil {
+		retries = *cfg.DiscordMaxRetries
+		if retries < 0 {
+			retries = 0
+		}
 	}
 	backoffMax := cfg.DiscordBackoffMaxSec
 	if backoffMax <= 0 {
-		backoffMax = 60
+		backoffMax = defaultBackoffMaxSec
 	}
+	// Keep the per-send budget in step with the retry settings, so the
+	// context does not cancel the backoff it was configured to perform.
+	m.sendTimeout = sendTimeoutFor(retries, time.Duration(backoffMax)*time.Second)
 
 	for _, ch := range cfg.Channels {
 		if !ch.Enabled {
@@ -316,7 +360,11 @@ func (m *Manager) sendAsync(notifier Notifier, a *Alert) {
 				}
 			}
 		}()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		timeout := m.sendTimeout
+		if timeout <= 0 {
+			timeout = legacySendTimeout
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		if err := notifier.Send(ctx, a); err != nil {
 			if m.log != nil {

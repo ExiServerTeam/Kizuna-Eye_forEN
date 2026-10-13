@@ -102,7 +102,13 @@ export GOMEMLIMIT="${KIZUNA_GOMEMLIMIT:-64MiB}"
 
 # is_running <binary-name> -> 0 if running
 is_running() {
-    local name="$1" pidfile="$RUN_DIR/$name.pid"
+    # NOTE: $name must be assigned on its own line. The shell expands every
+    # argument before `local` runs, so a single combined
+    #   local name="$1" pidfile="$RUN_DIR/$name.pid"
+    # would expand $name from the caller/global scope (or empty), and this
+    # function would look at "$RUN_DIR/.pid" and never find the process.
+    local name="$1"
+    local pidfile="$RUN_DIR/$name.pid"
     [ -f "$pidfile" ] || return 1
     local pid; pid="$(cat "$pidfile" 2>/dev/null || true)"
     [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null

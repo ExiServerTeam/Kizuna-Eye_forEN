@@ -18,5 +18,8 @@ WorkingDirectory=__DIR__
 # (nohup した agent を含む) へ SIGTERM を送る。これが「起動2秒後に
 # シャットダウンシグナル受信」の原因だった。KillMode=none で systemd に
 # これらのプロセスを殺させない（従来の手動運用と同じ挙動に戻す）。
+# 補足: KillMode=none は systemd で非推奨（将来削除予定）。削除された環境では
+# KillMode=process（主プロセスのみが対象）へ置き換えると、nohup でデタッチした
+# agent/dashboard を巻き込まずに済む。
 KillMode=none
 ExecStart=__DIR__/systemd/kizuna-watchdog.sh

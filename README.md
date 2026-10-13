@@ -81,7 +81,7 @@ Go's `plugin` package requires the plugin and the host to agree on a **hash of e
 - `pkg/module` (shared plugin types / interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
 - `pkg/status` (shared types such as `SystemStatus`)
 
-Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the same source, e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into `plugins/` and restart the agent.
+Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the same source, e.g. `cd plugins/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into `plugins/` and restart the agent.
 
 ## Installation
 
@@ -164,6 +164,11 @@ Edit each file for your environment. The full example files (`*.example.json`) l
             "cpu_temp_warn_c": 70,
             "cpu_temp_critical_c": 85,
             "notify_recovery": true,
+            "discord_max_retries": 5,
+            "discord_backoff_max_sec": 60,
+            "batch_enabled": true,
+            "batch_window_sec": 5,
+            "batch_exclude_critical": true,
             "channels": [
                 {
                     "type": "discord",
@@ -173,6 +178,13 @@ Edit each file for your environment. The full example files (`*.example.json`) l
             ]
         }
     }
+
+Notification reliability: `discord_max_retries` (default 5, `0` disables) retries
+HTTP 429/5xx with exponential backoff capped by `discord_backoff_max_sec`
+(default 60s). `batch_enabled` groups alerts that arrive within
+`batch_window_sec` (default 5s) into one message so a burst does not trip the
+rate limit, while `batch_exclude_critical` (default true) still sends critical
+alerts immediately.
 
 `agent_config.json`:
 
@@ -269,7 +281,7 @@ Optionally implement `DisplayName()` to show a friendly name in the UI badge; ot
 
 ### Example plugin
 
-Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project).
+Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project). It lives in its own repository, so `install.sh` / `update.sh` skip it by default; set `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` when running them to build and deploy it together with the bundled Security plugin.
 
 ## Documentation
 

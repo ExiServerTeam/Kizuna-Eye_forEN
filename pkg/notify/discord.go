@@ -79,7 +79,7 @@ func (d *DiscordNotifier) Send(ctx context.Context, a *Alert) error {
 	backoff := time.Second
 	for {
 		attempt++
-		sendErr, retryAfter, retryable := d.postOnce(ctx, body)
+		retryAfter, retryable, sendErr := d.postOnce(ctx, body)
 		if sendErr == nil {
 			if attempt > 1 && d.logger != nil {
 				d.logger.Info("HTTP 429 リトライ後成功 [discord] (n=%d)", attempt-1)
@@ -150,36 +150,39 @@ func (d *DiscordNotifier) buildPayload(a *Alert) map[string]interface{} {
 // postOnce sends the request once and classifies the result:
 //   - retryable is true for HTTP 429 and 5xx (transient), false for other 4xx.
 //   - retryAfter is the parsed Retry-After header (0 when absent/invalid).
-func (d *DiscordNotifier) postOnce(ctx context.Context, body []byte) (err error, retryAfter time.Duration, retryable bool) {
+//
+// The error is the last result (Go convention) so it is never mistaken for a
+// classification value.
+func (d *DiscordNotifier) postOnce(ctx context.Context, body []byte) (retryAfter time.Duration, retryable bool, err error) {
 	req, rerr := http.NewRequestWithContext(ctx, http.MethodPost, d.webhookURL, bytes.NewReader(body))
 	if rerr != nil {
-		return fmt.Errorf("request build: %w", rerr), 0, false
+		return 0, false, fmt.Errorf("request build: %w", rerr)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, herr := d.client.Do(req)
 	if herr != nil {
 		// Network error: treat as transient (server may be unreachable).
-		return fmt.Errorf("http post: %w", herr), 0, true
+		return 0, true, fmt.Errorf("http post: %w", herr)
 	}
 	defer resp.Body.Close()
 	// Drain a little so the connection can be reused.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		return nil, 0, false
+		return 0, false, nil
 	}
 
 	// 429: honor Retry-After (seconds or HTTP-date).
 	if resp.StatusCode == http.StatusTooManyRequests {
-		return fmt.Errorf("discord returned status %d", resp.StatusCode), parseRetryAfter(resp.Header.Get("Retry-After")), true
+		return parseRetryAfter(resp.Header.Get("Retry-After")), true, fmt.Errorf("discord returned status %d", resp.StatusCode)
 	}
 	// 5xx: transient.
 	if resp.StatusCode >= 500 {
-		return fmt.Errorf("discord returned status %d", resp.StatusCode), 0, true
+		return 0, true, fmt.Errorf("discord returned status %d", resp.StatusCode)
 	}
 	// Other 4xx: permanent (bad payload, revoked webhook). Do not retry.
-	return fmt.Errorf("discord returned status %d", resp.StatusCode), 0, false
+	return 0, false, fmt.Errorf("discord returned status %d", resp.StatusCode)
 }
 
 // parseRetryAfter parses a Retry-After header value (seconds or HTTP-date).

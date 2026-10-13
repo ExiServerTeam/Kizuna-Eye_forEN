@@ -68,10 +68,9 @@ type rotatingWriter struct {
 
 func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWriter, error) {
 	// Logs contain usernames/IPs; keep the directory owner-only when we create
-	// it. The A-4 migration relaxes the *shared* log directory
-	// (/samba/share/Kizuna-Eye/logs) to setgid + group kizuna-eye so the
-	// isolated agent can keep writing there; that is a migration decision, not
-	// something this process should broaden on its own.
+	// it. A deployment may relax the *shared* log directory to setgid + group
+	// ownership so an isolated agent can keep writing there; that is an
+	// operator decision, not something this process should broaden on its own.
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}

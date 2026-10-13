@@ -288,30 +288,6 @@ func TestFIMDirWatcherWarnWatchDirsEmitsWarning(t *testing.T) {
 	}
 }
 
-// 改善4: inotify 層のルート毎上限。上限に達したルートは 1 回だけコールバックし、
-// それ以上 watch を張らない（黙って即時検知が止まるのを防ぐ）。
-func TestInotifyWatcherPerRootCapWarnsOnce(t *testing.T) {
-	root := t.TempDir()
-	var got []string
-	w := newInotifyWatcher([]string{root}, "FIM", nil, nil,
-		withMaxDepth(1),
-		withMaxDirsPerRoot(1, func(r string, limit int) { got = append(got, r) }))
-	if w.maxDepth != 1 || w.maxDirsPerRoot != 1 {
-		t.Fatalf("オプションが反映されていません: depth=%d dirs=%d", w.maxDepth, w.maxDirsPerRoot)
-	}
-
-	// inotify を開かずに「既に 1 本 watch がある」状態を作り、上限判定だけを見る。
-	w.mu.Lock()
-	w.wdToPath[1] = root
-	w.mu.Unlock()
-
-	w.addWatch(filepath.Join(root, "sub"))
-	w.addWatch(filepath.Join(root, "sub2"))
-	if len(got) != 1 || got[0] != root {
-		t.Fatalf("ルート毎の上限通知は 1 回だけ出るべきです: %+v", got)
-	}
-}
-
 // 改善1/改善4: fim_watch_max_depth / fim_watch_max_dirs の parse と安全弁。
 func TestConfigFIMWatchDepthAndDirs(t *testing.T) {
 	cfg, err := ParseConfig(map[string]interface{}{

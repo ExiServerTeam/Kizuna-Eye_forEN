@@ -12,7 +12,7 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
+cd "$ROOT_DIR" || exit 1
 
 MODE="static"
 case "${1:-}" in
@@ -51,7 +51,10 @@ kill_by_exe() {
     local target="$1"
     [ -d /proc ] || return 0
     local self=$$ ppid="$PPID" pid exe
-    for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+    # 数字だけのエントリ（PID）は glob で拾う（ls | grep は使わない）。
+    for pid in /proc/[0-9]*; do
+        pid="${pid#/proc/}"
+        case "$pid" in *[!0-9]*) continue ;; esac
         [ "$pid" = "$self" ] && continue
         [ "$pid" = "$ppid" ] && continue
         exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
@@ -73,7 +76,9 @@ wait_exe_gone() {
     [ -d /proc ] || return 0
     while [ "$tries" -lt 40 ]; do
         local found=0
-        for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+        for pid in /proc/[0-9]*; do
+            pid="${pid#/proc/}"
+            case "$pid" in *[!0-9]*) continue ;; esac
             [ "$pid" = "$$" ] && continue
             [ "$pid" = "$PPID" ] && continue
             exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
@@ -212,14 +217,14 @@ cleanup() {
 trap cleanup EXIT
 
 # サーバー起動待ち
-for i in $(seq 1 20); do
+for _ in $(seq 1 20); do
     if curl -s --connect-timeout 2 "$BASE_URL/health" >/dev/null 2>&1; then break; fi
     sleep 0.5
 done
 
 # Agent 接続待ち（health が 200 になるまで最大20秒）
 agent_up=0
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
     if curl -s "$BASE_URL/health" | grep -q '"agent_connected":true'; then agent_up=1; break; fi
     sleep 0.5
 done
@@ -281,7 +286,11 @@ fi
 # ------------------------------------------------------------
 if [ "$MODE" = "full" ]; then
     head_ "4. プラグイン検査"
-    so="$(ls -1 "$BIN_DIR"/plugins/*.so 2>/dev/null | head -1 || true)"
+    so=""
+    for f in "$BIN_DIR"/plugins/*.so; do
+        [ -f "$f" ] || continue
+        so="$f"; break
+    done
     if [ -n "$so" ]; then
         if "$BIN_DIR/plugin-inspect" --so "$so" >/tmp/ke_inspect.log 2>&1; then
             ok "plugin-inspect $(basename "$so")"

@@ -43,13 +43,13 @@ RUN_DIR="$(resolve_run_dir)"
 # 別ユーザー所有のプロセスは kill が EPERM で失敗する。ここで確認しないと
 # 「停止した」と嘘をつき、start.sh が二重起動する（A-4 で実際に起きる）。
 wait_gone() {
-    local pid="$1" i
-    for i in $(seq 1 25); do
+    local pid="$1"
+    for _ in $(seq 1 25); do
         kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.2
     done
     kill -9 "$pid" 2>/dev/null
-    for i in $(seq 1 10); do
+    for _ in $(seq 1 10); do
         kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.2
     done
@@ -84,7 +84,11 @@ stop_one() {
         local self=$$
         local ppid="$PPID"
         local pid exe
-        for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+        # 数字だけのエントリ（PID）は glob で拾う。ls | grep は
+        # 非英数字名のファイルを壊すため使わない（SC2010 回避）。
+        for pid in /proc/[0-9]*; do
+            pid="${pid#/proc/}"
+            case "$pid" in *[!0-9]*) continue ;; esac
             [ "$pid" = "$self" ] && continue
             [ "$pid" = "$ppid" ] && continue
             exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
