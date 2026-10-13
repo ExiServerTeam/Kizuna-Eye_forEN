@@ -29,10 +29,10 @@ with open(meta_path, encoding="utf-8") as f:
 
 # Fields that come from the current .so (overwrite).
 for k in ("name", "display_name", "tag", "description", "interval_sec",
-          "fields", "is_backup", "dashboard_cards"):
+          "fields", "is_backup", "dashboard_cards", "web_ui_path"):
     if k in data:
         meta[k] = data[k]
-    elif k == "dashboard_cards":
+    elif k in ("dashboard_cards", "web_ui_path"):
         # Remove a stale declaration if the new .so no longer declares it.
         meta.pop(k, None)
 

@@ -570,3 +570,32 @@ type DashboardCard struct {
 type DashboardCardProvider interface {
 	DashboardCards() []DashboardCard
 }
+
+// ============================================================
+// Web asset self-declaration (optional).
+// ============================================================
+
+// WebAssetProvider lets a module ship its own web UI. The card is therefore
+// owned by the module (its HTML/JS/CSS), not by the core: the core only
+// provides a generic iframe host and serves the assets. This matches design
+// 5.4 (カード/詳細ページはモジュール側が追加する).
+//
+// WebAssets returns a path -> content map. Paths are relative to the UI root
+// and use "/" (e.g. "index.html", "card.js", "style.css"). The core extracts
+// them under plugins/<name>.web/ and serves them at /plugins/<name>/. A path
+// that escapes the root ("..", absolute, "\\") is rejected by the extractor.
+//
+// WebUIPath returns the entry document relative to the UI root (usually
+// "index.html"); the dashboard mounts it in the card. Empty means the module
+// ships no UI (a declaration-only card).
+//
+// The core passes a small JSON config to the UI (see the dashboard docs) so a
+// module does not need to know the core's API; it only renders what it is
+// given. Plain modules that render nothing special can implement only
+// DashboardCards() and skip this interface.
+type WebAssetProvider interface {
+	// WebUIPath is the entry document, relative to the UI root.
+	WebUIPath() string
+	// WebAssets is the path -> content map of the UI.
+	WebAssets() map[string][]byte
+}

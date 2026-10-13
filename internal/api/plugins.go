@@ -141,6 +141,11 @@ type PluginMeta struct {
 	UploaderIP     string                 `json:"uploader_ip,omitempty"`
 	InspectError   string                 `json:"inspect_error,omitempty"`
 	HasWebUI       bool                   `json:"has_web_ui,omitempty"`
+	// WebUIPath is the entry document of the module's own web UI (relative
+	// to the UI root), when the module ships one via WebAssetProvider. The
+	// dashboard mounts it (in an iframe served from /plugins/<name>/) as the
+	// module-provided card, so the card content is owned by the module.
+	WebUIPath string `json:"web_ui_path,omitempty"`
 	// Origin is "official" when the upload carried a signature that
 	// verified against the configured public key, and "third_party"
 	// otherwise (unsigned upload, allowed only after explicit
@@ -1150,7 +1155,13 @@ func (p *PluginManager) inspectPlugin(
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
-	cmd, err := p.inspectCommand(ctx, soPath)
+	// Extract the module's web UI (if it ships one) into plugins/<name>.web/.
+	// The directory lives next to the .so and is served at /plugins/<name>/.
+	// A failure to create it must not block the install (the card just will
+	// not render); inspect writes only validated paths under this dir.
+	webOut := filepath.Join(p.pluginsDir, name+".web")
+
+	cmd, err := p.inspectCommand(ctx, soPath, webOut)
 	if err != nil {
 		return nil, err
 	}
@@ -1172,6 +1183,7 @@ func (p *PluginManager) inspectPlugin(
 		Fields         []module.ConfigField   `json:"fields"`
 		IsBackup       bool                   `json:"is_backup"`
 		DashboardCards []module.DashboardCard `json:"dashboard_cards"`
+		WebUIPath      string                 `json:"web_ui_path"`
 		ErrorMessage   string                 `json:"error_message"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
@@ -1200,6 +1212,7 @@ func (p *PluginManager) inspectPlugin(
 		Fields:         raw.Fields,
 		IsBackup:       raw.IsBackup,
 		DashboardCards: raw.DashboardCards,
+		WebUIPath:      raw.WebUIPath,
 		UploadedAt:     time.Now().Format(time.RFC3339),
 		UploaderIP:     remoteAddr,
 	}, nil
@@ -1213,9 +1226,13 @@ func (p *PluginManager) inspectPlugin(
 // executes its init(), so a hostile .so being inspected gets no network reach
 // and no writable path. A missing bwrap is a hard error (fail-closed) rather
 // than a silent downgrade to unprotected execution.
-func (p *PluginManager) inspectCommand(ctx context.Context, soPath string) (*exec.Cmd, error) {
+func (p *PluginManager) inspectCommand(ctx context.Context, soPath, webOut string) (*exec.Cmd, error) {
+	base := []string{"--so", soPath}
+	if webOut != "" {
+		base = append(base, "--web-out", webOut)
+	}
 	if !p.policy.WantInspectIsolation() {
-		return exec.CommandContext(ctx, p.inspectBin, "--so", soPath), nil
+		return exec.CommandContext(ctx, p.inspectBin, base...), nil
 	}
 	bin := p.bwrapBin
 	if bin == "" {
@@ -1231,9 +1248,16 @@ func (p *PluginManager) inspectCommand(ctx context.Context, soPath string) (*exe
 		"--dev", "/dev",
 		"--proc", "/proc",
 		"--tmpfs", "/tmp",
-		"--",
-		p.inspectBin, "--so", soPath,
 	}
+	// The web-out directory must be writable inside the sandbox: bind it
+	// rw over itself (it is under pluginsDir, which the dashboard owns).
+	if webOut != "" {
+		if err := os.MkdirAll(webOut, 0o755); err == nil {
+			args = append(args, "--bind", webOut, webOut)
+		}
+	}
+	args = append(args, "--", p.inspectBin)
+	args = append(args, base...)
 	return exec.CommandContext(ctx, bin, args...), nil
 }
 

@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path"
+	"path/filepath"
 	"plugin"
 	"reflect"
 	"runtime/debug"
@@ -31,9 +33,17 @@ type InspectResult struct {
 	// module declares none. The dashboard reads it to render the card the
 	// module contributes, so the card is added by the module, not hardcoded.
 	DashboardCards json.RawMessage `json:"dashboard_cards,omitempty"`
-	ErrorMessage   string          `json:"error_message,omitempty"`
-	PanicStack     string          `json:"panic_stack,omitempty"`
-	LoadedAt       string          `json:"loaded_at"`
+	// WebUIPath is the module's entry document relative to its UI root (from
+	// WebAssetProvider), or empty when it ships no UI.
+	WebUIPath string `json:"web_ui_path,omitempty"`
+	// WebAssetsCount is how many files WebAssets() returned (0 = none).
+	WebAssetsCount int `json:"web_assets_count,omitempty"`
+	// WebAssetsDir is the directory the assets were extracted to (set only
+	// when --web-out was given).
+	WebAssetsDir string `json:"web_assets_dir,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	PanicStack   string `json:"panic_stack,omitempty"`
+	LoadedAt     string `json:"loaded_at"`
 }
 
 func main() {
@@ -41,6 +51,7 @@ func main() {
 		soPath  = flag.String("so", "", "対象の .so ファイルパス")
 		pretty  = flag.Bool("pretty", true, "JSON を整形して出力")
 		timeout = flag.Duration("timeout", 5*time.Second, "タイムアウト")
+		webOut  = flag.String("web-out", "", "WebAssets() を展開するディレクトリ（省略時は展開しない）")
 	)
 	flag.Parse()
 
@@ -54,7 +65,7 @@ func main() {
 
 	go func() {
 		defer close(done)
-		result = inspect(*soPath)
+		result = inspect(*soPath, *webOut)
 	}()
 
 	select {
@@ -79,7 +90,8 @@ func main() {
 }
 
 // inspect はリフレクションベースで .so の情報を抽出する。
-func inspect(soPath string) (res InspectResult) {
+// webOutDir が空でなければ WebAssets() の内容をそのディレクトリへ展開する。
+func inspect(soPath, webOutDir string) (res InspectResult) {
 	res = InspectResult{
 		LoadedAt: time.Now().Format(time.RFC3339),
 	}
@@ -162,6 +174,10 @@ func inspect(soPath string) (res InspectResult) {
 	if cards := callJSON(v, "DashboardCards"); cards != nil {
 		res.DashboardCards = cards
 	}
+	// Web UI: the module ships its own HTML/JS/CSS (design 5.4). The entry
+	// document name and the asset map are read by reflection; the assets are
+	// extracted to webOutDir when the caller asked for it.
+	extractWebAssets(v, &res, webOutDir)
 
 	if res.Name == "" {
 		res.Name = deriveNameFromPath(soPath)
@@ -249,6 +265,116 @@ func callJSON(v reflect.Value, methodName string) (out json.RawMessage) {
 		return nil
 	}
 	return json.RawMessage(b)
+}
+
+// extractWebAssets reads WebUIPath()/WebAssets() by reflection and, when
+// outDir is set, writes the assets under outDir (one file per path). Paths
+// are validated: absolute paths, ".." traversal and backslashes are rejected,
+// so a hostile .so cannot write outside outDir. A module that ships no UI
+// (no methods, or an empty map) sets nothing.
+func extractWebAssets(v reflect.Value, res *InspectResult, outDir string) {
+	// Entry document (string).
+	if s := callString(v, "WebUIPath"); s != "" {
+		res.WebUIPath = s
+	}
+
+	// Asset map (map[string][]byte). Read generically: the concrete type may
+	// differ between the plugin and this binary, so a type assertion is not
+	// usable; reflection over the map handles both.
+	assets := callBytesMap(v, "WebAssets")
+	if len(assets) == 0 {
+		return
+	}
+	res.WebAssetsCount = len(assets)
+
+	if outDir == "" {
+		return
+	}
+	base, err := filepath.Abs(outDir)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(base, 0o755); err != nil {
+		return
+	}
+	for rel, content := range assets {
+		clean, ok := safeRelPath(rel)
+		if !ok {
+			continue
+		}
+		target := filepath.Join(base, clean)
+		// Defense in depth: the joined path must stay under base.
+		if !strings.HasPrefix(target, base+string(os.PathSeparator)) {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			continue
+		}
+		_ = os.WriteFile(target, content, 0o644)
+	}
+	res.WebAssetsDir = base
+}
+
+// safeRelPath normalizes a UI-relative path and rejects anything that could
+// escape the UI root: absolute paths, "..", and backslashes. Returns the
+// cleaned relative path (using "/"-separated input).
+func safeRelPath(p string) (string, bool) {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return "", false
+	}
+	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
+		return "", false
+	}
+	if strings.Contains(p, "\\") {
+		return "", false
+	}
+	clean := path.Clean(p)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	return clean, true
+}
+
+// callBytesMap calls a no-argument method whose single return value is a
+// map[string][]byte and returns it as a plain Go map. Returns nil when the
+// method is missing, has the wrong signature, or the map is empty.
+func callBytesMap(v reflect.Value, methodName string) (out map[string][]byte) {
+	defer func() {
+		if recover() != nil {
+			out = nil
+		}
+	}()
+	m := v.MethodByName(methodName)
+	if !m.IsValid() || m.Type().NumIn() != 0 || m.Type().NumOut() != 1 {
+		return nil
+	}
+	results := m.Call(nil)
+	if len(results) != 1 {
+		return nil
+	}
+	rv := results[0]
+	if rv.Kind() != reflect.Map {
+		return nil
+	}
+	if rv.IsNil() || rv.Len() == 0 {
+		return nil
+	}
+	// Copy into a concrete map so callers do not hold the plugin's map.
+	out = make(map[string][]byte, rv.Len())
+	iter := rv.MapRange()
+	for iter.Next() {
+		k := iter.Key()
+		val := iter.Value()
+		if k.Kind() != reflect.String || val.Kind() != reflect.Slice {
+			continue
+		}
+		out[k.String()] = append([]byte(nil), val.Bytes()...)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func deriveNameFromPath(soPath string) string {

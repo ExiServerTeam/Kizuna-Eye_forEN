@@ -981,9 +981,20 @@ input, select, textarea {
     .backup-header, .backup-body { padding: 10px 12px; }
 }
 
+/* ===== モジュール提供カード ===== */
+/* 中身（HTML/JS/CSS）はモジュール側が持ち、iframe で読み込む。コアは枠と
+   ヘッダーだけを描く。.alerts-section を併せ持つのでセクションの枠・つまみ・
+   折りたたみは既存ルールが効く。 */
+.module-card-frame {
+    width: 100%;
+    min-height: 320px;
+    border: 0;
+    display: block;
+    background: transparent;
+}
+.module-card .backup-body.collapsed { display: none; }
+
 /* ===== セキュリティ状況（集計） ===== */
-/* .insight-section は .alerts-section を併せ持つため、セクションの枠・
-   つまみ・折りたたみは既存ルールがそのまま効く。ここは中身だけを足す。 */
 .insight-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));

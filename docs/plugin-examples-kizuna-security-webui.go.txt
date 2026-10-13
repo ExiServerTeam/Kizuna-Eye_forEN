@@ -1,0 +1,153 @@
+package main
+
+// ============================================================
+// モジュール提供カード（WebAssetProvider）
+// ------------------------------------------------------------
+// セキュリティ状況カードの中身（HTML/CSS/JS）はこのモジュールが持ち、
+// コアは /plugins/<name>/ を iframe で読み込む「枠」だけを提供する。
+// これにより「カードはモジュールが追加する」という設計（5.4）になる。
+//
+// データはコアの集計 API /api/insight から取得する。集計そのものは
+// コア（観測と可視化）に残し、モジュールは「どう見せるか」だけを持つ。
+// ============================================================
+
+// WebUIPath returns the entry document relative to the UI root.
+func (p *SecurityPlugin) WebUIPath() string { return "index.html" }
+
+// WebAssets returns the module's card UI. Kept as inline strings so the
+// plugin stays a single buildable unit (no external asset directory to copy).
+func (p *SecurityPlugin) WebAssets() map[string][]byte {
+	return map[string][]byte{
+		"index.html": []byte(securityCardHTML),
+		"style.css":  []byte(securityCardCSS),
+		"card.js":    []byte(securityCardJS),
+	}
+}
+
+const securityCardHTML = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app" class="wrap">
+  <div class="grid">
+    <div class="card">
+      <div class="card-head"><span id="t-threat"></span><span class="grade" id="g-threat">--</span></div>
+      <div class="risk"><span id="risk">0</span><span class="risk-max">/100</span></div>
+      <div class="counts" id="counts"></div>
+    </div>
+    <div class="card">
+      <div class="card-head"><span id="t-posture"></span><span class="grade" id="g-posture">--</span></div>
+      <div class="risk"><span id="pscore">0</span><span class="risk-max" id="pmax">/100</span></div>
+      <div class="checklist" id="checklist"></div>
+    </div>
+  </div>
+  <div class="sub">
+    <div class="sub-title" id="t-drivers"></div>
+    <div class="drivers" id="drivers"></div>
+  </div>
+  <div class="sub">
+    <div class="sub-title" id="t-sources"></div>
+    <div class="sources" id="sources"></div>
+  </div>
+  <div class="badge" id="period">--</div>
+</div>
+<script src="card.js"></script>
+</body>
+</html>
+`
+
+const securityCardCSS = `:root{color-scheme:light dark}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:transparent;color:#c9d1d9}
+@media (prefers-color-scheme:light){body{color:#2a1e14}}
+.wrap{padding:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.card{border:1px solid rgba(140,150,170,.25);border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px;min-width:0}
+.card-head{display:flex;justify-content:space-between;align-items:center;font-size:.85rem;opacity:.75}
+.grade{font-family:monospace;font-weight:700;border:1px solid currentColor;border-radius:6px;padding:1px 8px}
+.grade.a{color:#22c55e}.grade.b{color:#14b8a6}.grade.c{color:#eab308}.grade.d{color:#f97316}.grade.e{color:#ef4444}
+.risk{font-family:monospace;font-weight:700;font-size:1.7rem;line-height:1.1}
+.risk-max{font-size:.8rem;font-weight:500;opacity:.6;margin-left:2px}
+.counts{font-family:monospace;font-size:.8rem;opacity:.85}
+.checklist{display:flex;flex-direction:column;gap:4px}
+.check{display:flex;gap:6px;align-items:center;font-size:.78rem}
+.check .m{font-weight:700}.check.ok .m{color:#22c55e}.check.ng .m{color:#ef4444}
+.check .l{flex:1 1 auto;min-width:0;opacity:.85}
+.check .s{font-size:.7rem;opacity:.6}
+.sub{margin-top:14px}
+.sub-title{font-size:.85rem;opacity:.7;margin-bottom:6px}
+.drivers{display:flex;flex-direction:column;gap:4px}
+.driver{display:grid;grid-template-columns:minmax(80px,1fr) 2fr auto;gap:8px;align-items:center;font-size:.78rem}
+.driver .k{font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.driver .bar{height:6px;border-radius:3px;border:1px solid rgba(140,150,170,.3);overflow:hidden}
+.driver .bar>span{display:block;height:100%;background:#6366f1}
+.driver .c{font-family:monospace;text-align:right;min-width:2em;opacity:.7}
+.sources{display:flex;flex-direction:column;gap:4px}
+.source{display:grid;grid-template-columns:minmax(90px,1fr) 1.4fr 1fr auto;gap:8px;align-items:center;font-size:.78rem;padding:4px 8px;border-left:3px solid transparent;border-radius:4px;background:rgba(140,150,170,.08)}
+.source.critical{border-left-color:#ef4444}.source.warning{border-left-color:#f59e0b}
+.source .ip{font-family:monospace;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.source .t{font-family:monospace;opacity:.7;white-space:nowrap}
+.empty{padding:8px 0;font-size:.82rem;opacity:.7}
+.badge{margin-top:10px;font-size:.72rem;opacity:.6;font-family:monospace}
+@media (max-width:600px){
+ .driver{grid-template-columns:1fr auto}.driver .bar{display:none}
+ .source{grid-template-columns:1fr auto}.source .m,.source .tech{grid-column:1/-1}
+}
+`
+
+const securityCardJS = `(function(){
+  'use strict';
+  var qs = new URLSearchParams(location.search);
+  var lang = qs.get('lang') === 'en' ? 'en' : 'ja';
+  function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');}
+  function safeKey(k){return String(k||'').replace(/[^a-z0-9_]/g,'');}
+  var T = {
+    ja:{threat:'脅威指標',posture:'設定の点検',drivers:'主な要因',sources:'発生元の傾向',
+        period:'直近{0}日間',counts:'重大 {0} / 警戒 {1} / 合計 {2}',
+        noDrivers:'対象期間にリスクとなるアラートはありません。',noSources:'対象期間に接続元アドレスは記録されていません。',
+        meta:'アラート {0} 件（重大 {1}）',multi:'複数の手法',single:'単一の手法',ok:'対応済み',ng:'未対応',
+        grade:{A:'良好',B:'おおむね良好',C:'要確認',D:'要改善',E:'危険'},
+        posture:{auth_enabled:'認証（auth.enabled）が有効',require_signature:'モジュール署名の検証が有効',public_viewer_off:'未ログイン閲覧（public_viewer）が無効',agent_token:'Agent トークンが設定済み',alert_history_signed:'アラート履歴の署名が有効',notifications_enabled:'通知が有効',listen_restricted:'待ち受けがループバック限定',secure_cookies:'セキュアクッキーが有効'}},
+    en:{threat:'Threat index',posture:'Configuration check',drivers:'Top drivers',sources:'Source activity',
+        period:'Last {0} days',counts:'Critical {0} / Warning {1} / Total {2}',
+        noDrivers:'No risk-bearing alerts in this period.',noSources:'No source addresses were recorded in this period.',
+        meta:'{0} alerts (critical {1})',multi:'Multiple techniques',single:'Single technique',ok:'OK',ng:'Missing',
+        grade:{A:'Good',B:'Fair',C:'Review',D:'Weak',E:'At risk'},
+        posture:{auth_enabled:'Authentication (auth.enabled) is on',require_signature:'Module signature verification is on',public_viewer_off:'Anonymous viewing (public_viewer) is off',agent_token:'Agent token is set',alert_history_signed:'Alert history signing is on',notifications_enabled:'Notifications are on',listen_restricted:'Listen address is loopback-only',secure_cookies:'Secure cookies are on'}}
+  }[lang];
+  function t(k,a){var s=T[k];if(s==null)return k;if(a!=null){var i=0;return String(s).replace(/\{(\d+)\}/g,function(_,d){var v=a[+d];return v==null?'':String(v);});}return s;}
+  function byId(id){return document.getElementById(id);}
+  function setText(id,v){var e=byId(id);if(e)e.textContent=v;}
+  function grade(el,g,cls){if(!el)return;g=String(g||'').toUpperCase();el.textContent=g;el.title=(T.grade&&T.grade[g])||'';el.className='grade '+String(cls||'').toLowerCase();}
+  function shortDate(iso){if(!iso)return '--';var d=new Date(iso);if(isNaN(d.getTime()))return '--';return d.toLocaleString();}
+  function render(data){
+    var threat=data.threat||{},posture=data.posture||{},profile=data.profile||{};
+    setText('t-threat',T.threat);setText('t-posture',T.posture);setText('t-drivers',T.drivers);setText('t-sources',T.sources);
+    var days=Math.max(1,Math.round((data.period_hours||168)/24));setText('period',t('period',[days]));
+    var risk=Number(threat.risk)||0;setText('risk',String(risk));grade(byId('g-threat'),threat.grade||'A','grade-'+(threat.grade||'a'));
+    byId('g-threat').className='grade '+String(threat.grade||'a').toLowerCase();
+    setText('counts',t('counts',[Number(threat.critical)||0,Number(threat.warning)||0,Number(threat.total)||0]));
+    var score=Number(posture.score)||0,max=Number(posture.max)||100;setText('pscore',String(score));setText('pmax','/'+max);
+    byId('g-posture').className='grade '+String(posture.grade||'e').toLowerCase();
+    var items=Array.isArray(posture.items)?posture.items:[];
+    var cl=byId('checklist');cl.innerHTML=items.map(function(it){var k=safeKey(it.key);var ok=it.ok===true;return '<div class="check '+(ok?'ok':'ng')+'"><span class="m">'+(ok?'\u2713':'\u2715')+'</span><span class="l">'+esc((T.posture&&T.posture[k])||k)+'</span><span class="s">'+esc(ok?T.ok:T.ng)+'</span></div>';}).join('');
+    var drivers=Array.isArray(threat.drivers)?threat.drivers:[];
+    var dv=byId('drivers');
+    if(!drivers.length){dv.innerHTML='<div class="empty">'+esc(T.noDrivers)+'</div>';}
+    else{var mx=Math.max.apply(null,drivers.map(function(d){return Number(d.weight)||0;}))||1;
+      dv.innerHTML=drivers.map(function(d){var w=Number(d.weight)||0;var p=Math.min(100,Math.max(4,Math.round(w/mx*100)));return '<div class="driver"><span class="k">'+esc(String(d.key||''))+'</span><span class="bar"><span style="width:'+p+'%"></span></span><span class="c">'+esc(String(Number(d.count)||0))+'</span></div>';}).join('');}
+    var sources=Array.isArray(profile.sources)?profile.sources:[];
+    var sv=byId('sources');
+    if(!sources.length){sv.innerHTML='<div class="empty">'+esc(T.noSources)+'</div>';}
+    else{sv.innerHTML=sources.map(function(s){var c=Number(s.count)||0,cr=Number(s.critical)||0;var tech=s.multi_technique?T.multi:T.single;var sev=cr>0?'critical':'warning';return '<div class="source '+sev+'"><span class="ip">'+esc(String(s.ip||''))+'</span><span class="m">'+esc(t('meta',[c,cr]))+'</span><span class="tech">'+esc(tech)+'</span><span class="t">'+esc(shortDate(s.last_seen))+'</span></div>';}).join('');}
+  }
+  function load(){
+    fetch('/api/insight',{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json();}).then(render).catch(function(){setText('period','unavailable');});
+  }
+  load();
+  setInterval(load,60000);
+})();
+`

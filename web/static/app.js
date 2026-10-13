@@ -77,7 +77,6 @@
         alertsCountBadge: $('#alertsCountBadge'),
         alertsClearBtn: $('#alertsClearBtn'),
         alertList: $('#alertList'),
-        insightSection: $('#insightSection'),
         insightToggle: $('#insightToggle'),
         insightBody: $('#insightBody'),
         insightPeriodBadge: $('#insightPeriodBadge'),
@@ -1315,45 +1314,136 @@
     let lastPluginListHtml = null;
 
     // ============================================================
-    // モジュール提供カード（モジュール側が「出す」と宣言したカード）
+    // モジュール提供カード（モジュール側が HTML/JS/CSS ごと追加する）
     // ============================================================
-    // insightModulePresent is true only while an enabled module declares a
-    // dashboard card of kind "insight". The core keeps the renderer for that
-    // kind, but the card exists only when a module asks for it, so adding or
-    // removing the security module adds or removes the card.
-    let insightModulePresent = false;
-    let detachedInsight = null;
+    // コアはカードの中身を持たない。モジュールが DashboardCards() で
+    // 「出す」と宣言し、WebAssetProvider で UI を同梱する。コアは
+    // /plugins/<name>/ を iframe で読み込む「枠」を用意するだけ。
+    //
+    // mountedModuleCards: cardId -> {section, iframe} を保持し、モジュールが
+    // 無効化/削除されたら枠ごと取り除く（iframe も破棄する）。
+    const mountedModuleCards = new Map();
 
-    // setInsightCardPresent inserts/removes the insight section so it sits
-    // right above the metrics history section (the module card's position is
-    // defined by the core's DOM, not by the module).
-    function setInsightCardPresent(present) {
-        const hist = document.getElementById('historySection');
-        const current = document.getElementById('insightSection');
-        if (present) {
-            if (!current && detachedInsight && hist && hist.parentNode) {
-                hist.parentNode.insertBefore(detachedInsight, hist);
-            } else if (current && hist && hist.parentNode && current.nextElementSibling !== hist) {
-                hist.parentNode.insertBefore(current, hist);
+    // declaredModuleCards returns the cards declared by ENABLED modules,
+    // resolved through pluginMetaMap (which /api/plugins fills). Each card
+    // carries the module name so the core can build the /plugins/<name>/ URL.
+    function declaredModuleCards() {
+        const enabledNames = new Set(
+            (lastModules || []).filter(m => m.enabled).map(m => m.name)
+        );
+        const out = [];
+        for (const [name, meta] of pluginMetaMap) {
+            if (!enabledNames.has(name)) continue;
+            const cards = Array.isArray(meta.dashboard_cards) ? meta.dashboard_cards : [];
+            for (const c of cards) {
+                if (!c || !c.id) continue;
+                out.push({ module: name, meta, card: c });
             }
-        } else if (current && current.parentNode) {
-            detachedInsight = current;
-            current.parentNode.removeChild(current);
         }
-        // Refresh element references after the DOM change.
-        elements.insightSection = document.getElementById('insightSection');
-        elements.insightToggle = document.getElementById('insightToggle');
-        elements.insightBody = document.getElementById('insightBody');
-        elements.insightPeriodBadge = document.getElementById('insightPeriodBadge');
-        elements.insightGrade = document.getElementById('insightGrade');
-        elements.insightRisk = document.getElementById('insightRisk');
-        elements.insightCounts = document.getElementById('insightCounts');
-        elements.insightPostureGrade = document.getElementById('insightPostureGrade');
-        elements.insightPostureScore = document.getElementById('insightPostureScore');
-        elements.insightPostureMax = document.getElementById('insightPostureMax');
-        elements.insightChecklist = document.getElementById('insightChecklist');
-        elements.insightDrivers = document.getElementById('insightDrivers');
-        elements.insightSources = document.getElementById('insightSources');
+        return out;
+    }
+
+    // moduleCardSection builds the generic card shell (header + iframe host)
+    // for one module card. The shell is the same for every module; only the
+    // title and the iframe URL differ, so the core owns no card-specific DOM.
+    function moduleCardSection(moduleName, meta, card) {
+        const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
+        const title = (lang === 'en' && card.title_en) ? card.title_en : (card.title || card.id);
+
+        const section = document.createElement('section');
+        section.className = 'alerts-section module-card';
+        section.dataset.moduleCard = moduleName + ':' + card.id;
+
+        const header = document.createElement('div');
+        header.className = 'backup-header';
+        header.setAttribute('role', 'button');
+        header.setAttribute('tabindex', '0');
+        header.setAttribute('aria-expanded', 'true');
+
+        const left = document.createElement('div');
+        left.className = 'backup-header-left';
+        const h2 = document.createElement('h2');
+        h2.textContent = title;
+        left.appendChild(h2);
+        header.appendChild(left);
+
+        const actions = document.createElement('div');
+        actions.className = 'backup-header-actions';
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'backup-toggle-btn';
+        toggle.setAttribute('aria-label', title);
+        const icon = document.createElement('span');
+        icon.className = 'backup-toggle-icon';
+        icon.textContent = '▼';
+        toggle.appendChild(icon);
+        actions.appendChild(toggle);
+        header.appendChild(actions);
+
+        const body = document.createElement('div');
+        body.className = 'backup-body';
+
+        // The module's UI is loaded in an iframe from /plugins/<name>/. The
+        // core does not inject its DOM into the card. Sandboxing and CSP are
+        // enforced server-side by the /plugins route (official = direct,
+        // third-party = sandboxed wrapper).
+        const iframe = document.createElement('iframe');
+        iframe.className = 'module-card-frame';
+        iframe.setAttribute('loading', 'lazy');
+        iframe.setAttribute('referrerpolicy', 'no-referrer');
+        // ?lang=<ui> so the module can render in the current language.
+        const entry = meta.web_ui_path || 'index.html';
+        iframe.src = '/plugins/' + encodeURIComponent(moduleName) + '/' +
+            entry + (entry.indexOf('?') >= 0 ? '&' : '?') + 'lang=' + encodeURIComponent(lang);
+        body.appendChild(iframe);
+
+        header.addEventListener('click', () => {
+            const collapsed = body.classList.toggle('collapsed');
+            header.setAttribute('aria-expanded', String(!collapsed));
+            toggle.classList.toggle('collapsed', collapsed);
+        });
+
+        section.appendChild(header);
+        section.appendChild(body);
+        return section;
+    }
+
+    // syncModuleCards reconciles the mounted cards with the declarations:
+    // it inserts new declarations right above the metrics history and removes
+    // cards whose module is gone or no longer declares them.
+    function syncModuleCards() {
+        const declared = declaredModuleCards();
+        const want = new Map();
+        for (const d of declared) {
+            want.set(d.module + ':' + d.card.id, d);
+        }
+
+        // Remove cards no longer declared.
+        for (const [key, mounted] of mountedModuleCards) {
+            if (!want.has(key)) {
+                if (mounted.section && mounted.section.parentNode) {
+                    mounted.section.parentNode.removeChild(mounted.section);
+                }
+                mountedModuleCards.delete(key);
+            }
+        }
+
+        // Insert newly declared cards above the history section.
+        const hist = document.getElementById('historySection');
+        for (const [key, d] of want) {
+            if (mountedModuleCards.has(key)) continue;
+            const section = moduleCardSection(d.module, d.meta, d.card);
+            if (hist && hist.parentNode) {
+                hist.parentNode.insertBefore(section, hist);
+            } else if (elements.backupSection && elements.backupSection.parentNode) {
+                elements.backupSection.parentNode.insertBefore(section, elements.backupSection);
+            }
+            mountedModuleCards.set(key, { section });
+        }
+
+        // Re-run the section reorder setup (idempotent) so the new cards get
+        // their drag handle and pointerdown listener.
+        setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
     }
 
     function renderPluginList(modules) {
@@ -2015,206 +2105,6 @@
         }
     }
 
-    // syncModuleCards shows or removes the module-provided cards based on the
-    // registered+enabled modules. A card is present only while an enabled
-    // module declares it (dashboard_cards in its meta), so the card is owned
-    // by the module rather than hardcoded in the core.
-    function syncModuleCards() {
-        const enabledNames = new Set(
-            (lastModules || []).filter(m => m.enabled).map(m => m.name)
-        );
-        let insight = false;
-        for (const [name, meta] of pluginMetaMap) {
-            if (!enabledNames.has(name)) continue;
-            const cards = Array.isArray(meta.dashboard_cards) ? meta.dashboard_cards : [];
-            if (cards.some(c => c && c.kind === 'insight')) {
-                insight = true;
-                break;
-            }
-        }
-        if (insight !== insightModulePresent) {
-            insightModulePresent = insight;
-            setInsightCardPresent(insight);
-            // A newly inserted card needs its drag handle and pointerdown
-            // listener; re-run the section reorder setup (idempotent).
-            setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
-            // The access-mode check ran before the module list was known, so
-            // loadInsight() returned early (insightModulePresent was false).
-            // Now that the declaration has arrived, fetch immediately instead
-            // of waiting for the 60s interval.
-            if (insight && insightAllowed) {
-                loadInsight();
-            }
-        }
-    }
-
-    // ============================================================
-    // セキュリティ状況（アラート履歴の集計）
-    // 新しい検知は行わない。サーバーの /api/insight を表示するだけ。
-    // operator 以上のみ（サーバー側でも 403）。
-    // ============================================================
-    let insightCollapsed = false;
-    // insightAllowed is false until the role check confirms operator+.
-    // The fetch is skipped for lower roles so the UI does not spam 403s.
-    let insightAllowed = false;
-
-    function toggleInsight() {
-        insightCollapsed = !insightCollapsed;
-        if (elements.insightBody) elements.insightBody.classList.toggle('collapsed', insightCollapsed);
-        if (elements.insightToggle) {
-            elements.insightToggle.setAttribute('aria-expanded', String(!insightCollapsed));
-            const icon = elements.insightToggle.querySelector('.backup-toggle-btn');
-            if (icon) icon.classList.toggle('collapsed', insightCollapsed);
-        }
-    }
-
-    if (elements.insightToggle) {
-        elements.insightToggle.addEventListener('click', toggleInsight);
-    }
-
-    // gradeLabel maps the A-E grade returned by the API to a word. The
-    // letter itself is shown as-is; the word is the tooltip.
-    function gradeLabel(grade) {
-        return t('insight.grade.' + String(grade || '').toUpperCase());
-    }
-
-    // shortDate formats an ISO timestamp for a compact tooltip.
-    function shortDate(iso) {
-        if (!iso) return '--';
-        const d = new Date(iso);
-        if (isNaN(d.getTime())) return '--';
-        return d.toLocaleString();
-    }
-
-    function renderInsight(data) {
-        if (!elements.insightSection || !data) return;
-
-        const threat = data.threat || {};
-        const posture = data.posture || {};
-        const profile = data.profile || {};
-
-        if (elements.insightPeriodBadge) {
-            const days = Math.max(1, Math.round((data.period_hours || 168) / 24));
-            elements.insightPeriodBadge.textContent = t('insight.period', days);
-        }
-
-        // --- 脅威指標 ---
-        const risk = Number(threat.risk) || 0;
-        if (elements.insightRisk) elements.insightRisk.textContent = String(risk);
-        if (elements.insightGrade) {
-            const g = String(threat.grade || 'A');
-            elements.insightGrade.textContent = g;
-            elements.insightGrade.title = gradeLabel(g);
-            elements.insightGrade.className = 'insight-grade ' + cssClass('grade-' + g.toLowerCase());
-        }
-        if (elements.insightCounts) {
-            elements.insightCounts.textContent = t(
-                'insight.counts',
-                Number(threat.critical) || 0,
-                Number(threat.warning) || 0,
-                Number(threat.total) || 0,
-            );
-        }
-
-        // --- 設定の点検 ---
-        const score = Number(posture.score) || 0;
-        const max = Number(posture.max) || 100;
-        if (elements.insightPostureScore) elements.insightPostureScore.textContent = String(score);
-        if (elements.insightPostureMax) elements.insightPostureMax.textContent = '/' + max;
-        if (elements.insightPostureGrade) {
-            const g = String(posture.grade || 'E');
-            elements.insightPostureGrade.textContent = g;
-            elements.insightPostureGrade.title = gradeLabel(g);
-            elements.insightPostureGrade.className = 'insight-grade ' + cssClass('grade-' + g.toLowerCase());
-        }
-        if (elements.insightChecklist) {
-            const items = Array.isArray(posture.items) ? posture.items : [];
-            if (items.length === 0) {
-                elements.insightChecklist.innerHTML = '';
-            } else {
-                elements.insightChecklist.innerHTML = items.map(it => {
-                    // key はサーバー由来だが、念のため属性にもクラスにも使う前に
-                    // 許可文字だけに落とす（i18n キーは英小文字と _ のみ）。
-                    const key = String(it.key || '').replace(/[^a-z0-9_]/g, '');
-                    const ok = it.ok === true;
-                    const mark = ok ? '✓' : '✕';
-                    const cls = ok ? 'ok' : 'ng';
-                    const label = key ? t('posture.' + key) : '';
-                    return `<div class="insight-check ${cssClass(cls)}">` +
-                        `<span class="insight-check-mark">${escapeHtml(mark)}</span>` +
-                        `<span class="insight-check-label">${escapeHtml(label)}</span>` +
-                        `<span class="insight-check-state">${escapeHtml(ok ? t('insight.posture_ok') : t('insight.posture_ng'))}</span>` +
-                        `</div>`;
-                }).join('');
-            }
-        }
-
-        // --- 主な要因 ---
-        if (elements.insightDrivers) {
-            const drivers = Array.isArray(threat.drivers) ? threat.drivers : [];
-            if (drivers.length === 0) {
-                elements.insightDrivers.innerHTML = `<div class="insight-empty">${escapeHtml(t('insight.no_drivers'))}</div>`;
-            } else {
-                const maxWeight = Math.max.apply(null, drivers.map(d => Number(d.weight) || 0)) || 1;
-                elements.insightDrivers.innerHTML = drivers.map(d => {
-                    const weight = Number(d.weight) || 0;
-                    // 幅は自分で計算した数値なのでそのまま埋め込む。ここを
-                    // cssClass() に通すと '%' が落ちて style="width:50" に
-                    // なり（不正な CSS）、バーが常に満杯になる。数値である
-                    // ことを明示するため clamp してから整数化する。
-                    const pct = Math.min(100, Math.max(4, Math.round((weight / maxWeight) * 100)));
-                    const count = Number(d.count) || 0;
-                    return `<div class="insight-driver">` +
-                        `<span class="insight-driver-key">${escapeHtml(String(d.key || ''))}</span>` +
-                        `<span class="insight-driver-bar"><span style="width:${pct}%"></span></span>` +
-                        `<span class="insight-driver-count">${escapeHtml(String(count))}</span>` +
-                        `</div>`;
-                }).join('');
-            }
-        }
-
-        // --- 発生元の傾向 ---
-        if (elements.insightSources) {
-            const sources = Array.isArray(profile.sources) ? profile.sources : [];
-            if (sources.length === 0) {
-                elements.insightSources.innerHTML = `<div class="insight-empty">${escapeHtml(t('insight.no_sources'))}</div>`;
-            } else {
-                elements.insightSources.innerHTML = sources.map(s => {
-                    const count = Number(s.count) || 0;
-                    const critical = Number(s.critical) || 0;
-                    const tech = s.multi_technique ? t('insight.source_multi') : t('insight.source_single');
-                    const first = shortDate(s.first_seen);
-                    const last = shortDate(s.last_seen);
-                    const sev = critical > 0 ? 'critical' : 'warning';
-                    return `<div class="insight-source ${cssClass(sev)}">` +
-                        `<span class="insight-source-ip">${escapeHtml(String(s.ip || ''))}</span>` +
-                        `<span class="insight-source-meta">${escapeHtml(t('insight.source_meta', count, critical))}</span>` +
-                        `<span class="insight-source-tech">${escapeHtml(tech)}</span>` +
-                        `<span class="insight-source-time" title="${escapeAttr(t('insight.source_first_last', first, last))}">${escapeHtml(last)}</span>` +
-                        `</div>`;
-                }).join('');
-            }
-        }
-
-        // Only reveal the section once real data is rendered, so a viewer or
-        // a failed fetch never shows an empty shell. The section exists only
-        // while a module declares it.
-        elements.insightSection.hidden = false;
-    }
-
-    async function loadInsight() {
-        if (!insightAllowed || !insightModulePresent || !elements.insightSection) return;
-        try {
-            const res = await fetch('/api/insight');
-            if (!res.ok) return;   // 403/401 は権限どおり。黙って諦める。
-            const data = await res.json();
-            renderInsight(data);
-        } catch (e) {
-            // 取得失敗は致命的ではないので無視（次の定期更新で再試行）。
-        }
-    }
-
-    // ============================================================
     // 初期描画
     // ============================================================
     function drawInitialGauges() {
@@ -2434,8 +2324,11 @@
 
         if (rank === 0) {
             // 公開ビューア（未ログイン）
-            [elements.historySection, elements.backupSection, elements.alertsSection, elements.insightSection]
+            [elements.historySection, elements.backupSection, elements.alertsSection]
                 .forEach(el => { if (el) el.style.display = 'none'; });
+            // モジュール提供カード（セキュリティ状況など）は operator 以上の
+            // 情報を含むため、公開ビューアには出さない。
+            document.querySelectorAll('.module-card').forEach(el => { el.style.display = 'none'; });
 
             // プロセス詳細（CPU/メモリ）とストレージ詳細（S.M.A.R.T の型番・
             // シリアル等）は公開しないため無効化する。
@@ -2458,24 +2351,18 @@
         if (rank < 2) {
             // viewer（ゲスト含む）: operator 以上の機能を隠す。
             if (elements.backupSection) elements.backupSection.style.display = 'none';
-            // セキュリティ状況は設定の弱点（どの対策が無効か）を列挙するため、
-            // 未ログインの公開ビューアには見せない（サーバーも 403 で拒否する）。
-            if (elements.insightSection) elements.insightSection.style.display = 'none';
+            // モジュール提供カードは operator 以上（サーバーも /plugins と
+            // /api/insight を operator 以上に限定）なので viewer には出さない。
+            document.querySelectorAll('.module-card').forEach(el => { el.style.display = 'none'; });
         }
         if (rank < 3) {
             // アラート履歴のクリアは監査証跡を消す操作のため admin のみ。
             if (elements.alertsClearBtn) elements.alertsClearBtn.style.display = 'none';
         }
 
-        // operator 以上だけがセキュリティ状況を取得する。低いロールでは
-        // セクションも hidden のままにし、fetch も行わない（403 を撒かない）。
-        if (rank >= 2) {
-            insightAllowed = true;
-            loadInsight();
-            setInterval(loadInsight, 60000);
-        }
-        // ロールは満たしていても、モジュールがカードを宣言していなければ
-        // syncModuleCards が要素を取り除いている。
+        // モジュール提供カード（セキュリティ状況など）は、有効なモジュールが
+        // 宣言しているときだけ表示する。中身はモジュール自身の UI（iframe）
+        // なので、コアは枠の出し入れだけを行う。
         syncModuleCards();
     }
 
@@ -2488,9 +2375,7 @@
                 if (!status) return; // 判定失敗時は通常モードのまま
                 // 認証無効は信頼ネットワーク＝全開放。サーバー側ミドルウェアが
                 // その扱い（全リクエストを admin 相当）なので、ここも admin を
-                // 渡して表示制御を揃える。以前は return だけで applyAccessMode を
-                // 呼んでおらず、セキュリティ状況の取得開始（insightAllowed）が
-                // 走らず、認証無効時にセクションが永久に空のままだった。
+                // 渡して表示制御を揃える。
                 if (status.auth_enabled === false) {
                     applyAccessMode('admin');
                     return;
@@ -2526,7 +2411,15 @@
             // a status is present, re-renders the dashboard text.
             setTheme(getTheme());
             loadAlerts();
-            loadInsight();
+            // 言語が変わったらモジュールカードを作り直す（タイトルと
+            // iframe の ?lang= を現在の言語に合わせるため）。
+            for (const [, mounted] of mountedModuleCards) {
+                if (mounted.section && mounted.section.parentNode) {
+                    mounted.section.parentNode.removeChild(mounted.section);
+                }
+            }
+            mountedModuleCards.clear();
+            syncModuleCards();
             loadPluginList();
             loadHistory();
         });
