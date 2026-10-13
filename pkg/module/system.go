@@ -23,6 +23,7 @@ import (
 	"Kizuna-Eye/pkg/status"
 )
 
+// SystemConfig はシステムモジュールの設定だ。
 // SystemConfig is the system module configuration.
 type SystemConfig struct {
 	DiskPath          string `json:"disk_path"`
@@ -34,6 +35,7 @@ type SystemConfig struct {
 }
 
 // ============================================================
+// smartCache は S.M.A.R.T データをキャッシュする。
 // smartCache caches S.M.A.R.T data.
 // ============================================================
 type smartCache struct {
@@ -43,6 +45,10 @@ type smartCache struct {
 	lastCheck time.Time
 	available bool
 	checked   bool
+	// emptyStreak/emptyWarned は、無言の S.M.A.R.T 読み取り失敗を一度だけ可視化する。
+	// `smartctl --scan` は ATA パススルーに必要な capability が無くても成功するため、
+	// 可用性プローブだけでは「動く」と「実読み取りが全部拒否される」を区別できない。
+	// 信頼できる信号は「データを全く返さないデバイス」だ。
 	// emptyStreak/emptyWarned surface a silent S.M.A.R.T read failure once.
 	// `smartctl --scan` succeeds even without the capability needed for ATA
 	// passthrough, so the availability probe alone cannot tell "works" from
@@ -52,6 +58,8 @@ type smartCache struct {
 	emptyWarned bool
 }
 
+// smartEntry は 1 つのブロックデバイスのキャッシュ済み S.M.A.R.T データだ。
+// ゼロ値は「未報告」を意味し、JSON からは省略される。
 // smartEntry is the cached S.M.A.R.T data for one block device.
 // Zero values mean "not reported" and are omitted from the JSON.
 type smartEntry struct {
@@ -77,6 +85,9 @@ func (s *smartCache) shouldRefresh() bool {
 	return time.Since(s.lastCheck) >= s.interval
 }
 
+// get はデバイスのキャッシュ済み S.M.A.R.T データを返す。2 番目の戻り値は
+// エントリが存在するかどうかを示し、呼び出し側が「未チェック」と「チェック済みだがデータ無し」を
+// 区別できるようにする。
 // get returns the cached S.M.A.R.T data for a device. The second return
 // value reports whether an entry exists at all, so callers can distinguish
 // "device not checked yet" from "checked but no data".
@@ -99,6 +110,10 @@ func (s *smartCache) markChecked() {
 	s.lastCheck = time.Now()
 }
 
+// recordResult は S.M.A.R.T 読み取りがデータを生んだかを記録し、呼び出し側が
+// 一度きりの警告を出すべきかを返す。ok=false は連続回数を増やす。警告は連続ごとに
+// 一度だけ発火し、一度でも成功すると再武装する。これにより恒久的に壊れた読み取りは
+// 毎 interval ではなく一度だけ警告し、後日の再発は依然として報告される。
 // recordResult records whether a S.M.A.R.T read produced data and reports
 // whether the caller should emit a one-time warning. ok=false increments a
 // streak; the warning fires once per streak and re-arms after any success, so
@@ -120,6 +135,9 @@ func (s *smartCache) recordResult(ok bool) (warn bool) {
 	return false
 }
 
+// smartctlBin/sudoBin はパッケージ init で絶対パスに解決する。サービスの PATH は
+// 通常信頼できるが、先に絶対パスを解決しておけば PATH エントリが実バイナリを
+// 覆い隠す余地を除ける（security プラグインは firewall バイナリで既にそうしている）。
 // smartctlBin/sudoBin are resolved to absolute paths at package init. The
 // service PATH is normally trustworthy, but resolving an absolute path first
 // removes any chance of a PATH entry shadowing the real binary (the security
@@ -132,6 +150,8 @@ var (
 		"/usr/bin/sudo", "/bin/sudo", "/usr/sbin/sudo", "/sbin/sudo")
 )
 
+// resolveSystemBin は存在する最初の絶対候補を返し、どれも無い場合のみ
+// exec.LookPath(name) にフォールバックする。全く見つからなければ "" を返す。
 // resolveSystemBin returns the first existing absolute candidate, falling back
 // to exec.LookPath(name) only when none exists. It returns "" when the binary
 // cannot be found at all.
@@ -147,6 +167,12 @@ func resolveSystemBin(name string, candidates ...string) string {
 	return ""
 }
 
+// smartctlOnce/smartctlPrefix は smartctl の呼び出し方法をメモ化する。
+// 優先順:
+//  1. smartctl だけへのパスワード無し sudo（A-4 以前の旧経路）。注: A-4 unit
+//     （NoNewPrivileges=yes）では sudo が必ず失敗するため、ここは不活性になる。
+//     その場合 S.M.A.R.T は CAP_SYS_RAWIO + 素のバイナリに依存する。
+//  2. 絶対パスに解決した素のバイナリ。
 // smartctlOnce/smartctlPrefix memoize how to invoke smartctl.
 // Preference order:
 //  1. passwordless sudo for smartctl only (legacy pre-A-4 path). NOTE: under
@@ -158,10 +184,12 @@ var (
 	smartctlPrefix []string
 )
 
+// smartctlCommand は smartctl の exec.Cmd を組み立て、使える場合は sudo を選ぶ。
 // smartctlCommand builds an exec.Cmd for smartctl, choosing sudo when usable.
 func smartctlCommand(args ...string) *exec.Cmd {
 	smartctlOnce.Do(func() {
 		if sudoBin != "" && smartctlBin != "" {
+			// 非対話プローブ。NOPASSWD ルールが存在する場合のみ成功する。
 			// Non-interactive probe; succeeds only if the NOPASSWD rule exists.
 			if err := exec.Command(sudoBin, "-n", smartctlBin, "--version").Run(); err == nil {
 				smartctlPrefix = []string{sudoBin, "-n", smartctlBin}
@@ -174,20 +202,28 @@ func smartctlCommand(args ...string) *exec.Cmd {
 	}
 	bin := smartctlBin
 	if bin == "" {
-		bin = "smartctl" // not found; let exec fail loudly
+		bin = "smartctl" // 見つからない。exec に大声で失敗させる。
+		// not found; let exec fail loudly
 	}
 	return exec.Command(bin, args...)
 }
 
+// smartctlAvailable は S.M.A.R.T を実際に問い合わせられるかを返す。
+// バイナリが見つかるだけでは不十分だ。sudoers ルールの無い非 root agent は
+// smartctl を見つけても、すべての読み取りが失敗する。そこで選択した呼び出し経路で
+// 実クエリ（smartctl --scan）をプローブし、成功を要求する。
 // smartctlAvailable reports whether S.M.A.R.T can actually be queried.
 // Merely finding the binary is not enough: a non-root agent without a sudoers
 // rule would find smartctl but every read would fail. So probe a real query
 // (smartctl --scan) through the chosen invocation path and require success.
 func smartctlAvailable() bool {
 	if smartctlBin == "" {
+		// smartctl がどこにも無い。sudo 経路も助けにならない。
 		// No smartctl anywhere; the sudo path cannot help either.
 		return false
 	}
+	// `smartctl --scan` はデバイスを列挙し、特定デバイスへの生ディスクアクセスを
+	// 必要とせず 0 で終了する。選択した経路（素か sudo -n）でバイナリが動くことを確認する。
 	// `smartctl --scan` lists devices and exits 0 without needing raw disk
 	// access to a specific device; it confirms the binary runs via the chosen
 	// path (plain or sudo -n).
@@ -209,6 +245,10 @@ func (s *smartCache) checkAvailable() bool {
 // ============================================================
 // ★ Phase 6: processCache
 //
+// processCache は Top N プロセスをキャッシュする。
+//   - 3 秒ごとに更新する（毎秒呼ぶのは高コスト）。
+//   - CPU% は前回サンプルからの差分で計算する。
+//
 // processCache caches Top N processes.
 //   - Refreshes every 3s (calling every second is expensive)
 //   - CPU% is computed from the difference since the last sample
@@ -221,8 +261,9 @@ type processCache struct {
 	interval   time.Duration
 	topN       int
 
+	// CPU% 差分計算用
 	// For CPU% delta calculation
-	lastCPUTimes   map[int32]float64 // PID -> total CPU seconds
+	lastCPUTimes   map[int32]float64 // PID -> 合計 CPU 秒 / total CPU seconds
 	lastSampleTime time.Time
 }
 
@@ -463,6 +504,9 @@ func (m *SystemModule) Init(ctx context.Context) error {
 	m.cacheCPUModel()
 
 	if m.smart.checkAvailable() {
+		// 「検出」は「収集中」を主張してはならない。smartctl --scan は
+		// 実際の読み取りが全て拒否されても成功する（A-4 capability の罠）。
+		// 権威ある信号は下の収集経路から出す。
 		// "Detected" must not claim "collecting": smartctl --scan succeeds
 		// even when every real read is denied (the A-4 capability trap). The
 		// authoritative signal is emitted from the collection path below.
@@ -470,6 +514,12 @@ func (m *SystemModule) Init(ctx context.Context) error {
 			m.logger.Info("smartctl 検出: ディスクS.M.A.R.T の取得を試行します")
 		}
 	} else {
+		// 「未インストール」と「インストール済みだが全読み取り失敗」を区別する。
+		// 後者が A-4 の罠だ。agent は非 root で動き、CAP_SYS_RAWIO が無いと
+		// smartctl はデバイスを見つける（--scan は成功）が、ATA パススルー読み取りは
+		// すべて拒否される。「未検出」とだけ報告すると、ディスク健康状態・温度・
+		// 書込量・通電時間（設計 4.2 / 4.3）の無言の欠落を隠してしまい、これは
+		// まさに運用者がダッシュボードで見えない障害だ。
 		// Distinguish "not installed" from "installed but every read fails".
 		// The second case is the A-4 trap: the agent runs as a non-root user
 		// and, without CAP_SYS_RAWIO, smartctl finds the devices (--scan
@@ -627,6 +677,10 @@ func (m *SystemModule) GetStatus() *status.SystemStatus {
 	if m.status == nil {
 		return nil
 	}
+	// ディープコピー: SystemStatus はスライス/ポインタ（Disks、Processes、
+	// CPUPerCore、LoadAverage、Network、NetworkSpeed）を含む。浅いコピーだと
+	// 保持中の status と背後の配列を共有し、結果を変更した呼び出し側が
+	// 生きた status を壊す（または updateStatus と競合する）恐れがある。
 	// Deep copy: SystemStatus contains slices/pointers (Disks, Processes,
 	// CPUPerCore, LoadAverage, Network, NetworkSpeed). A shallow copy would
 	// share their backing arrays with the stored status, so a caller that
@@ -635,6 +689,10 @@ func (m *SystemModule) GetStatus() *status.SystemStatus {
 	return m.status.Clone()
 }
 
+// StatusTimestamp は最新収集 status のタイムスタンプをコピーせずに返す。
+// 安価（RLock のみ）で、送信 interval が収集 interval より短いときに agent が
+// 未変更 status の再送をスキップできる。これにより tick ごとのディープコピー +
+// JSON エンコード + ブロードキャストを避ける。
 // StatusTimestamp returns the timestamp of the latest collected status
 // without copying it. It is cheap (RLock only) and lets the agent skip
 // re-sending an unchanged status when its send interval is shorter than the
@@ -656,6 +714,7 @@ func (m *SystemModule) getStaleThresholdLocked() time.Duration {
 }
 
 // ============================================================
+// updateStatus はシステム情報を収集する。
 // updateStatus collects system information.
 // ============================================================
 func (m *SystemModule) updateStatus() {
@@ -666,6 +725,8 @@ func (m *SystemModule) updateStatus() {
 	m.mu.RUnlock()
 
 	// ---------- CPU ----------
+	// gopsutil は全体（percpu=false）とコア単位（percpu=true）のサンプリングで
+	// 別々のベースラインを保持するため、この 2 つの呼び出しは競合しない。
 	// gopsutil keeps separate baselines for overall (percpu=false) and
 	// per-core (percpu=true) sampling, so these two calls do not race.
 	cpuVal, cpuErr := m.cpuCollector.get()
@@ -709,6 +770,8 @@ func (m *SystemModule) updateStatus() {
 				continue
 			}
 			// snap などの squashfs は /dev/loop* を使う。実ディスクではないため除外する。
+			// squashfs mounts such as snap use /dev/loop*; skip them, they are
+			// not real disks.
 			if strings.HasPrefix(p.Device, "/dev/loop") {
 				continue
 			}
@@ -728,6 +791,9 @@ func (m *SystemModule) updateStatus() {
 				}
 				if e, ok := m.smart.get(blockDev); ok {
 					se = e
+					// health 文字列の無いエントリは読み取りが何も生まなかった
+					// （権限拒否、非対応デバイス）ことを意味する。空の S.M.A.R.T を
+					// 黙って表示せず、一度だけ可視化する。
 					// An entry with no health string means the read produced
 					// nothing (permission denied, unsupported device). Surface
 					// it once instead of showing an empty S.M.A.R.T silently.
@@ -770,6 +836,8 @@ func (m *SystemModule) updateStatus() {
 			totalDiskTotal = diskInfo.Total
 			totalDiskPercent = diskInfo.UsedPercent
 		} else if m.logger != nil {
+			// この分岐では先の Partitions エラーは nil なので、disk.Usage の
+			// エラーを報告する。古い nil を出すのではなく実際の失敗を指し示す。
 			// Report the disk.Usage error, not the earlier Partitions error
 			// (which is nil on this branch), so the log points at the real
 			// failure instead of printing a stale nil.
@@ -806,10 +874,14 @@ func (m *SystemModule) updateStatus() {
 
 		netIO = &status.NetworkIO{Up: curUp, Down: curDown}
 
+		// 前回のネットワークカウンタは共有状態（Health と Configure もモジュールに
+		// 触れる）なので、読み書きをモジュールミューテックスで保護する。
 		// The previous network counters are shared state (Health and
 		// Configure also touch the module), so guard the read and write
 		// with the module mutex.
 		m.mu.Lock()
+		// 差分と経過時間から速度を計算する。
+		// curUp/curDown >= prev は上で保証済み。elapsed > 0 でゼロ除算を避ける。
 		// Compute speed from the delta and elapsed time.
 		// curUp/curDown >= prev is guaranteed above; elapsed > 0 avoids division by zero.
 		if m.hasPrevNet && curUp >= m.prevNetUp && curDown >= m.prevNetDown {
@@ -875,6 +947,10 @@ func (m *SystemModule) updateStatus() {
 // collectCPUTemp
 // ============================================================
 
+// minPlausibleCPUTemp は実際の CPU 温度として受け入れる最低値だ。
+// 一部の AMD APU（例: A4-4020）はアイドル時に 4C のような物理的にありえない
+// 値を報告する。この下限未満はセンサエラーとして扱い（0 を返す）、
+// ダッシュボードは N/A を表示し、偽のアラートを発火しない。
 // minPlausibleCPUTemp is the lowest value accepted as a real CPU temperature.
 // Some AMD APUs (e.g. A4-4020) report physically impossible readings such as
 // 4C while idle. Anything below this floor is treated as a sensor error
@@ -920,15 +996,27 @@ func collectCPUTemp() float64 {
 // ============================================================
 // resolveBlockDevice
 // ============================================================
+// partRe はパーティション接尾辞が "p<num>" のパーティションデバイスに一致する
+// （NVMe / mmcblk 形式）。例: /dev/nvme0n1p2、/dev/mmcblk0p1。
 // partRe matches a partition device whose partition suffix is "p<num>"
 // (NVMe / mmcblk style), e.g. /dev/nvme0n1p2, /dev/mmcblk0p1.
 var partRe = regexp.MustCompile(`^(.*\d)p\d+$`)
 
+// sdRe は sd/vd/hd 形式のパーティション、すなわち文字の後にパーティション番号だけが
+// 続くもの（例: sda1、vda2）に一致する。nvme0n1（途中に数字）のような丸ごとの
+// ディスクには意図的に一致させず、そのまま保つ。
 // sdRe matches an sd/vd/hd-style partition, i.e. letters followed only by a
 // partition number, e.g. sda1, vda2. It deliberately does NOT match whole
 // disks such as nvme0n1 (digits in the middle) so those are kept as-is.
 var sdRe = regexp.MustCompile(`^[a-z]+\d+$`)
 
+// resolveBlockDevice はパーティションデバイスを親の丸ごとのディスクへ対応付け、
+// S.M.A.R.T を物理ディスクごとに 1 回問い合わせられるようにする。
+//   - /dev/sdb1       -> /dev/sdb
+//   - /dev/nvme0n1p1  -> /dev/nvme0n1
+//   - /dev/nvme0n1    -> /dev/nvme0n1 (unchanged; whole disk)
+//   - /dev/mmcblk0p1  -> /dev/mmcblk0
+//   - /dev/mapper/... -> unchanged
 // resolveBlockDevice maps a partition device to its parent whole disk so
 // S.M.A.R.T can be queried once per physical disk.
 //   - /dev/sdb1       -> /dev/sdb
@@ -944,6 +1032,11 @@ func resolveBlockDevice(device string) string {
 		return device
 	}
 	name := strings.TrimPrefix(device, "/dev/")
+	// RAID、device-mapper、loop、光学その他の仮想デバイスは、末尾の数字が
+	// 名前の一部である丸ごとのデバイスだ（例: md0、dm-0、sr0、nbd0）。
+	// 数字を剥がすと存在しないパスに smartctl を問い合わせてしまう。
+	// これらの接頭辞は sd/hd/vd ディスクのパーティションを決して示さないため、
+	// 末尾の数字は丸ごとのデバイス名の一部だ。そのまま返す。
 	// RAID, device-mapper, loop, optical and other virtual devices are whole
 	// devices whose trailing digits are part of the name (e.g. md0, dm-0,
 	// sr0, nbd0), not a partition number. Stripping the digits would query
@@ -955,10 +1048,16 @@ func resolveBlockDevice(device string) string {
 			return device
 		}
 	}
+	// NVMe / mmcblk のパーティション: <base><digit>p<num>。
 	// NVMe / mmcblk partitions: <base><digit>p<num>.
 	if m := partRe.FindStringSubmatch(name); len(m) == 2 {
 		return "/dev/" + m[1]
 	}
+	// パーティション接尾辞の無い丸ごとの NVMe / mmcblk デバイスも末尾が数字だ
+	// （例: /dev/nvme0n1、/dev/mmcblk0）。これらは丸ごとのディスクであり
+	// パーティションではない。下の sdRe は "mmcblk0"（文字+数字）に一致し
+	// "/dev/mmcblk" という存在しないデバイスにしてしまい、smartctl が黙って
+	// 何も問い合わせなくなる。そのまま返す。
 	// A whole NVMe / mmcblk device (no partition suffix) still ends in a
 	// digit, e.g. /dev/nvme0n1 or /dev/mmcblk0. Those are whole disks, not
 	// partitions: sdRe below would match "mmcblk0" (letters+digits) and turn
@@ -967,6 +1066,7 @@ func resolveBlockDevice(device string) string {
 	if strings.HasPrefix(name, "nvme") || strings.HasPrefix(name, "mmcblk") {
 		return device
 	}
+	// sd/vd/hd のパーティション: <letters><num>。
 	// sd/vd/hd partitions: <letters><num>.
 	if sdRe.MatchString(name) {
 		return "/dev/" + strings.TrimRight(name, "0123456789")
@@ -985,6 +1085,9 @@ func runSmartctl(device string) smartEntry {
 	}
 	_ = err
 
+	// フィールドは「不在を実値と取り違えてはならない」箇所でポインタ/省略可に
+	// する（loop デバイスや SMART 非対応ディスクを FAILED と報告してはならず、
+	// 欠落した属性が 0 になってはならない）。
 	// Fields are pointers/optional where absence must not be mistaken for a
 	// real value (a loop device or a SMART-incapable disk must not be
 	// reported as FAILED, and a missing attribute must not become 0).
@@ -1003,6 +1106,7 @@ func runSmartctl(device string) smartEntry {
 		SmartStatus *struct {
 			Passed bool `json:"passed"`
 		} `json:"smart_status"`
+		// ATA 属性: Total_LBA_Written (241) と Power_On_Hours (9)。
 		// ATA attributes: Total_LBA_Written (241) and Power_On_Hours (9).
 		ATASmartAttributes struct {
 			Table []struct {
@@ -1012,6 +1116,7 @@ func runSmartctl(device string) smartEntry {
 				} `json:"raw"`
 			} `json:"table"`
 		} `json:"ata_smart_attributes"`
+		// NVMe ヘルスログ: DataUnitsWritten は 1000 単位（512 バイト）ブロック。
 		// NVMe health log: DataUnitsWritten is in 1000-unit (512-byte) blocks.
 		NVMeLog struct {
 			DataUnitsWritten uint64 `json:"data_units_written"`
@@ -1030,6 +1135,8 @@ func runSmartctl(device string) smartEntry {
 
 	// smart_status が無い場合は UNKNOWN（通知対象外）とする。
 	// これにより実ディスクでない・SMART 非対応のデバイスで誤警報しない。
+	// When smart_status is absent, use UNKNOWN (not alertable), so a
+	// non-disk or SMART-incapable device does not raise a false alert.
 	if result.SmartStatus != nil {
 		if result.SmartStatus.Passed {
 			e.health = "PASSED"
@@ -1038,6 +1145,8 @@ func runSmartctl(device string) smartEntry {
 		}
 	}
 
+	// Model / serial / rotation は最近の smartctl JSON では "device" の下に
+	// あるが、古いバージョンは model_name/serial_number をトップレベルに置く。
 	// Model / serial / rotation live under "device" in modern smartctl
 	// JSON, but older versions put model_name/serial_number at the top level.
 	e.model = result.Device.Model
@@ -1053,6 +1162,7 @@ func runSmartctl(device string) smartEntry {
 		e.rotationRate = result.RotationRate
 	}
 
+	// ATA: Total_LBA_Written は LBA 数（1 LBA = 512 バイト）。
 	// ATA: Total_LBA_Written is LBA count (512 bytes per LBA).
 	for _, attr := range result.ATASmartAttributes.Table {
 		switch attr.ID {
@@ -1063,6 +1173,7 @@ func runSmartctl(device string) smartEntry {
 		}
 	}
 
+	// NVMe: data_units_written は 1000 * 512 バイト単位。
 	// NVMe: data_units_written is in 1000 * 512-byte units.
 	if e.writeBytes == 0 && result.NVMeLog.DataUnitsWritten > 0 {
 		e.writeBytes = result.NVMeLog.DataUnitsWritten * 1000 * 512
