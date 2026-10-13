@@ -62,43 +62,29 @@ ExecStart=__BIN__/dashboard_linux -config __DATA__/dashboard_config.json
 
 # ---- 権限分離（dashboard 向けの保護）----
 # dashboard は Web を公開し、アップロードされた .so を扱うため、侵害時の被害を
-# 抑える保護を付ける（ホーム保護・カーネル/ cgroup 保護・リアルタイム/SUID 生成の
-# 制限）。ただし後述のとおり、管理者向けワンクリック対処を機能させるため
-# ProtectSystem=strict / NoNewPrivileges / PrivateTmp は適用しない。
+# 抑える保護を付ける。
+#
+# ワンクリック対処は特権サービス (kizuna-action.service, systemd socket
+# activation) に委譲した。dashboard は /run/kizuna-eye/action.sock に接続して
+# 結果を受け取るだけで root を要求しないため、以前 sudo の都合で外していた
+# NoNewPrivileges / ProtectSystem / PrivateTmp も含め、全保護を適用できる。
 #
 # 注意: プラグインのアップロード先 (dashboard_config.json の plugins_dir、
 # 既定 /opt/kizuna-eye/bin/plugins) は書き込み可能でなければならない。
 # deb の postinst は ReadWritePaths を /var/lib/kizuna-eye だけに絞るため、
 # 既定の plugins_dir を使うパッケージでは下の追記が必要（build-deb.sh が
 # 既定 plugins_dir を検出して追記する）。
-# 注意（ワンクリック対処との両立 / 2026-10-10 追加）:
-# dashboard は管理者向けの「ワンクリック対処」(internal/api/actions.go) を持ち、
-# これは検証済みの NOPASSWD ヘルパー /usr/local/bin/kizuna-action.sh を sudo -n で
-# 実行する。しかし次の 3 つの保護は、この経路を機能的に不能にする:
-#   - NoNewPrivileges=yes : sudo の setuid 昇格を禁止する
-#       （実測: systemd-run --property=NoNewPrivileges=yes sudo -n ... が
-#        「The "no new privileges" flag is set, which prevents sudo from
-#          running as root.」で失敗する）。
-#   - ProtectSystem=strict : ヘルパーの cron 削除
-#       (/var/spool/cron/crontabs への書き込み) を EROFS で失敗させる。
-#   - PrivateTmp=yes : ヘルパーのファイル復元 (実 /tmp 等への書き込み) を
-#       サービス専用の隔離 tmp に閉じ込め、対象を復元できない。
-# agent unit は sudo を使わずケーパビリティ (CAP_*) で直接実行するため
-# NoNewPrivileges=yes を維持できるが、dashboard のワンクリック対処は root 相当の
-# ファイル書き込み (cron spool / 実 tmp) を伴い、CAP_DAC_OVERRIDE 等で代替すると
-# 実質 root と同等になり保護の意味がない。
-# そのため dashboard ではこの 3 点のみ適用しない（他の保護は維持する）。
-# TODO: ワンクリック対処を「特権ヘルパーサービス（systemd transient unit 等）へ
-# 委譲」する設計に改めれば、dashboard を strict にしたまま機能を保てる。
+NoNewPrivileges=yes
+ProtectSystem=strict
 ProtectHome=read-only
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
+PrivateTmp=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-# 設定・ログ・セッション・アップロード済みプラグインのみ書き込みを許可する。
-# 先頭の "-" は「パスが無くても起動を失敗させない」指定（ReadWritePaths は
-# ProtectSystem を併用しない場合は主にドキュメント目的）。
-ReadWritePaths=/var/lib/kizuna-eye -__BIN__/plugins
+# 設定・ログ・セッション・アップロード済みプラグイン・アクションソケットの
+# 親ディレクトリのみ書き込みを許可する。
+ReadWritePaths=/var/lib/kizuna-eye -__BIN__/plugins /run/kizuna-eye
 
 # クラッシュ時のみ自動再起動（正常終了や手動 stop では再起動しない）。
 Restart=on-failure

@@ -1,0 +1,25 @@
+[Unit]
+Description=Kizuna-Eye privileged action service
+Requires=kizuna-action.socket
+After=kizuna-action.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/kizuna-eye/kizuna-action-server
+# The helper needs root to kill other users' processes, edit the cron spool,
+# and manage nftables. Everything else is locked down below.
+User=root
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=no
+# The helper writes only to the cron spool (delete_cron) and the monitored
+# dirs (restore_file); nft/kill need the two capabilities.
+ReadWritePaths=/var/spool/cron/crontabs /tmp /var/tmp /dev/shm /run
+CapabilityBoundingSet=CAP_KILL CAP_NET_ADMIN CAP_DAC_OVERRIDE
+AmbientCapabilities=
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+# Kizuna-Eye privileged action server.
+#
+# Runs as root, listens on a Unix socket (socket activation or its own bind),
+# accepts one JSON request per connection, validates it strictly, and runs the
+# existing shell helper (/usr/lib/kizuna-eye/kizuna-action.sh) with an argument
+# array (never a shell string). The dashboard talks to this socket instead of
+# using sudo, so the dashboard unit can keep NoNewPrivileges/ProtectSystem.
+#
+# Wire protocol (one request per connection):
+#   -> {"action":"kill_port","args":["44444"]}\n
+#   <- {"ok":true,"detail":"..."}\n   or {"ok":false,"error":"..."}\n
+import json
+import os
+import socket
+import struct
+import subprocess
+import sys
+import threading
+
+HELPER = "/usr/lib/kizuna-eye/kizuna-action.sh"
+SOCK_PATH = "/run/kizuna-eye/action.sock"
+
+# Closed set of actions, kept in sync with internal/api/actions.go.
+ALLOWED = {
+    "block_ip", "unblock_ip", "delete_cron",
+    "kill_process", "kill_port", "restore_file",
+}
+
+# Actions that take exactly one argument, and how to validate it.
+ONE_ARG = {
+    "block_ip", "unblock_ip", "delete_cron", "kill_process", "kill_port",
+}
+
+MAX_LINE = 4096
+
+
+def _allowed_uid_gid():
+    # The socket is 0660 root:kizuna-eye, so only members can connect, but we
+    # verify peer credentials anyway (defense in depth) and reject root only
+    # if it is not expected. We allow the kizuna-eye user/group by name.
+    import pwd
+    import grp
+    uids = {0}  # root may always talk to its own helper
+    gids = {0}
+    for name in ("kizuna-eye", "kizuna"):
+        try:
+            uids.add(pwd.getpwnam(name).pw_uid)
+        except KeyError:
+            pass
+        try:
+            gids.add(grp.getgrnam(name).gr_gid)
+        except KeyError:
+            pass
+    return uids, gids
+
+
+ALLOWED_UIDS, ALLOWED_GIDS = _allowed_uid_gid()
+
+
+def peer_ok(conn):
+    try:
+        raw = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, gid = struct.unpack("3i", raw)
+    except OSError:
+        return False
+    return uid in ALLOWED_UIDS or gid in ALLOWED_GIDS
+
+
+def validate(action, args):
+    if action not in ALLOWED:
+        return None, "unsupported action"
+    if not isinstance(args, list):
+        return None, "args must be a list"
+    args = [str(a) for a in args]
+    if action in ONE_ARG and len(args) != 1:
+        return None, "this action takes exactly one argument"
+    if action == "restore_file" and len(args) != 2:
+        return None, "restore_file takes two arguments"
+    # Reject control characters and spaces/semicolons that could confuse the
+    # helper; the helper also re-validates, so this is a first gate.
+    for a in args:
+        if any(c in a for c in (" ", "\t", ";", "\n", "\r", "\x00")):
+            return None, "argument contains forbidden characters"
+        if len(a) > 256:
+            return None, "argument too long"
+    return args, None
+
+
+def handle(conn):
+    try:
+        conn.settimeout(15)
+        buf = b""
+        while b"\n" not in buf and len(buf) < MAX_LINE:
+            chunk = conn.recv(1024)
+            if not chunk:
+                break
+            buf += chunk
+        line = buf.split(b"\n", 1)[0].decode("utf-8", "replace").strip()
+        if not line:
+            return
+        req = json.loads(line)
+        action = str(req.get("action", ""))
+        args = req.get("args", [])
+        args, err = validate(action, args)
+        if err:
+            resp = {"ok": False, "error": err}
+            conn.sendall((json.dumps(resp) + "\n").encode())
+            return
+        # Run the helper with an argument array (no shell).
+        proc = subprocess.run(
+            [HELPER, action] + args,
+            capture_output=True, text=True, timeout=15,
+        )
+        out = (proc.stdout or "").strip()
+        errout = (proc.stderr or "").strip()
+        if proc.returncode == 0:
+            resp = {"ok": True, "detail": out or "ok"}
+        else:
+            resp = {"ok": False, "error": errout or out or ("exit %d" % proc.returncode)}
+        conn.sendall((json.dumps(resp) + "\n").encode())
+    except Exception as e:  # noqa: BLE001
+        try:
+            conn.sendall((json.dumps({"ok": False, "error": "server error: %r" % (e,)}) + "\n").encode())
+        except OSError:
+            pass
+    finally:
+        try:
+            conn.close()
+        except OSError:
+            pass
+
+
+def serve_forever(sock):
+    while True:
+        try:
+            conn, _ = sock.accept()
+        except OSError:
+            continue
+        if not peer_ok(conn):
+            try:
+                conn.sendall(b'{"ok":false,"error":"peer not allowed"}\n')
+            except OSError:
+                pass
+            conn.close()
+            continue
+        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+
+
+def main():
+    # systemd socket activation passes the listening fd as fd 3 (LISTEN_FDS=1)
+    # when the unit sets Accept=no. Otherwise bind the path ourselves.
+    listen_fds = int(os.environ.get("LISTEN_FDS", "0"))
+    if listen_fds >= 1:
+        sock = socket.fromfd(3, socket.AF_UNIX, socket.SOCK_STREAM)
+    else:
+        os.makedirs(os.path.dirname(SOCK_PATH), exist_ok=True)
+        try:
+            os.unlink(SOCK_PATH)
+        except FileNotFoundError:
+            pass
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(SOCK_PATH)
+        os.chmod(SOCK_PATH, 0o660)
+        sock.listen(16)
+    serve_forever(sock)
+
+
+if __name__ == "__main__":
+    main()

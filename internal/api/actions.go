@@ -1,13 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -26,29 +26,68 @@ type AlertActioner interface {
 	RecordAction(a *alert.HistoryEntry, action, detail, result string)
 }
 
-// actionHelperPath is the sudo helper installed by install.sh. It validates
-// the action name and arguments and is the only privileged command the
-// dashboard may run for one-click remediation (sudoers grants it NOPASSWD).
-var actionHelperPath = "/usr/local/bin/kizuna-action.sh"
+// actionSocketPath is the Unix socket of the privileged action service
+// (kizuna-action.service, started on demand by kizuna-action.socket via
+// systemd socket activation). The dashboard runs unprivileged and talks to
+// this socket instead of using sudo, so the dashboard unit can keep
+// NoNewPrivileges=yes / ProtectSystem=strict. The service re-validates the
+// action and its arguments before running the shell helper.
+var actionSocketPath = "/run/kizuna-eye/action.sock"
 
-// sudoBin is resolved to an absolute path so the dashboard invokes the real
-// sudo even when PATH contains a user-writable directory (design principle
-// V3: 特権ヘルパーの絶対パス化). pkg/module (smartctl) and internal/updater
-// already do this; running the bare name here was the one inconsistency.
-// Falling back to "sudo" only when no known location exists keeps the error
-// visible (exec fails) instead of silently skipping the action.
-var sudoBin = resolveSudoBin()
+// actionRequestTimeout bounds a single action round-trip.
+const actionRequestTimeout = 15 * time.Second
 
-func resolveSudoBin() string {
-	for _, c := range []string{"/usr/bin/sudo", "/bin/sudo", "/usr/sbin/sudo", "/sbin/sudo"} {
-		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
-			return c
-		}
+// actionSocketResponse is the JSON reply from the action service.
+type actionSocketResponse struct {
+	OK     bool   `json:"ok"`
+	Detail string `json:"detail"`
+	Error  string `json:"error"`
+}
+
+// runActionViaSocket sends one action to the privileged service over the Unix
+// socket and returns its detail (on success) or error text (on failure). The
+// returned error is non-nil on failure so callers can humanize it; the error
+// text is also returned as the first value so humanizeActionError can map the
+// helper's machine-readable reason to an operator-friendly message. It never
+// uses a shell and never passes a string to a shell.
+func runActionViaSocket(ctx context.Context, action string, args []string) (string, error) {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "unix", actionSocketPath)
+	if err != nil {
+		return "", fmt.Errorf("action socket unavailable: %w", err)
 	}
-	if p, err := exec.LookPath("sudo"); err == nil {
-		return p
+	defer conn.Close()
+
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	} else {
+		_ = conn.SetDeadline(time.Now().Add(actionRequestTimeout))
 	}
-	return "sudo"
+
+	body, err := json.Marshal(map[string]interface{}{"action": action, "args": args})
+	if err != nil {
+		return "", err
+	}
+	body = append(body, '\n')
+	if _, err := conn.Write(body); err != nil {
+		return "", err
+	}
+
+	line, err := bufio.NewReader(conn).ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		return "", err
+	}
+	var resp actionSocketResponse
+	if err := json.Unmarshal(line, &resp); err != nil {
+		return "", fmt.Errorf("invalid action response: %w", err)
+	}
+	if resp.OK {
+		return resp.Detail, nil
+	}
+	if resp.Error == "" {
+		resp.Error = "action failed"
+	}
+	return resp.Error, errors.New(resp.Error)
 }
 
 // allowedActions is the closed set the UI may request. Keeping it a map (not
@@ -134,9 +173,8 @@ func (h *ActionHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	if len(args) > 0 {
 		target = args[len(args)-1]
 	}
-	cmd := exec.CommandContext(ctx, sudoBin, append([]string{"-n", actionHelperPath, req.Action}, args...)...)
-	out, runErr := cmd.CombinedOutput()
-	resultText := strings.TrimSpace(string(out))
+	out, runErr := runActionViaSocket(ctx, req.Action, args)
+	resultText := strings.TrimSpace(out)
 
 	result := "success"
 	detail := ""

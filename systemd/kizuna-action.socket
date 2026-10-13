@@ -1,0 +1,15 @@
+[Unit]
+Description=Kizuna-Eye privileged action socket
+Documentation=man:kizuna-action(8)
+
+[Socket]
+# A Unix socket shared with the dashboard, which runs as user kizuna-eye.
+ListenStream=/run/kizuna-eye/action.sock
+SocketMode=0660
+SocketUser=root
+SocketGroup=kizuna-eye
+# Do not start a new process per connection; the server accepts in a loop.
+Accept=no
+
+[Install]
+WantedBy=sockets.target
