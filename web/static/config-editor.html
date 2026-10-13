@@ -9,6 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/redesign.css?v=16830b49">
     <!-- テーマは描画前に適用する（一瞬の色反転を防ぐ）。 -->
+    <!-- Apply the theme before rendering (prevents a brief colour flash). -->
     <script src="auth-theme.js?v=bb16b2fb"></script>
 </head>
 <body class="config-editor-page" data-role-min="admin">
@@ -95,14 +96,20 @@
                     </div>
 
                     <!-- GUI 設定フォーム -->
+                    <!-- GUI config form -->
                     <div class="gui-panel" id="guiPanel" style="display:none;">
                         <!-- 保存ボタンはヘッダー上部の #saveBtn に一本化した（下部の
                              重複ボタンを削除）。#saveBtn は currentSaveFn() 経由で
                              GUI/JSON/アラートの各モードに応じた保存処理を呼ぶ。 -->
+                        <!-- The save button is unified on #saveBtn in the header
+                             (the duplicate button below was removed). #saveBtn
+                             calls the save handler for GUI/JSON/alert mode via
+                             currentSaveFn(). -->
                         <div class="gui-body" id="guiBody"></div>
                     </div>
 
                     <!-- アラート閾値エディタ -->
+                    <!-- Alert threshold editor -->
                     <div class="alert-config-panel" id="alertConfigPanel" style="display:none;">
                         <p class="gui-help" data-i18n="config.alerts_help">CPU・メモリ・ディスク・温度の監視しきい値です（Kizuna-Eye 本体の機能。プラグインの有無に関係なく動作します）。セキュリティプラグインの通知設定は「モジュール管理」画面で行います。</p>
                         <div class="alert-config-body">
@@ -139,6 +146,9 @@
                         </div>
                         <!-- アラートは GUI/JSON 切替が無くヘッダーの操作群を
                              隠すため、専用の保存ボタンをここに置く。 -->
+                        <!-- Alerts have no GUI/JSON switcher and hide the header
+                             action group, so a dedicated save button is placed
+                             here. -->
                         <div class="alert-config-footer">
                             <button class="btn-primary" id="alertConfigSaveBtn" data-i18n="config.save">保存</button>
                         </div>
@@ -149,6 +159,7 @@
         </main>
 
         <!-- 設定スナップショット（タイムトラベル）モーダル -->
+        <!-- Config snapshot (time travel) modal -->
         <div class="modal-overlay" id="historyModal" style="display:none;">
             <div class="modal">
                 <div class="modal-header">

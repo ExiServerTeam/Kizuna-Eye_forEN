@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/logs.css?v=c2aaff81">
     <link rel="stylesheet" href="/redesign.css?v=16830b49">
     <!-- テーマは描画前に適用する（一瞬の色反転を防ぐ）。 -->
+    <!-- Apply the theme before rendering (prevents a brief colour flash). -->
     <script src="/auth-theme.js?v=bb16b2fb"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
@@ -48,12 +49,14 @@
             </div>
 
             <!-- ツールバー: 左に「種類」のセグメント、右に操作を1行でまとめる。 -->
+            <!-- Toolbar: the "type" segment on the left, actions on the right, in one row. -->
             <div class="log-toolbar">
                 <span class="log-toolbar-label" data-i18n="logs.type_label">種類</span>
                 <div class="log-type-buttons" id="logTypeButtons">
                     <button type="button" class="btn-secondary active" id="logTypeAgent" data-type="agent">Agent</button>
                     <button type="button" class="btn-secondary" id="logTypeDashboard" data-type="dashboard">Dashboard</button>
                     <!-- プラグイン等の別ログファイルは /api/logs/types からこの中へ動的に追加 -->
+                    <!-- Other log files (plugins, etc.) are added here dynamically from /api/logs/types -->
                 </div>
                 <div class="log-toolbar-ops">
                     <label class="log-lines-label"><span data-i18n="logs.lines">行数</span>
@@ -67,6 +70,9 @@
                     <!-- テキストは logs.js が言語と状態に応じて設定するため、
                          data-i18n を付けない（付けると i18n が状態を無視して
                          上書きしてしまう）。 -->
+                    <!-- The text is set by logs.js per language and state, so
+                         do not add data-i18n (i18n would overwrite it and
+                         ignore the state). -->
                     <button type="button" class="btn-secondary" id="logFormatBtn">表示: JSON</button>
                     <button type="button" class="btn-secondary" id="logFollowBtn">自動更新: ON</button>
                     <button type="button" class="btn-primary" id="logReloadBtn" data-i18n="logs.reload">再読み込み</button>
@@ -74,6 +80,7 @@
             </div>
 
             <!-- 検索 / フィルタ行 -->
+            <!-- Search / filter row -->
             <div class="log-filterbar">
                 <input type="text" id="logSearch" class="log-search"
                        placeholder="検索 (grep / 正規表現)" data-i18n-placeholder="logs.search_ph">
