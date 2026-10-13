@@ -58,20 +58,23 @@
     }
 
     function wire() {
-        var buttons = [
-            document.getElementById('authThemeToggle'),
-            document.getElementById('themeToggle')
-        ];
+        // 注意: ダッシュボードの #themeToggle は app.js が click を処理する。
+        // ここでも click を足すと 1 クリックで 2 回トグルし、見た目上「切り替え
+        // が死んで」しまう（ダーク→ライト→ダーク）。したがって auth-theme.js
+        // が click を張るのは認証ページ専用の #authThemeToggle だけにする。
+        // #themeToggle にはアイコン/ラベルの反映（applyTheme）だけ行う。
+        var authBtn = document.getElementById('authThemeToggle');
         var any = false;
-        buttons.forEach(function (btn) {
-            if (!btn || btn.dataset.themeWired === '1') return;
-            btn.dataset.themeWired = '1';
+        if (authBtn && authBtn.dataset.themeWired !== '1') {
+            authBtn.dataset.themeWired = '1';
             any = true;
-            btn.addEventListener('click', function () {
+            authBtn.addEventListener('click', function () {
                 setTheme(getTheme() === 'dark' ? 'light' : 'dark');
             });
-        });
-        if (any) applyTheme(getTheme());
+        }
+        // アイコン/ラベルを現在のテーマに合わせる（click は張らない）。
+        applyTheme(getTheme());
+        void any;
 
         // Follow OS changes only when the user has not chosen manually.
         if (window.matchMedia) {
