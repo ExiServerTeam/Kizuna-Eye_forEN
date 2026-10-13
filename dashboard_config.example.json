@@ -1,5 +1,6 @@
 {
     "listen_addr": ":8080",
+    "language": "en",
     "log_file": "dashboard.log",
     "static_dir": "./web/static",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",

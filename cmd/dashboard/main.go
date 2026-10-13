@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -1161,6 +1162,21 @@ func main() {
 			"agent_connected": agentUp,
 			"timestamp":       time.Now().Format(time.RFC3339),
 		})
+	})
+
+	// ---- Default language ----
+	// Served before i18n.js so the browser can fall back to the operator's
+	// configured language (dashboard_config.json "language") when the user
+	// has no saved preference. Defaults to "en" when unset/unknown.
+	uiLang := strings.ToLower(strings.TrimSpace(cfg.Language))
+	if uiLang != "ja" && uiLang != "en" {
+		uiLang = "en"
+	}
+	langJS := "window.KIZUNA_DEFAULT_LANG = " + strconv.Quote(uiLang) + ";\n"
+	mux.HandleFunc("/lang.js", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+		_, _ = w.Write([]byte(langJS))
 	})
 
 	// ---- Static files ----
