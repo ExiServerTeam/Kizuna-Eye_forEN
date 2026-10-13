@@ -215,8 +215,16 @@ if [ "$PURGE" -eq 1 ]; then
         run rm -rf "$RUN_HOME/.kizuna-eye"
     fi
     # /opt/kizuna-eye（bin / run / plugins）
+    # 安全ガード: OPT_ROOT は BIN_DIR の親ディレクトリ。KIZUNA_BIN_DIR を
+    # 誤って /bin 等に設定すると OPT_ROOT="/" となり `rm -rf /` を実行しかねない
+    # （実際に過去 chmod 600 /* の事故が起きている）。削除は「ディレクトリ名が
+    # kizuna-eye である」場合だけに限定し、"" と "/" は明示的に拒否する。
     OPT_ROOT="$(dirname "$BIN_DIR")"
-    if [ -d "$OPT_ROOT" ]; then
+    OPT_BASE="$(basename "$OPT_ROOT")"
+    if [ "$OPT_ROOT" = "/" ] || [ -z "$OPT_ROOT" ] || [ "$OPT_BASE" != "kizuna-eye" ]; then
+        warn "安全のため OPT_ROOT を削除しません（想定: /opt/kizuna-eye、実際: $OPT_ROOT）。"
+        warn "手動で削除する場合: sudo rm -rf /opt/kizuna-eye"
+    elif [ -d "$OPT_ROOT" ]; then
         log "   削除: $OPT_ROOT"
         run rm -rf "$OPT_ROOT"
     fi
