@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="/modules.css?v=695c780e">
     <link rel="stylesheet" href="/redesign.css?v=16830b49">
     <!-- テーマは描画前に適用する（一瞬の色反転を防ぐ）。 -->
+    <!-- Apply the theme before rendering (prevents a brief colour flash). -->
     <script src="/auth-theme.js?v=bb16b2fb"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
@@ -48,6 +49,7 @@
                 <div class="page-header-right">
                     <div class="file-actions">
                         <!-- ファイル入力は label で紐付け -->
+                        <!-- The file inputs are linked with a label -->
                         <label for="fileInput" class="btn-secondary" role="button" tabindex="0" data-i18n="modules.load_json">
                             JSON読み込み
                         </label>
@@ -84,6 +86,7 @@
     </div>
 
     <!-- モジュール編集モーダル（既存・手動編集用） -->
+    <!-- Module edit modal (existing / manual edit) -->
     <div class="modal-overlay" id="moduleModal" style="display:none;">
         <div class="modal">
             <div class="modal-header">
@@ -163,6 +166,7 @@
     </div>
 
     <!-- Phase 8-6: 動的プラグイン設定モーダル -->
+    <!-- Phase 8-6: dynamic plugin config modal -->
     <div class="modal-overlay" id="pluginConfigModal" style="display:none;">
         <div class="modal">
             <div class="modal-header">
@@ -172,6 +176,7 @@
             <div class="modal-body">
                 <div id="pluginConfigBody">
                     <!-- 動的フォームがここに入る -->
+                    <!-- The dynamic form goes here -->
                 </div>
             </div>
             <div class="modal-footer">
@@ -182,6 +187,7 @@
     </div>
 
     <!-- 削除確認モーダル -->
+    <!-- Delete confirmation modal -->
     <div class="modal-overlay" id="deleteModal" style="display:none;">
         <div class="modal modal-sm">
             <div class="modal-header">
@@ -200,6 +206,7 @@
     </div>
 
     <!-- 未署名（サードパーティ）プラグインの追加確認オーバーレイ -->
+    <!-- Confirmation overlay for adding an unsigned (third-party) plugin -->
     <div class="modal-overlay" id="unsignedPluginModal" style="display:none;">
         <div class="modal modal-sm">
             <div class="modal-header">

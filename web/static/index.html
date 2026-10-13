@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="/style.css?v=65b65169">
     <link rel="stylesheet" href="/redesign.css?v=16830b49">
     <!-- テーマは描画前に適用する（body を描いてから当てると一瞬色が反転する）。 -->
+    <!-- Apply the theme before rendering (applying it after the body is
+         painted causes a brief colour flash). -->
     <script src="/auth-theme.js?v=bb16b2fb"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap" rel="stylesheet">
 </head>
@@ -41,6 +43,7 @@
         <main class="main">
             <section class="gauge-grid">
                 <!-- CPU（クリック可能） -->
+                <!-- CPU (clickable) -->
                 <div class="gauge-card" id="cpuCard" data-click="process" data-process-sort="cpu" role="button" tabindex="0">
                     <div class="gauge-header">
                         <h2 class="gauge-title">
@@ -62,6 +65,7 @@
                 </div>
 
                 <!-- メモリ（クリック可能） -->
+                <!-- Memory (clickable) -->
                 <div class="gauge-card" id="memCard" data-click="process" data-process-sort="mem" role="button" tabindex="0">
                     <div class="gauge-header">
                         <h2 class="gauge-title" data-i18n="card.memory">メモリ</h2>
@@ -79,6 +83,7 @@
                 </div>
 
                 <!-- ストレージ（クリックで詳細） -->
+                <!-- Storage (click for details) -->
                 <div class="gauge-card" id="diskCard" data-click="storage" role="button" tabindex="0">
                     <div class="gauge-header">
                         <h2 class="gauge-title" data-i18n="card.storage">ストレージ</h2>
@@ -98,6 +103,7 @@
                 </div>
 
                 <!-- 稼働時間 -->
+                <!-- Uptime -->
                 <div class="gauge-card uptime-card">
                     <div class="gauge-header">
                         <h2 class="gauge-title" data-i18n="card.uptime">稼働時間</h2>
@@ -130,8 +136,14 @@
                  カードの HTML/JS/CSS はモジュール（WebAssetProvider）が持ち、
                  /plugins/<name>/ から iframe で読み込む。宣言が無ければ何も出ない。
                  JS が historySection の直前に挿入する。 -->
+            <!-- Insertion point for module-provided cards. The core only places
+                 a "frame" here; the card's HTML/JS/CSS is owned by the module
+                 (WebAssetProvider) and loaded in an iframe from
+                 /plugins/<name>/. Nothing appears when there is no declaration.
+                 JS inserts it just before historySection. -->
 
             <!-- メトリクス履歴セクション -->
+            <!-- Metrics history section -->
             <section class="history-section" id="historySection">
                 <div class="backup-header" id="historyToggle" role="button" tabindex="0" aria-expanded="true">
                     <div class="backup-header-left">
@@ -146,6 +158,8 @@
                     <canvas id="historyChart" height="220"></canvas>
                     <!-- 凡例: 各系列の色をラベルで明示する。線だけでは
                          CPU しか見えていないように誤解されるため。 -->
+                    <!-- Legend: name each series' colour. Lines alone are
+                         misread as showing only the CPU. -->
                     <div class="history-legend">
                         <span class="history-legend-item">
                             <span class="history-legend-chip cpu"></span>
@@ -164,6 +178,7 @@
             </section>
 
             <!-- プラグインステータスセクション -->
+            <!-- Plugin status section -->
             <section class="backup-section" id="backupSection">
                 <div class="backup-header" id="backupToggle" role="button" tabindex="0" aria-expanded="true">
                     <div class="backup-header-left">
@@ -186,6 +201,7 @@
             </section>
 
             <!-- アラート履歴セクション -->
+            <!-- Alert history section -->
             <section class="alerts-section" id="alertsSection">
                 <div class="backup-header" id="alertsToggle" role="button" tabindex="0" aria-expanded="true">
                     <div class="backup-header-left">
@@ -213,6 +229,7 @@
     </div>
 
     <!-- プロセス一覧モーダル -->
+    <!-- Process list modal -->
     <div class="modal-overlay" id="processModal" style="display:none;">
         <div class="modal modal-lg">
             <div class="modal-header">
@@ -249,6 +266,7 @@
     </div>
 
     <!-- ストレージ詳細モーダル（CrystalDiskInfo 風） -->
+    <!-- Storage detail modal (CrystalDiskInfo style) -->
     <div class="modal-overlay" id="storageModal" style="display:none;">
         <div class="modal modal-lg">
             <div class="modal-header">
