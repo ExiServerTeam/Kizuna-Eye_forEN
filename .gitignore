@@ -32,3 +32,6 @@ plugins/
 
 # SSH credentials for local scripts (never commit)
 scripts/.ssh_env
+
+# Output of scripts/scan_emoji.py (generated report, never commit)
+emoji_report.txt
