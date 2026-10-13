@@ -45,7 +45,7 @@ Priority: optional
 Architecture: $ARCH
 Depends: adduser, python3, smartmontools, rsync, bubblewrap
 Recommends: nftables, ca-certificates
-Maintainer: Kizuna-Eye Project
+Maintainer: Kizuna-Eye Project <sy815twty.com>
 Description: Lightweight server monitoring tool
  Kizuna-Eye is a lightweight server monitoring tool written in Go,
  designed for low-spec servers. It provides a dashboard and an agent
