@@ -38,6 +38,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - アップロードされた `.so` は `plugins_dir/.quarantine`（0700）へ一時保管し、検証成功後に同一 FS 内 `rename` で配置。署名検証 → 隔離検査 → 配置の順に固定
 - プラグイン削除時に `.sig` も削除（同名 `.so` の再アップロードが過去の署名を継承しない）
 - agent を専用システムユーザー `kizuna-agent` で動かす systemd unit 一式と移行スクリプトを追加（A-4: `systemd/kizuna-agent.service` `kizuna-agent-a4.service` `kizuna-dashboard.service` `kizuna-watchdog.{service,timer}` `install-services.sh` `migrate-agent-user.sh` `setup-coredump.sh` `60-kizuna-core.conf`）
+- A-4 移行後も agent が共有設定（`agent_config.json` / `modules.json`）を読めるよう `fsutil.TightenSharedConfigMode` を追加。0600 へ締めつつ、移行が与えた group read（0640）は保持する（0644 / 0666 / 0777 は 0640、それ以外は 0600）。ダッシュボードが保存するたびに 0600 へ戻して agent が読めなくなる問題を防止
+- アラート履歴 `logs/alert_history.jsonl` も同じ共有契約の対象にした（`fsutil.SharedFileMode`）。ダッシュボードが起動時（`SetPersistence`）・追記（`O_CREATE`）・圧縮（`WriteFileAtomic`）のいずれでも 0600 へ戻さず、A-4 移行が与えた 0640（`Clear` 後の再作成は共有ディレクトリなら 0640）を保つ。agent（`kizuna-agent`）が履歴を読めず V2-B の整合性検証が `alert_history_tamper` を誤報し続ける問題を防止
+- SUID/SGID 検知に「高リスク領域の常時走査」を追加（`suid_fast_check` / `suid_fast_paths` / `suid_fast_baseline_path` / `suid_fast_interval_sec`）。従来は `suid_paths`（既定は `/usr` 以下のみ）を `suid_scan_hour`（既定3時）に1時間間隔で1回だけ走査していたため、`/tmp` 等に SUID バイナリを置かれても一度も検知できなかった。既定で `/tmp`, `/var/tmp`, `/dev/shm`, `/run`, `/home`, `/opt`, `/srv` を時間帯制限なし（`scanHour=-1`）・10秒間隔で走査し、新規 SUID/SGID ファイルは critical、既知ファイルのモード変更は warning として通知する（ベースラインは `./logs/kizuna-security-suid-fast.json` に分離）
+- SUID/SGID 検知を **inotify によるイベント駆動**にした（`suid_watch` / `suid_watch_paths`）。周期走査だけでは「走査と走査の間に作成〜削除が完結したファイル」を原理的に見られず、実機の攻撃テストで 7 回中 2 回取りこぼしていた（エージェントのポーリング 15 秒に対し存在窓 10 秒）。既定で `/tmp`, `/var/tmp`, `/dev/shm`, `/run` を監視し、ディレクトリの変化（作成・改名・属性変更）を契機に即時走査するため、検知は通常 1 秒未満になる。監視は深さ 3 階層・最大 2048 本に制限し、`fs.inotify.max_user_watches`（ホスト全体の予算）を食い潰さない。使えない環境では周期走査のみへ自動的に戻る
+- 高リスク領域の SUID 走査をエージェントのポーリング間隔から切り離した（専用ループ + `SUIDMonitor.CheckForce`）。ポーリング間隔で量子化されると `suid_fast_interval_sec=10` が実効 15 秒になり、短命なファイルを取りこぼす。下限は 5 秒（5 未満は既定 10 秒へ）
+- SSH 失敗ログインの検知を強化した（`failed_sustained_burst` / `failed_sustained_window_sec` / `ssh_enum_distinct_users` / `ssh_enum_window_sec`）。実機の攻撃テスト（攻撃 4）で、失敗回数を「最初の失敗から `burst_window_sec` 以内」で数えていたため、20〜80 秒間隔でユーザー名を回す試行が全件 warning 止まりとなり critical（およびブロック候補）に到達しなかった。直近 `burst_window_sec` のスライディング窓へ改め、加えて低頻度・長時間の総当たり（既定 15 回 / 600 秒）とユーザー名の列挙（既定 5 種類 / 300 秒）を別規則の critical とした。エスカレーションは 1 送信元につき 1 回で、長窓ぶん静穏になると再武装する
+- ループバック (127.0.0.1) からの失敗ログインに、送信元 IP では攻撃元を特定できない旨の注記を追加（ホスト上に侵入済みの攻撃者、または 127.0.0.1 へのトンネル経由。実機の攻撃 4 はこの形だった）
+- 「SSH ログイン成功の急増」の再通知を IP ごとにレート制限（冷却 = `ssh_login_window_sec` の経過後、かつ回数が前回通知の 2 倍以上）。既知 IP からのものには注記を付けた。監視ツール・運用端末の反復接続が窓ごとに同じ critical を出し、本物の失敗の signal を埋める問題（監査 F-6）を解消
+- ログ由来のユーザー名を通知に載せる前に制御文字を除去し 64 文字へ切り詰める（攻撃者が自由に決められる値による通知の偽装・肥大化を防止）
+- FIM に**ディレクトリ監視（inotify）**を追加（`fim_watch` / `fim_watch_paths` / `fim_watch_interval_sec` / `fim_watch_max_files` / `fim_watch_max_size_kb` / `fim_watch_ignore` / `fim_watch_baseline_path`）。`integrity_files` は事前に列挙した絶対パスしかハッシュしないため、攻撃者が任意の名前でファイルを作る置き場（`/tmp` 等）は原理的に検知できない。実機の攻撃 A-5（`/tmp/kizuna-fim-test/watched.txt` の作成→変更→削除）は、FIM の走査が対象の存在中に 2 回入っていたにもかかわらず 1 件も検知されなかった。inotify が通知したパスだけをその場でハッシュして差分を検知し（作成・変更は critical、削除と「走査前に消えた短命なファイル」は warning）、専用ループ（既定 10 秒）の周期走査は inotify が使えない環境・取りこぼしのフォールバックとして回す。走査は深さ 3 階層・最大 `fim_watch_max_files` 件（既定 4096）・`fim_watch_max_size_kb` 以下（既定 4MiB）に制限し、走査できない範囲がある場合は状態が変わったときだけ警告する（ビジーなディレクトリで履歴が埋まるのを防ぐ）。ベースラインは FIM 本体と同じ鍵で署名する（ファイルを書き換えて「改ざん無し」の初期状態に戻せない）。既定は `fim_watch=false`（`/tmp` 全体を丸ごと監視すると正規の一時ファイルでも通知が出るため、対象を絞るか `fim_watch_ignore` と併用して有効化する）
+- inotify 層を汎用化（`newInotifyWatcher`）。従来は「何か変わった」しか通知できず SUID 走査の起動にしか使えなかったが、変化したパスの一覧も渡せるようにした（FIM ディレクトリ監視がそのパスだけを走査するために必要）。ログの接頭辞は機能名（`SUID` / `FIM`）で出し分ける
+- FIM ディレクトリ監視を実機の攻撃 A-5（`/tmp/kizuna-fim-test` の作成→変更→削除）で検証して見つかった 2 点を修正。(1) 監視ルートがまだ存在しない場合は最も近い既存の親を監視し、ルートが作られた時点で本来の監視を張る（配備直後に `/tmp/kizuna-fim-test` が無く「0 個のディレクトリを監視」となり、ディレクトリ作成から始まる最初の攻撃を取りこぼした）。(2) inotify の `IN_ISDIR` を区別し、ディレクトリを「作成直後に消えた短命なファイル」として誤報しない（実機で誤報を確認）。代わりにディレクトリが変化した場合は中を走査する（`mkdir` 直後にファイルを置かれると、inotify の監視設置前に作成が済んでいて作成イベントを取りこぼすため）
 
 ### Fixed
 - 手動バックアップ実行の二重起動ガードを `request_id` 照合に変更（定期実行の結果で誤って解除されない）
@@ -56,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.gitattributes` を追加して改行コードを LF に正規化（gofmt の安定化）
 - README（英/日）を実装に合わせて全面的に整理（壊れていたコードフェンスと古い設定例を修正）
 - `scripts/verify.sh` は gcc 未検出時に `-race` を「失敗」ではなく「スキップ」に変更
+- `start.sh` / `stop.sh` に操作対象の引数（`all` / `dashboard` / `agent`、省略時は従来どおり両方）を追加。agent が systemd 管理下（`kizuna-agent` が active または enabled）のときは agent を起動・停止しない（A-4 移行後の二重起動防止。強制する場合は `KIZUNA_FORCE_MANUAL=1`）
+- `stop.sh` が kill の完了を確認せず「停止しました」と表示していた問題を修正。停止できなかった場合は警告を出して終了コード 1 を返す（別ユーザー所有のプロセスは EPERM で kill できないため）
 
 ### Added
 - `cmd/plugin-sign`: Ed25519 鍵対生成 / `.so` への分離署名 / 検証 / 一括署名（`-gen-key` `-sign` `-sign-all` `-verify` `-print-public-key`）。`build.sh`・`install.sh`・`update.sh`・`safe_update.sh`・`scripts/build.sh`・`scripts/verify.sh` のビルド/ロールバック対象へ組み込み

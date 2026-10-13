@@ -39,6 +39,7 @@ type SUIDMonitor struct {
 	mu          sync.Mutex
 	known       map[string]string // path -> octal mode (e.g. "4755")
 	lastScan    time.Time
+	scanning    bool
 	initialized bool
 	// hasBaseline is true once a baseline has been recorded (or loaded
 	// from disk). len(known) must not be used for this: a system with zero
@@ -64,7 +65,24 @@ func NewSUIDMonitor(paths []string, baselinePath string, interval time.Duration,
 	}
 }
 
-func (s *SUIDMonitor) Check() {
+// Check は間隔と時間帯の制限を守って走査する（定期ポーリング用）。
+func (s *SUIDMonitor) Check() { s.check(false) }
+
+// CheckForce は間隔の制限を無視して即座に走査する。inotify のように
+// 「ツリーが変化した」ことが確実なイベント駆動の呼び出しで使う。時間帯の
+// 制限は守る（時間帯限定の監視はその枠の中でだけ動かすため）。
+func (s *SUIDMonitor) CheckForce() { s.check(true) }
+
+// Interval は走査間隔を返す。イベント駆動監視のフォールバック用ポーリングが
+// 同じ間隔を使えるように公開する。
+func (s *SUIDMonitor) Interval() time.Duration {
+	if s == nil {
+		return 0
+	}
+	return s.interval
+}
+
+func (s *SUIDMonitor) check(force bool) {
 	if s == nil || len(s.paths) == 0 {
 		return
 	}
@@ -75,11 +93,27 @@ func (s *SUIDMonitor) Check() {
 		s.mu.Unlock()
 		return
 	}
-	if !s.lastScan.IsZero() && time.Since(s.lastScan) < s.interval {
+	if !force && !s.lastScan.IsZero() && time.Since(s.lastScan) < s.interval {
+		s.mu.Unlock()
+		return
+	}
+	// 走査は数秒かかることがある。定期ポーリングとイベント駆動が重なったとき
+	// に同じ差分を二重に処理しないよう、実行中は後続をスキップする。
+	// （イベントは失われない: 走査は必ず最新のツリー全体を見るため、実行中の
+	// 変化は次回の走査で拾える。）
+	if s.scanning {
 		s.mu.Unlock()
 		return
 	}
 	s.lastScan = time.Now()
+	s.scanning = true
+	// パニック時も走査中フラグを必ず戻す（フラグが立ったままだと以後の走査が
+	// すべてスキップされ、監視が黙って止まる）。
+	defer func() {
+		s.mu.Lock()
+		s.scanning = false
+		s.mu.Unlock()
+	}()
 	if !s.initialized {
 		s.initialized = true
 		s.loadBaselineLocked()
