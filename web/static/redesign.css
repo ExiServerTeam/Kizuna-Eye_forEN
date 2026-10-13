@@ -136,8 +136,8 @@ body {
 }
 
 /* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。
-   px 固定の要素（ゲージ値・稼働時間・コア）は rem に置き換えず、元の px を
-   基準に少し大きくして「逆に小さくなる」事故を防ぐ。 */
+   メーター内の数字（.gauge-value / .uptime-value）とコアの文字は「大きくしすぎ」
+   との指摘があったため、既存 style.css の元の値をそのまま使う（上書きしない）。 */
 .cpu-model,
 .temp-badge,
 .free-badge,
@@ -146,50 +146,24 @@ body {
 .gauge-title,
 .process-hint,
 .storage-hint {
-    font-size: 0.86rem;
+    font-size: 0.82rem;
 }
 
 .nav-tab {
-    font-size: 1rem;
+    font-size: 0.95rem;
 }
 
 .gauge-detail {
-    font-size: 1.2rem;
-}
-
-/* 既存は 34px。拡大して 36px に。 */
-.gauge-value {
-    font-size: 36px;
-}
-
-/* 既存は 42px。拡大して 44px に。 */
-.uptime-value {
-    font-size: 44px;
-}
-
-/* 既存は 9〜11px。可読下限まで引き上げる。 */
-.core-value { font-size: 11px; }
-.core-label { font-size: 10px; }
-
-.backup-header h2,
-.plugin-list-title {
     font-size: 1.05rem;
 }
 
-.process-table {
+.backup-header h2,
+.plugin-list-title {
     font-size: 1rem;
 }
 
-/* レスポンシブ時も px 固定の値を据え置きにしない（既存の縮小指定に勝たせる）。 */
-@media (max-width: 768px) {
-    .uptime-value { font-size: 38px; }
-    .gauge-value { font-size: 32px; }
-    .core-value { font-size: 10px; }
-    .core-label { font-size: 9px; }
-}
-@media (max-width: 480px) {
-    .uptime-value { font-size: 32px; }
-    .gauge-value { font-size: 28px; }
+.process-table {
+    font-size: 0.95rem;
 }
 
 .app { position: relative; }
