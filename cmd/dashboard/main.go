@@ -34,6 +34,10 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
+	// 同一オリジンのブラウザ接続と、Origin ヘッダを送らない非ブラウザクライアント
+	// （Agent）を許可する。クロスオリジンのリクエストを拒否すると、悪意あるページが
+	// 被害者のセッション cookie で /ws を開くクロスサイト WebSocket ハイジャック
+	// （CSWSH）を防げる。
 	// Allow same-origin browser connections, and non-browser clients
 	// (the Agent) which send no Origin header. Rejecting cross-origin
 	// requests prevents cross-site WebSocket hijacking (CSWSH), where a
@@ -41,7 +45,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
-			return true // non-browser client (e.g. the Agent)
+			return true // 非ブラウザクライアント（例: Agent） / non-browser client (e.g. the Agent)
 		}
 		u, err := url.Parse(origin)
 		if err != nil {
@@ -53,6 +57,8 @@ var upgrader = websocket.Upgrader{
 	WriteBufferSize: 1024,
 }
 
+// nextWeekly は、now のロケーションで、now より厳密に後の指定曜日（0=日..6=土）と
+// 時刻の次の発生を返す。
 // nextWeekly returns the next occurrence of the given weekday (0=Sun..6=Sat)
 // and hour strictly after now, in now's location.
 func nextWeekly(day, hour int, now time.Time) time.Time {
@@ -72,6 +78,13 @@ func nextWeekly(day, hour int, now time.Time) time.Time {
 	return t
 }
 
+// postureFromConfig は dashboard 設定ファイルからポスチャスコアの入力を導出する。
+// config.LoadDashboardConfig を呼ぶのではなくファイルを直接読んでデコードする。
+// あのローダーは stdout へ出力し、ファイル権限を締め、既定値を適用するため、
+// 毎回の /api/insight リクエスト（dashboard は開いているタブごとに 60 秒ごとに
+// ポーリングする）で呼ぶとログを溢れさせ、設定ファイルを繰り返し chmod していた。
+// GET は副作用を持ってはならない。ファイルが読めない場合は代わりに起動時設定を
+// 使い、一時的な読み取りエラーが誤解を招く「すべてオフ」を報告しないようにする。
 // postureFromConfig derives the posture score input from the dashboard config
 // file. It reads and decodes the file directly instead of calling
 // config.LoadDashboardConfig: that loader prints to stdout, tightens file
@@ -93,6 +106,11 @@ func postureFromConfig(path string, fallback *config.DashboardConfig) insight.Po
 	}
 	return insight.PostureInput{
 		AuthEnabled: dc.Auth.Enabled,
+		// IsPublicViewer ではなく config_version を考慮した解決を使う。この struct は
+		// 既定値を事前充填しない素の json.Unmarshal で生成されたため、セキュアな設定
+		// （config_version>=2）で public_viewer が欠落していれば、ここでも OFF と
+		// 読まなければならない。そうでないとセキュリティスコアが匿名閲覧を有効と
+		// 誤って報告する。
 		// Use the config_version-aware resolution, not IsPublicViewer: this
 		// struct was produced by a bare json.Unmarshal that did not pre-fill
 		// defaults, so an absent public_viewer on a secure config
@@ -109,6 +127,13 @@ func postureFromConfig(path string, fallback *config.DashboardConfig) insight.Po
 	}
 }
 
+// isLoopbackListen は listen アドレスがループバックインターフェースのみに
+// 束縛されているかを返す。"127.0.0.1:8080"、"localhost:8080"、"[::1]:8080" は
+// 制限済みで、":8080" と "0.0.0.0:8080" はそうではない。アドレスはポートを
+// 省略し得る（素のホスト）。その場合、値全体がホストだ。
+//
+// これはポスチャスコアが使う。リバースプロキシ背後で loopback に束縛するのは
+// 推奨配備であり、肯定的な制御として数えられる。
 // isLoopbackListen reports whether a listen address is bound to the loopback
 // interface only. "127.0.0.1:8080", "localhost:8080" and "[::1]:8080" are
 // restricted; ":8080" and "0.0.0.0:8080" are not. The address may omit the
@@ -134,6 +159,9 @@ func isLoopbackListen(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// runWeeklyReport は設定された曜日/時刻に毎週セキュリティブリーフィングを送る。
+// コンテキストがキャンセルされるまで続く。レポートは現在のアラート履歴
+// （直近 7 日）から生成し、指定されたチャンネルにのみ送る。
 // runWeeklyReport sends the security briefing every week at the configured
 // day/hour until the context is cancelled. The report is generated from the
 // current alert history (last 7 days) and sent only to the named channels.
@@ -177,6 +205,15 @@ func runWeeklyReport(
 	}
 }
 
+// acceptAgentPayload は、受信した /ws ペイロードを信頼できる agent データとして
+// 扱ってよいか（最後の status として保存しブラウザへ再ブロードキャストする）、
+// またレガシーのトークン無しヒューリスティックで接続を agent へ昇格すべきかを返す。
+//
+// isAgent は接続が agent として認証済み（有効な共有トークン、または既に昇格済み）
+// なら true だ。canPromote は、トークンが設定されていないときに role=agent を
+// 宣言した非ブラウザ接続にのみ true だ。素のブラウザ（isAgent=false、
+// canPromote=false）は決して受け入れてはならず、メトリクス/履歴を偽装したり
+// agent を乗っ取ったりできない。
 // acceptAgentPayload reports whether an inbound /ws payload may be treated as
 // trusted agent data (stored as the last status and rebroadcast to browsers),
 // and whether the connection should be promoted to the agent by the legacy
@@ -197,6 +234,12 @@ func acceptAgentPayload(isAgent, isStatus, canPromote bool) (accept, promote boo
 	return false, false
 }
 
+// eligibleForHeuristicPromotion は、/ws 接続がレガシーのトークン無しヒューリスティックで
+// agent になれるかを返す。トークンが設定されていないこと、クライアントが
+// role=agent を宣言したこと、クライアントがブラウザで「ない」ことを要求する。
+// ブラウザは WebSocket ハンドシェイクで常に Origin ヘッダを送るが、Go agent は
+// 送らない。Origin チェックが無いと、ログイン済みの任意のブラウザが
+// /ws?role=agent を開いて agent を偽装できてしまう。
 // eligibleForHeuristicPromotion reports whether a /ws connection may become
 // the agent through the legacy tokenless heuristic. It requires that no token
 // is configured, that the client declared role=agent, and that the client is
@@ -207,11 +250,19 @@ func eligibleForHeuristicPromotion(agentToken string, isAgentRole bool, origin s
 	return agentToken == "" && isAgentRole && origin == ""
 }
 
+// ログへ書く信頼できないプラグインテキストは logsafe.Field（internal/auth と共有）で
+// 無害化する。ローカルコピーはタブ・改行を空白に置換し角括弧を放置していたため、
+// 細工されたイベントが dashboard.log に "[WARN]" マーカーを偽造できた（監査 L-11）。
 // Untrusted plugin text written to the log is neutralised with logsafe.Field
 // (shared with internal/auth). The local copy replaced tabs/newlines with a
 // space and left brackets alone, so a crafted event could still forge a
 // "[WARN]" marker in dashboard.log (audit L-11).
 
+// writeDashboardJSON は Content-Type ヘッダ付きで JSON を書く。
+// Cache-Control: no-store は機微な API 応答（ユーザー名/IP を含むログ行、
+// マスク済み設定、モジュールパス、セッション単位データ）を共有プロキシや
+// ブラウザキャッシュから締め出す。auth ハンドラは既に no-store を設定しており、
+// これで dashboard API も一貫する。
 // writeDashboardJSON writes JSON with a Content-Type header.
 // Cache-Control: no-store keeps sensitive API responses (log lines with
 // usernames/IPs, masked config, module paths, session-scoped data) out of
@@ -224,6 +275,10 @@ func writeDashboardJSON(w http.ResponseWriter, status int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+// runtimeStore は agent のモジュールロード結果（"module_status" イベント由来）を
+// 保持し、JSON として提供する。プラグインは agent 上でロードに失敗し得て
+// （設定欠落、署名エラーなど）、それを観測できるのは agent だけだ。そうでないと
+// dashboard は動作中プラグインと黙って落ちたプラグインを区別できない。
 // runtimeStore keeps the agent's module load results (from the
 // "module_status" event) and serves them as JSON. A plugin can fail to load
 // on the agent (missing config, signature error, ...), and only the agent can
@@ -244,6 +299,8 @@ func newRuntimeStore() *runtimeStore {
 	return &runtimeStore{states: make(map[string]runtimeState)}
 }
 
+// observe は agent メッセージを読み、module_status イベントなら保存済みビューを
+// 置き換える。他のメッセージは無視する。
 // observe reads an agent message and, when it is a module_status event,
 // replaces the stored view. Any other message is ignored.
 func (s *runtimeStore) observe(msg []byte) {
@@ -277,6 +334,8 @@ func (s *runtimeStore) handle(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"modules": out})
 }
 
+// handleSecurityEvent は agent の "security_alert" イベントを通知（Discord など）と
+// アラート履歴エントリへ変換する。
 // handleSecurityEvent turns an agent "security_alert" event into a
 // notification (Discord etc.) and an alert-history entry.
 func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
@@ -322,6 +381,9 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 	}
 
 	body := env.Message
+	// bodyEn は body を英語ラベルで鏡写しにし、アラート履歴を英語で表示できる
+	// ようにする（タスク9）。MessageEN が存在するときのみ意味を持つ
+	// （古いプラグインは Message のみ送る）。
 	// bodyEn mirrors body with English labels so the alert history can be
 	// shown in English (task 9). It is only meaningful when MessageEN exists
 	// (older plugins send only Message).
@@ -352,7 +414,7 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 		Title:     env.Title,
 		Message:   body,
 		Timestamp: time.Now(),
-	}, "agent", false, alert.AlertDetail{ // agent-reported: derived from a forgeable log line
+	}, "agent", false, alert.AlertDetail{ // agent 報告: 偽造可能なログ行に由来する / agent-reported: derived from a forgeable log line
 		Command:     env.Command,
 		DetectFile:  env.DetectFile,
 		DetectLine:  env.DetectLine,
@@ -368,6 +430,10 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 }
 
 // ============================================================
+// wsClient は WebSocket 接続を専用の書き込みミューテックスで包む。
+// gorilla/websocket は接続ごとに 1 つの並行書き手しか許さないが、「異なる」
+// 接続への書き込みは並行に進み得る。接続ごとのミューテックスは、1 つの遅い
+// クライアントが他の全クライアント（および agent）をブロックするのを防ぐ。
 // wsClient wraps a WebSocket connection with its own write mutex.
 // gorilla/websocket allows only one concurrent writer per connection,
 // but writes to *different* connections may proceed in parallel. A
@@ -377,6 +443,9 @@ func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
 type wsClient struct {
 	conn    *websocket.Conn
 	writeMu sync.Mutex
+	// authed はアップグレード時に接続が有効なセッションを運んだとき true だ。
+	// public viewer モードでは未認証クライアントは無害化済み status のみを受け取り、
+	// セキュリティイベントを受け取らない。
 	// authed is true when the connection carried a valid session at upgrade
 	// time. In public viewer mode an unauthenticated client only receives
 	// sanitized statuses and no security events.
@@ -390,6 +459,8 @@ func (c *wsClient) writeMessage(messageType int, data []byte, timeout time.Durat
 	return c.conn.WriteMessage(messageType, data)
 }
 
+// writeControl は writeMessage が使うのと同じ書き込みミューテックス下で制御
+// フレーム（ping/pong/close）を送り、ping がブロードキャストと割り込まないようにする。
 // writeControl sends a control frame (ping/pong/close) under the same write
 // mutex used by writeMessage, so a ping cannot interleave with a broadcast.
 func (c *wsClient) writeControl(messageType int, data []byte, deadline time.Time) error {
@@ -399,6 +470,7 @@ func (c *wsClient) writeControl(messageType int, data []byte, deadline time.Time
 }
 
 // ============================================================
+// Hub は WebSocket クライアントを管理する。
 // Hub manages WebSocket clients.
 // ============================================================
 type Hub struct {
@@ -408,10 +480,15 @@ type Hub struct {
 	log        *logger.Logger
 	lastStatus *status.SystemStatus
 
+	// agentToken は agent 接続を認証する。空はトークン認証を無効化する
+	// （レガシーのヒューリスティック検出のみ）。
 	// agentToken authenticates agent connections. Empty disables token
 	// authentication (legacy heuristic detection only).
 	agentToken string
 
+	// viewerMode は未認証ブラウザクライアントが受け取るものをフィルタする。
+	// true のとき、status は無害化され、セッションを提示しなかったクライアントには
+	// イベントを送らない。起動中に 1 回設定する。
 	// viewerMode filters what unauthenticated browser clients receive: when
 	// true, statuses are sanitized and events are withheld for clients that
 	// did not present a session. Set once during startup.
@@ -419,6 +496,9 @@ type Hub struct {
 
 	agentConn *wsClient
 
+	// コールバックは起動中に 1 回設定し、WS ゴルーチンから読む。埋め込み
+	// RWMutex で保護し、遅い代入が読み手と競合しないようにする
+	// （SetCallbacks / onX アクセサを使う）。
 	// Callbacks are set once during startup and read from WS goroutines.
 	// They are guarded by the embedded RWMutex so a late assignment cannot
 	// race with a reader (use SetCallbacks / the onX accessors).
@@ -426,11 +506,19 @@ type Hub struct {
 	onAgentStatus     func(*status.SystemStatus)
 	onAgentEvent      func([]byte)
 
+	// コンパクトなサンプル（リング、時系列順）。チャート化されるフィールドのみを
+	// 保存しメモリを小さく保ち、1 秒間隔で約 1 時間分が収まるようにする。
 	// Compact samples (ring, chronological). Storing only the charted
 	// fields keeps memory small so ~1h of 1s-interval data fits.
 	samples    []api.HistorySample
 	maxSamples int
 
+	// maxViewers は「未認証」WebSocket クライアントの数を制限する。/ws はセッション
+	// 無しで到達可能なため、別個の上限が無いと攻撃者が maxClients 個の匿名接続を
+	// 開き、固定のクライアントスロットから Agent（および全実ブラウザ）を枯渇させ得る。
+	// 認証済みクライアント（Agent とログイン済みユーザー）はこの上限に数えられず、
+	// maxClients が許す限り受け入れられるため、監視フィードが匿名接続枯渇で
+	// 拒否されることはない。
 	// maxViewers caps the number of *unauthenticated* WebSocket clients.
 	// The /ws endpoint is reachable without a session, so without a separate
 	// cap an attacker could open maxClients anonymous connections and starve
@@ -440,27 +528,39 @@ type Hub struct {
 	// feed cannot be denied by anonymous connection exhaustion.
 	maxViewers int
 
+	// フラッド検知: 拒否された接続のバーストは接続枯渇型 DoS の兆候だ。これが無いと
+	// dashboard は拒否をログするだけでアラートを出さず、運用者はサービスが攻撃下に
+	// あることを知れなかった。onFlood は拒否が窓内で floodThreshold を超えたとき
+	// （floodWindow ごとに最大 1 回）呼ばれる。
 	// Flood detection: a burst of rejected connections is the signature of a
 	// connection-exhaustion DoS. Without this, the dashboard only logged the
 	// rejections and never raised an alert, so an operator could not tell that
 	// the service was under attack. onFlood is called (at most once per
 	// floodWindow) when rejections cross floodThreshold inside a window.
 	onFlood func(rejected int, detail string)
+	// floodMu は下のカウンタを保護する。
 	// floodMu guards the counters below.
 	floodMu       sync.Mutex
 	floodCount    int
 	floodWindowAt time.Time
 
+	// onAuthReject は疑わしい agent 接続が拒否されたとき（authRejectWindow ごと、
+	// 理由ごとに最大 1 回）呼ばれる。これが無いと、トークンブルートフォース /
+	// agent 乗っ取りの試みはログの WARN 行でしかなく、運用者に届かなかった。
 	// onAuthReject is called (at most once per authRejectWindow and
 	// per reason) when suspicious agent connections are rejected.
 	// Without it, token brute-force / agent hijack attempts were only
 	// WARN lines in the log and never reached the operator.
 	onAuthReject func(reason string, count int)
+	// authRejectMu は下の authRejects を保護する。
 	// authRejectMu guards authRejects below.
 	authRejectMu sync.Mutex
 	authRejects  map[string]*authRejectCounter
 }
 
+// floodThreshold は floodWindow 内の何件の拒否接続がフラッドアラートを上げるかで、
+// floodWindow は測定窓だ。10 秒で 200 拒否は通常運用よりはるかに多く、実際の
+// フラッドが生む量（DoS テストは数万を送った）よりはるかに少ない。
 // floodThreshold is how many rejected connections within floodWindow raise a
 // flood alert, and floodWindow is the measurement window. 200 rejections in 10
 // seconds is far above normal operation but well below what a real flood
@@ -470,6 +570,9 @@ const (
 	floodWindow    = 10 * time.Second
 )
 
+// noteRejected は拒否された接続を記録し、閾値を超えたとき onFlood を発火する。
+// 窓は各アラート後にリセットされ、アラートは拒否ごとではなく floodWindow ごとに
+// 最大 1 回上がる。
 // noteRejected records a rejected connection and fires onFlood when the
 // threshold is crossed. The window resets after each alert so the alert is
 // raised at most once per floodWindow, not once per rejection.
@@ -482,7 +585,7 @@ func (h *Hub) noteRejected(detail string) {
 	}
 	h.floodCount++
 	count := h.floodCount
-	fire := count == floodThreshold // exactly once per window
+	fire := count == floodThreshold // 窓ごとにちょうど 1 回 / exactly once per window
 	cb := h.onFlood
 	h.floodMu.Unlock()
 	if fire && cb != nil {
@@ -490,6 +593,10 @@ func (h *Hub) noteRejected(detail string) {
 	}
 }
 
+// authRejectThreshold は authRejectWindow 内で「同じ」理由の疑わしい agent 接続が
+// 何件で 1 つのアラートを上げるかで、authRejectWindow は測定窓だ。60 秒で 10 回は
+// 通常（健全な agent は 1 回接続する）よりはるかに多く、実際のブルートフォースの
+// バーストよりは少ない。
 // authRejectThreshold is how many suspicious agent connections with the
 // SAME reason within authRejectWindow raise one alert, and authRejectWindow
 // is the measurement window. 10 attempts in 60s is well above normal
@@ -499,12 +606,16 @@ const (
 	authRejectWindow    = 60 * time.Second
 )
 
+// authRejectCounter は 1 つの拒否理由の窓付きカウントを追跡する。
 // authRejectCounter tracks one rejection reason's windowed count.
 type authRejectCounter struct {
 	count    int
 	windowAt time.Time
 }
 
+// noteAuthReject は疑わしい agent 接続を記録し、閾値に達したとき onAuthReject を
+// 発火する。窓は各アラート後にリセットされ、アラートは窓ごと・理由ごとに最大 1 回
+// 上がる。
 // noteAuthReject records a suspicious agent connection and fires
 // onAuthReject when the threshold is reached. The window resets after
 // each alert so the alert is raised at most once per window per reason.
@@ -529,6 +640,8 @@ func (h *Hub) noteAuthReject(reason string) {
 	}
 }
 
+// SetAuthRejectCallback は疑わしい agent 接続が検出されたときに呼ばれる
+// コールバックを設定する。起動中に 1 回呼ぶ。
 // SetAuthRejectCallback installs the callback invoked when suspicious
 // agent connections are detected. Call once during startup.
 func (h *Hub) SetAuthRejectCallback(fn func(reason string, count int)) {
@@ -537,6 +650,8 @@ func (h *Hub) SetAuthRejectCallback(fn func(reason string, count int)) {
 	h.authRejectMu.Unlock()
 }
 
+// SetFloodCallback は接続フラッドが検出されたときに呼ばれるコールバックを設定する。
+// 起動中に 1 回呼ぶ。
 // SetFloodCallback installs the callback invoked when a connection flood is
 // detected. Call once during startup.
 func (h *Hub) SetFloodCallback(fn func(rejected int, detail string)) {
@@ -546,6 +661,9 @@ func (h *Hub) SetFloodCallback(fn func(rejected int, detail string)) {
 }
 
 func NewHub(maxClients int, log *logger.Logger) *Hub {
+	// クライアントスロットの大多数を認証済みクライアント（Agent + ログイン済み
+	// ブラウザ）用に確保し、匿名 viewer がそれらを枯渇させないようにする。
+	// public-viewer モード用に妥当な数の viewer スロットを保つ。
 	// Reserve the majority of the client slots for authenticated clients
 	// (Agent + logged-in browsers) so anonymous viewers cannot exhaust them.
 	// Keep a reasonable number of viewer slots for the public-viewer mode.
@@ -561,10 +679,12 @@ func NewHub(maxClients int, log *logger.Logger) *Hub {
 		maxClients: maxClients,
 		maxViewers: maxViewers,
 		log:        log,
-		maxSamples: 3600, // ~1h at the Agent's 1s interval
+		maxSamples: 3600, // Agent の 1 秒間隔で約 1 時間 / ~1h at the Agent's 1s interval
 	}
 }
 
+// SetCallbacks は agent コールバックを hub ロック下で設定する。3 つのいずれも
+// nil にしてクリアできる。
 // SetCallbacks installs the agent callbacks under the hub lock. Any of the
 // three may be nil to clear it.
 func (h *Hub) SetCallbacks(
@@ -579,6 +699,10 @@ func (h *Hub) SetCallbacks(
 	h.Unlock()
 }
 
+// SetViewerMode は public-viewer フィルタリングを有効化する。status ブロードキャストは
+// 無害化され、認証されていないクライアントにはイベントを送らない。これにより未認証
+// viewer はライブ WebSocket フィード経由でプロセス一覧やディスク S.M.A.R.T メタデータを
+// 読めない。起動中に 1 回呼ぶ。
 // SetViewerMode enables public-viewer filtering: status broadcasts are
 // sanitized and events are withheld for clients that are not authenticated,
 // so an unauthenticated viewer cannot read the process list or disk S.M.A.R.T
@@ -589,6 +713,9 @@ func (h *Hub) SetViewerMode(enabled bool) {
 	h.Unlock()
 }
 
+// sanitizeStatusJSON は msg が status ペイロードでなければそのまま返し、そうであれば
+// viewer 制限フィールドを除去する。非 status メッセージ（agent コマンド/イベント）は
+// そのまま返す。
 // sanitizeStatusJSON returns msg unchanged unless it is a status payload, in
 // which case viewer-restricted fields are stripped. Non-status messages
 // (agent commands / events) are returned as-is.
@@ -604,6 +731,7 @@ func sanitizeStatusJSON(msg []byte) []byte {
 	return out
 }
 
+// SetOnAgentEvent は agent-event コールバックのみを設定する。
 // SetOnAgentEvent installs just the agent-event callback.
 func (h *Hub) SetOnAgentEvent(fn func([]byte)) {
 	h.Lock()
@@ -611,6 +739,7 @@ func (h *Hub) SetOnAgentEvent(fn func([]byte)) {
 	h.Unlock()
 }
 
+// onDisconnectFn は読み取りロック下で disconnect コールバックを返す。
 // onDisconnectFn returns the disconnect callback under the read lock.
 func (h *Hub) onDisconnectFn() func() {
 	h.RLock()
@@ -618,6 +747,7 @@ func (h *Hub) onDisconnectFn() func() {
 	return h.onAgentDisconnect
 }
 
+// onEventFn は読み取りロック下で event コールバックを返す。
 // onEventFn returns the event callback under the read lock.
 func (h *Hub) onEventFn() func([]byte) {
 	h.RLock()
@@ -634,6 +764,10 @@ func (h *Hub) Broadcast(msg []byte) {
 	}
 	h.RUnlock()
 
+	// viewer 向け無害化形をクライアントごとではなく 1 回計算し、N 人の公開 viewer が
+	// ブロードキャストごとに N 回の JSON unmarshal/marshal サイクルを起こさないようにする。
+	// 未認証 viewer が少なくとも 1 人接続しているときのみ必要で、認証済みクライアント
+	// のみ（通常ケース）ならブロードキャストごとの unmarshal+marshal は完全に省かれる。
 	// Compute the viewer-sanitized form once, not per client, so N public
 	// viewers do not trigger N JSON unmarshal/marshal cycles each broadcast.
 	// It is only needed when at least one unauthenticated viewer is connected;
@@ -665,6 +799,11 @@ func (h *Hub) Broadcast(msg []byte) {
 	}
 }
 
+// Add は WebSocket クライアントを登録する。isAgent は唯一の信頼できる Agent 接続を
+// 示し、authed はログイン済みブラウザを示す。認証済みクライアント（Agent と
+// ログイン済みユーザー）は maxClients まで受け入れる。未認証クライアントはさらに
+// maxViewers で制限し、匿名接続が固定のクライアントスロットを枯渇させ、Agent や
+// 実ユーザーへのサービスを拒否できないようにする。
 // Add registers a WebSocket client. isAgent marks the single trusted Agent
 // connection; authed marks a logged-in browser. Authenticated clients (Agent
 // and logged-in users) are admitted up to maxClients. Unauthenticated clients
@@ -674,6 +813,8 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 	h.Lock()
 	defer h.Unlock()
 
+	// viewer 固有の上限のために未認証 viewer を数える。Agent と認証済みブラウザは
+	// クライアントスロットも占めるが viewer ではない。
 	// Count unauthenticated viewers for the viewer-specific cap. The Agent and
 	// authenticated browsers are not viewers even though they also occupy a
 	// client slot.
@@ -692,6 +833,8 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 	}
 
 	if h.maxClients > 0 && len(h.clients) >= h.maxClients {
+		// 認証済みクライアントが優先される。スロットが匿名 viewer に占められていれば、
+		// Agent / 実ユーザーが接続できるようそれを追い出す。
 		// Authenticated clients take priority: if the slot is occupied by an
 		// anonymous viewer, evict it so the Agent / a real user can connect.
 		if authed || isAgent {
@@ -715,6 +858,9 @@ func (h *Hub) Add(conn *websocket.Conn, authed, isAgent bool) (*wsClient, bool) 
 	return client, true
 }
 
+// evictViewerLocked は認証済みクライアント用にスロットを空けるため、未認証 viewer を
+// 1 つ切断する。呼び出し側は h.Lock を保持すること。viewer を追い出したとき true を
+// 返す。接続の close はゴルーチンへ延期し、hub ロックを保持したまま実行しない。
 // evictViewerLocked disconnects one unauthenticated viewer to free a slot for
 // an authenticated client. Caller must hold h.Lock. It returns true when a
 // viewer was evicted. The connection close is deferred to a goroutine so it
@@ -745,6 +891,10 @@ func (h *Hub) Remove(client *wsClient) {
 	}
 	h.Unlock()
 
+	// コールバックはロック解放後に呼ぶ。コールバックはアラートエンジンへ到達し
+	// （将来 hub に再び触れるかもしれない）、ロック下で呼ぶとデッドロックの危険が
+	// ある。ロック付きアクセサ経由で読み、並行する SetCallbacks がここで競合しない
+	// ようにする。
 	// Invoke the callback after releasing the lock. The callback reaches into
 	// the alert engine (and may, in the future, touch the hub again), so
 	// calling it under the lock risks a deadlock. Read it via the locked
@@ -766,6 +916,8 @@ func (h *Hub) GetLastStatus() *status.SystemStatus {
 	if h.lastStatus == nil {
 		return nil
 	}
+	// ディープコピーし、呼び出し側が保存済み status（とその共有スライス/ポインタ）を
+	// 誤って変更できないようにする。
 	// Deep copy so callers cannot mutate the stored status (and its shared
 	// slices/pointers) by accident.
 	return h.lastStatus.Clone()
@@ -778,6 +930,9 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 		h.Unlock()
 		return
 	}
+	// 範囲外の値を拒否し、バグ持ち・敵対的 agent が保存済み status、メトリクス履歴、
+	// Prometheus エンドポイントを汚染できないようにする（例: cpu_usage=1e9 や負の
+	// パーセント）。
 	// Reject out-of-range values so a buggy or hostile agent cannot pollute
 	// the stored status, the metrics history, or the Prometheus endpoint
 	// (e.g. cpu_usage=1e9 or negative percentages).
@@ -788,9 +943,12 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 		h.Unlock()
 		return
 	}
+	// ディープコピーを保存し、保存済み status が呼び出し側のオブジェクトと
+	// スライス/ポインタを共有しないようにする。
 	// Store a deep copy so the stored status does not share slices/pointers
 	// with the caller's object.
 	h.lastStatus = s.Clone()
+	// history API 用にコンパクトなサンプルを記録する。
 	// Record a compact sample for the history API.
 	h.samples = append(h.samples, api.HistorySample{
 		Timestamp: s.Timestamp,
@@ -809,6 +967,7 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 	}
 }
 
+// HistorySamples は最近のコンパクトなサンプルを返す（古い順）。
 // HistorySamples returns recent compact samples (oldest first).
 func (h *Hub) HistorySamples() []api.HistorySample {
 	h.RLock()
@@ -818,6 +977,11 @@ func (h *Hub) HistorySamples() []api.HistorySample {
 	return out
 }
 
+// MarkAgentConn は client を agent 接続として登録する。別の agent 接続が既に
+// 登録されている場合は false を返し、同じトークンを提示する 2 番目のクライアントが
+// 実 agent を追い出せないようにする。これが無いと、agent トークンを知った者
+// （例: admin セッション経由）が繰り返し接続して実 agent を追い出し、監視フィードを
+// フラップさせ得る。
 // MarkAgentConn registers client as the agent connection. It returns false
 // when another agent connection is already registered, so a second client that
 // presents the same token cannot displace the real agent. Without this, anyone
@@ -836,6 +1000,7 @@ func (h *Hub) MarkAgentConn(client *wsClient) bool {
 	return true
 }
 
+// AgentConnected は Agent が現在接続されているかを返す。
 // AgentConnected reports whether an Agent is currently connected.
 func (h *Hub) AgentConnected() bool {
 	h.RLock()
@@ -844,6 +1009,7 @@ func (h *Hub) AgentConnected() bool {
 }
 
 // ★ Phase 8-5: Agent へメッセージを送信する
+// ★ Phase 8-5: send a message to the Agent
 func (h *Hub) SendToAgent(payload map[string]interface{}) error {
 	h.RLock()
 	agentConn := h.agentConn
@@ -862,6 +1028,7 @@ func (h *Hub) SendToAgent(payload map[string]interface{}) error {
 }
 
 // ★ Phase 8-5: Agent 以外の全クライアント（ブラウザ）に中継する
+// ★ Phase 8-5: relay to all clients other than the Agent (browsers)
 func (h *Hub) BroadcastToBrowsers(msg []byte) {
 	h.RLock()
 	agentConn := h.agentConn
@@ -876,6 +1043,8 @@ func (h *Hub) BroadcastToBrowsers(msg []byte) {
 	h.RUnlock()
 
 	for _, c := range clients {
+		// セキュリティイベントは actor/IP データを運ぶため、未認証 viewer へ
+		// 中継しない。
 		// Security events carry actor/IP data; do not relay them to
 		// unauthenticated viewers.
 		if viewerMode && !c.authed {
@@ -900,6 +1069,8 @@ func main() {
 		log.Fatalf("設定読み込み失敗: %v", err)
 	}
 
+	// 既定は INFO とし、dashboard_config.json の log_level（"debug"）で明示的に
+	// 有効化しない限り DEBUG ノイズを出さない。
 	// Default to INFO so DEBUG noise is not emitted unless explicitly
 	// enabled via dashboard_config.json's log_level ("debug").
 	level := logger.INFO
@@ -953,11 +1124,15 @@ func main() {
 	}
 	engine := alert.NewEngine(alertCfg, notifierMgr, lg)
 
+	// アラート履歴を再起動をまたいで永続化する。
 	// Persist alert history across restarts.
 	historyFile := cfg.AlertHistoryFile
 	if historyFile == "" {
 		historyFile = "logs/alert_history.jsonl"
 	}
+	// アラート履歴行の任意の HMAC 署名（専用鍵。セキュリティログのチェーン鍵は決して
+	// 使わない）。鍵をロードできなければ、起動失敗ではなく未署名永続化へフォールバック
+	// する。履歴は依然プラグインの V2-B 整合性チェックで保護される。
 	// Optional HMAC signing of alert history lines (dedicated key; never the
 	// security-log chain key). If the key cannot be loaded, fall back to
 	// unsigned persistence rather than failing to start: the history is still
@@ -975,6 +1150,9 @@ func main() {
 	engine.EnableHistoryPersistenceKeyed(historyFile, alertHistKey)
 	lg.InfoT("dash.alert_history", historyFile)
 
+	// 兄弟設定パスを dashboard 設定からの相対で解決し、カスタム -config パスでも
+	// agent/modules 設定を同じディレクトリに保つ。そうでないと黙って現在の作業
+	// ディレクトリから読み（ロードしたのとは別のファイルを編集して）しまう。
 	// Resolve sibling config paths relative to the dashboard config, so a
 	// custom -config path keeps the agent/modules configs in the same
 	// directory instead of silently reading them from the current working
@@ -990,10 +1168,14 @@ func main() {
 
 	hub := NewHub(100, lg)
 	hub.agentToken = cfg.Auth.AgentToken
+	// public viewer フィルタリングは auth が有効なときのみ意味を持つ。auth がオフなら
+	// 全クライアントが信頼され、従来どおり完全なデータを配信する。
 	// Public viewer filtering only matters when auth is enabled; with auth off
 	// every client is trusted and full data is served as before.
 	hub.SetViewerMode(cfg.Auth.Enabled && cfg.Auth.IsPublicViewer())
 	hub.SetCallbacks(engine.OnAgentDisconnect, engine.OnStatus, nil)
+	// 接続フラッドが検出されたときセキュリティアラートを上げ、運用者が DoS を
+	// dashboard と通知チャンネルで見られるようにする。ログの WARN 行だけにしない。
 	// Raise a security alert when a connection flood is detected, so an
 	// operator sees the DoS on the dashboard and in the notification channels
 	// instead of it being only a WARN line in the log.
@@ -1010,6 +1192,8 @@ func main() {
 		}, "dashboard", true)
 		lg.WarnT("dash.flood_detected", rejected, detail)
 	})
+	// 疑わしい agent 接続（トークン不一致または重複 agent）が拒否されたとき警告を
+	// 上げ、ブルートフォース/乗っ取りの試みがログだけでなく運用者に届くようにする。
 	// Raise a warning when suspicious agent connections (token mismatch
 	// or a duplicate agent) are rejected, so brute-force / hijack attempts
 	// reach the operator instead of only the log.
@@ -1053,6 +1237,8 @@ func main() {
 		}
 	}()
 
+	// authHandler は起動の後半で生成される。下のクロージャはこの変数を参照し、
+	// リクエスト時に認証済みブラウザと公開 viewer を区別できるようにする。
 	// authHandler is created later in startup; the closures below reference
 	// this variable so they can tell an authenticated browser from a public
 	// viewer at request time.
@@ -1062,6 +1248,9 @@ func main() {
 
 	// ---- WebSocket handler ----
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
+		// agent トークンが設定されているとき、agent 接続（?role=agent）は一致する
+		// トークンを提示しなければならない。ブラウザは role=agent を決して送らない
+		// ため、これでログインを迂回することはできない。
 		// When an agent token is configured, an agent connection
 		// (?role=agent) must present the matching token. Browsers never
 		// send role=agent, so this cannot be used to bypass login.
@@ -1069,6 +1258,9 @@ func main() {
 		if hub.agentToken != "" && isAgentRole {
 			// G-2: トークンはヘッダでのみ受け取る。クエリ文字列（?token=）は
 			// アクセスログ・Referer・ブラウザ履歴に残るため受け付けない。
+			// G-2: accept the token only in the header. A query string
+			// (?token=) is refused because it lingers in access logs,
+			// Referer, and browser history.
 			token := r.Header.Get("X-Kizuna-Agent-Token")
 			if subtle.ConstantTimeCompare([]byte(token), []byte(hub.agentToken)) != 1 {
 				http.Error(w, "invalid agent token", http.StatusUnauthorized)
@@ -1085,6 +1277,9 @@ func main() {
 		}
 
 		authed := authHandler != nil && authHandler.Authenticated(r)
+		// Agent は上の共有トークンで認証する（isAgentRole + トークン一致）。
+		// 信頼できるクライアントとして扱い、匿名 viewer に数えず、常にスロットを
+		// 勝ち取るようにする。
 		// The Agent authenticates with the shared token above (isAgentRole +
 		// token match). Treat it as a trusted client so it is never counted
 		// as an anonymous viewer and always wins a slot.
@@ -1098,6 +1293,8 @@ func main() {
 
 		lg.InfoT("dash.client_connected", conn.RemoteAddr())
 
+		// 受信メッセージサイズを制限し、巨大なフレームがメモリを枯渇させない
+		// ようにする。status メッセージ（プロセス/ディスク）は数百 KB 未満だ。
 		// Cap incoming message size so a huge frame cannot exhaust memory.
 		// A status message (processes/disks) is well under a few hundred KB.
 		conn.SetReadLimit(8 << 20) // 8 MiB
@@ -1108,6 +1305,9 @@ func main() {
 			return nil
 		})
 
+		// 接続を保つ。ブラウザはアプリケーションデータを決して送らないため、
+		// サーバー起点の ping が無いと 120 秒の読み取り期限が切れ、約 2 分ごとに
+		// 全ブラウザタブが落ちる。
 		// Keep the connection alive. Browsers never send application data, so
 		// without server-initiated pings the 120s read deadline would expire
 		// and drop every browser tab roughly every 2 minutes.
@@ -1130,6 +1330,10 @@ func main() {
 		go func() {
 			defer close(pingDone)
 			defer hub.Remove(client)
+			// agent は共有トークンで認証したときのみ即座に信頼される。トークンが
+			// 設定されていない場合はレガシーのヒューリスティックへフォールバック
+			// するが、非ブラウザクライアントのみだ
+			// （eligibleForHeuristicPromotion 参照）。
 			// The agent is trusted immediately only when it authenticated
 			// with the shared token. When no token is configured, fall back
 			// to the legacy heuristic, but only for non-browser clients
@@ -1157,6 +1361,7 @@ func main() {
 
 				conn.SetReadDeadline(time.Now().Add(120 * time.Second))
 
+				// メッセージ種別を判定する。
 				// Determine the message type.
 				var envelope struct {
 					Event  string `json:"event"`
@@ -1165,6 +1370,9 @@ func main() {
 				_ = json.Unmarshal(msg, &envelope)
 
 				if envelope.Event != "" {
+					// イベントを発信できるのは Agent だけだ。event 形状のメッセージを
+					// 送るブラウザが通知（例: 偽の security_alert）やアラート履歴
+					// エントリを偽造できてはならない。
 					// Only the Agent may originate events. A browser sending an
 					// event-shaped message must not be able to forge notifications
 					// (e.g. a fake security_alert) or alert-history entries.
@@ -1185,10 +1393,15 @@ func main() {
 					continue
 				}
 
+				// status として扱う。正のタイムスタンプを要求し、任意の JSON が
+				// status と誤認されないようにする。
 				// Treat as a status. A positive timestamp is required so
 				// arbitrary JSON is not mistaken for a status.
 				var s status.SystemStatus
 				if err := json.Unmarshal(msg, &s); err != nil || s.Timestamp <= 0 {
+					// ブラウザへ中継するのは agent のペイロードのみだ。非 agent が
+					// 任意データを注入・再ブロードキャストできてはならない
+					// （例: 他の全クライアントのダッシュボードを空白にする偽の "{}"）。
 					// Only the agent's payloads are relayed to browsers. A
 					// non-agent must not be able to inject or rebroadcast
 					// arbitrary data (e.g. a bogus "{}" that blanks every
@@ -1198,6 +1411,11 @@ func main() {
 					}
 					continue
 				}
+				// status は agent からのみ受け入れる。非 agent 接続は、非ブラウザ
+				// クライアント向けのレガシーのトークン無しヒューリスティック経由で
+				// のみ agent になれる。素のブラウザは保存済み status を上書き
+				// （メトリクス/履歴の偽装）したり agent 接続を乗っ取ったりできては
+				// ならない。
 				// A status is accepted only from the agent. A non-agent
 				// connection may become the agent only through the legacy
 				// tokenless heuristic for non-browser clients. A plain
@@ -1229,6 +1447,8 @@ func main() {
 			writeDashboardJSON(w, http.StatusNotFound, map[string]string{"error": "no status available"})
 			return
 		}
+		// public viewer モードでは、このエンドポイントがセッション無しで到達可能でも、
+		// 未認証クライアントはプロセス一覧やディスク S.M.A.R.T メタデータを見てはならない。
 		// In public viewer mode an unauthenticated client must not see the
 		// process list or disk S.M.A.R.T metadata, even though this endpoint
 		// is otherwise reachable without a session.
@@ -1240,12 +1460,20 @@ func main() {
 
 	// ---- Module management API ----
 	moduleHandler := api.NewModuleHandler(storage, cfg.ResolvePluginsDir())
+	// plugin_path（agent がロードする .so）はコード実行境界なので、その変更には
+	// admin が必要だ。パスベースのミドルウェア規則は設定編集とパス差し替えを区別
+	// できないため、ハンドラが auth へ直接尋ねる。クロージャはリクエスト時に
+	// authHandler を解決する（起動の後半で生成される）。nil ハンドラは「admin でない」
+	// （fail-closed）を意味する。
 	// plugin_path (the .so the agent loads) is a code-execution boundary, so
 	// changing it requires admin. The path-based middleware rule cannot tell a
 	// settings edit from a path swap, so the handler asks auth directly. The
 	// closure resolves authHandler at request time (it is created later in
 	// startup); a nil handler means "not admin" (fail-closed).
 	moduleHandler.SetAdminChecker(func(r *http.Request) bool {
+		// auth 無効は信頼ネットワークモードを意味する。全リクエストが実質的に
+		// admin なので、admin 専用フィールドの変更（およびプラグインアップロード以外の
+		// すべて）を許可し、ミドルウェアと一致させる。
 		// Auth disabled means trusted-network mode: every request is
 		// effectively an admin, so admin-only field changes (and everything
 		// else except plugin upload) are allowed, matching the middleware.
@@ -1256,6 +1484,9 @@ func main() {
 	})
 	moduleHandler.RegisterRoutes(mux)
 
+	// collectPluginLogs は modules.json から {moduleName: logPath} を組み立て、
+	// ログビューアが logDir の外にあるプラグインログを列挙・配信できるようにする。
+	// 使用可能な log_path を持つエントリのみを返す。
 	// collectPluginLogs builds {moduleName: logPath} from modules.json so the
 	// log viewer can list and serve plugin logs that live outside logDir.
 	// Only entries with a usable log_path are returned.
@@ -1288,22 +1519,33 @@ func main() {
 		lg.ErrorT("dash.pluginmgr_init_failed", err)
 		lg.WarnT("dash.plugin_api_disabled")
 	} else {
+		// プラグインのアップロード/削除（コード実行境界）を、ログだけでなくアラート
+		// 履歴と通知に記録する。
 		// Record plugin upload/delete (a code-execution boundary) in the
 		// alert history and notifications, not only the log.
 		pluginManager.SetAuditHook(func(kind, detail, detailEN string) {
 			// kind ごとに自然なタイトルを選ぶ。"操作を検知" のような
 			// 汎用文言だと何が起きたのか一目で分からないため。
+			// Pick a natural title per kind. A generic phrase like "operation
+			// detected" does not make clear at a glance what happened.
 			title, level, icon := "プラグイン操作を検知", notify.LevelCritical, "🚨"
 			titleEn := "Plugin operation detected"
 			// サードパーティー製は「未検証（untrusted）」として扱う。
 			// ダッシュボードが生成したアラートでも、外部由来のコード追加は
 			// 信頼済みバッジを付けるべきではない。
+			// Treat third-party as untrusted. Even for a dashboard-generated
+			// alert, adding externally-sourced code should not carry a trusted
+			// badge.
 			isThirdParty := strings.HasPrefix(detail, "サードパーティー製")
 			switch kind {
 			case "plugin_upload":
 				// 純正（Kizuna シリーズ）は警戒、サードパーティー製は重大。
 				// 純正は作者が作成したものなので危険度は低いが、追加自体は
 				// コード実行境界を越える操作なので警戒で通知する。
+				// Official (Kizuna series) is a warning; third-party is
+				// critical. Official is lower risk (author-made), but the
+				// addition itself crosses a code-execution boundary, so it is
+				// reported as a warning.
 				title = "プラグインが追加されました"
 				titleEn = "Plugin added"
 				if isThirdParty {
@@ -1333,12 +1575,17 @@ func main() {
 		lg.InfoT("dash.api_plugins")
 	}
 
+	// moduleRuntime は agent が報告した全モジュールの最後のロード結果を保持する。
+	// dashboard はそれを /api/plugin-runtime で公開し、モジュールカードが誤解を招く
+	// "active" ではなく "failed to load" を表示できるようにする。
 	// moduleRuntime holds the last load result the agent reported for every
 	// module. The dashboard exposes it at /api/plugin-runtime so the module
 	// card can show "failed to load" instead of a misleading "active".
 	moduleRuntime := newRuntimeStore()
 	mux.HandleFunc("GET /api/plugin-runtime", moduleRuntime.handle)
 
+	// agent イベントを処理する。プラグイン実行ガードを解放し、モジュールロード結果を
+	// 更新し、セキュリティイベントを通知 + アラート履歴へ変換する。
 	// Handle agent events: release the plugin run guard, update module load
 	// results, and turn security events into notifications + alert history.
 	hub.SetOnAgentEvent(func(msg []byte) {
@@ -1351,6 +1598,9 @@ func main() {
 
 	// ---- Metrics API ----
 	metricHandler := api.NewMetricHandler(hub)
+	// /api/metrics を /api/status と一致させる。public-viewer モードでは未認証
+	// クライアントが無害化済みビュー（プロセス一覧も S.M.A.R.T メタデータも無し）を
+	// 受け取る。authHandler は起動の後半で生成されるためリクエスト時に解決する。
 	// Keep /api/metrics consistent with /api/status: in public-viewer mode an
 	// unauthenticated client gets the sanitized view (no process list, no
 	// S.M.A.R.T metadata). authHandler is created later in startup, so it is
@@ -1362,12 +1612,18 @@ func main() {
 	lg.InfoT("dash.api_metrics")
 
 	// ---- Logs API ----
+	// agent ログパスを agent_config.json から解決し、ビューアがハードコードの既定値
+	// ではなく実際の設定に追随するようにする。
 	// Resolve the agent log path from agent_config.json so the viewer
 	// follows the actual configuration instead of a hardcoded default.
 	agentLogPath := "logs/agent.log"
 	if ac, err := config.LoadAgentConfig(agentConfigPath); err == nil && ac.LogFile != "" {
 		agentLogPath = ac.LogFile
 	}
+	// dashboard は start.sh のシェルリダイレクト（>> logs/dashboard.log）でログを
+	// 書くため、cfg.LogFile はしばしば空だ。その既定パスへフォールバックする。
+	// そうしないと /api/logs?type=dashboard が空パスへ解決し 400 "Invalid log type"
+	// を返す。
 	// The dashboard writes its log via the shell redirection in start.sh
 	// (>> logs/dashboard.log), so cfg.LogFile is often empty. Fall back to
 	// that default path; otherwise /api/logs?type=dashboard resolves to an
@@ -1377,10 +1633,14 @@ func main() {
 		dashboardLogPath = "logs/dashboard.log"
 	}
 	logHandler := api.NewLogHandler(
-		agentLogPath,     // agent log
-		dashboardLogPath, // dashboard log
-		"logs",           // log directory
+		agentLogPath,     // agent ログ / agent log
+		dashboardLogPath, // dashboard ログ / dashboard log
+		"logs",           // ログディレクトリ / log directory
 	)
+	// プラグインログは各プラグイン自身のディレクトリ（logDir の外）に書かれるため、
+	// 毎リクエストで modules.json を再読み込みするコールバックを登録する。一度きりの
+	// スナップショットでは、dashboard が動き続ける間に UI で追加・削除されたモジュールに
+	// 追随しない。
 	// Plugin logs are written under each plugin's own directory (outside
 	// logDir), so register a callback that re-reads modules.json on every
 	// request. A one-time snapshot would not follow a module added or
@@ -1406,6 +1666,10 @@ func main() {
 	lg.InfoT("dash.api_alert_history")
 
 	// ---- Security insight API ----
+	// アラート履歴を脅威指数 / 攻撃者プロファイルへ集約し、設定ポスチャを採点する。
+	// ポスチャコールバックは毎リクエストで dashboard 設定ファイルを再読み込みし、
+	// 設定エディタで行われた変更を dashboard 再起動なしで反映する。読み取り失敗は
+	// 誤解を招く「すべてオフ」ではなく起動時設定へフォールバックする。
 	// Aggregates the alert history into a threat index / attacker profile and
 	// scores the configuration posture. The posture callback re-reads the
 	// dashboard config file on every request so a change made in the config
@@ -1439,6 +1703,8 @@ func main() {
 	lg.InfoT("dash.api_alert_settings")
 
 	// ---- Health check ----
+	// Agent が接続されていないとき 503 を返し、外部モニタ（Uptime Kuma など）が
+	// 劣化状態を検知できるようにする。
 	// Returns 503 when the Agent is not connected, so external monitors
 	// (Uptime Kuma, etc.) can detect a degraded state.
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -1457,6 +1723,9 @@ func main() {
 	})
 
 	// ---- Default language ----
+	// i18n.js より前に配信し、ユーザーに保存設定が無いときブラウザが運用者の
+	// 設定言語（dashboard_config.json "language"）へフォールバックできるようにする。
+	// 未設定/不明なら "en" を既定にする。
 	// Served before i18n.js so the browser can fall back to the operator's
 	// configured language (dashboard_config.json "language") when the user
 	// has no saved preference. Defaults to "en" when unset/unknown.
@@ -1478,6 +1747,10 @@ func main() {
 	}
 	fileServer := http.FileServer(http.Dir(staticDir))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ベースラインのセキュリティヘッダ。UI にインラインスクリプトもインライン
+		// イベントハンドラも無いため script-src は 'self' のままでよい。ゲージ幅に
+		// インライン style 属性を使うため style-src は 'unsafe-inline' が必要だ。
+		// Google Fonts が唯一の外部オリジンだ。
 		// Baseline security headers. The UI has no inline scripts and no
 		// inline event handlers, so script-src can stay at 'self'. Inline
 		// style attributes are used for gauge widths, so style-src needs
@@ -1497,6 +1770,11 @@ func main() {
 				"base-uri 'self'; "+
 				"form-action 'self'")
 
+		// HTML、JS、CSS は再検証させ、UI/CSS 編集を即座に拾う。.css/.js の長い
+		// max-age は、バージョンクエリ（?v=）を変えない限り CSS 修正が
+		// ブラウザキャッシュ切れ（24h）まで見えないことを意味し、忘れやすい。
+		// 再検証は安価（未変更なら 304）でその落とし穴を除く。画像/フォントは
+		// 長いキャッシュを保つ。
 		// HTML, JS and CSS must be revalidated so UI/CSS edits are picked up
 		// immediately. A long max-age on .css/.js meant a CSS fix stayed
 		// invisible until the browser cache expired (24h) unless the version
@@ -1514,6 +1792,8 @@ func main() {
 	}))
 
 	// ---- Authentication and authorization ----
+	// usersFile は既定で dashboard 設定隣の users.json とし、カスタム -config
+	// パスでもユーザーストアをその隣に保つ。
 	// usersFile defaults to users.json next to the dashboard config, so a
 	// custom -config path keeps the user store alongside it.
 	usersFile := cfg.Auth.UsersFile
@@ -1525,6 +1805,8 @@ func main() {
 		lg.ErrorT("dash.users_load_failed", err)
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
+	// 設定された無操作タイムアウト（0 = 既定 2h、負 = 無効）を渡し、運用者が
+	// 短い無操作でセッションを失効させるのを止められるようにする。
 	// Pass the configured idle timeout (0 = default 2h, negative = disabled)
 	// so an operator can stop sessions expiring on short inactivity.
 	sessionMgr := auth.NewSessionManager(sessionTTL, cfg.Auth.SessionIdleDuration())
@@ -1540,6 +1822,8 @@ func main() {
 	defer sessionMgr.Stop()
 	authHandler = auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
 	defer authHandler.Stop()
+	// セキュリティ関連の auth イベント（ログインロックアウト = ブルートフォースの
+	// 可能性）を、ログだけでなくアラート履歴と通知に記録する。
 	// Record security-relevant auth events (login lockouts = likely brute
 	// force) in the alert history and notifications, not only the log.
 	authHandler.SetSecurityEventHook(func(kind, detail, detailEN, ip string) {
@@ -1606,12 +1890,16 @@ func main() {
 		lg.InfoT("dash.auth_off")
 	}
 
+	// auth がオンなのに agent トークンが未設定のとき警告する。agent は認証できず、
+	// 決して接続しない。
 	// Warn when auth is on but no agent token is set: the agent cannot
 	// authenticate, so it will never connect.
 	if cfg.Auth.Enabled && cfg.Auth.AgentToken == "" {
 		lg.WarnT("dash.agent_token_missing")
 	}
 
+	// 危険な組み合わせ（プラグインアップロード有効 + 認証オフ）を大声で警告する。
+	// ネットワーク上の誰でも .so をアップロード・実行でき、実質リモートコード実行だ。
 	// Warn loudly about a dangerous combination: plugin upload enabled while
 	// authentication is off. Anyone on the network could upload and run a
 	// .so, which is effectively remote code execution.
@@ -1620,6 +1908,10 @@ func main() {
 	}
 
 	// ---- Weekly security briefing (opt-in) ----
+	// 依存の無いスケジューラ（標準 time パッケージ）を使う。dashboard は他に cron
+	// ライブラリをインポートしておらず、週 1 回のタイマーのために追加する価値は無い。
+	// レポートは設定されたチャンネル（既定 email）にのみ送り、チャットチャンネルを
+	// 決してスパムしない。
 	// A dependency-free scheduler (standard time package): the dashboard does
 	// not otherwise import a cron library, and one weekly timer does not
 	// justify adding one. The report is sent only to the configured channels
@@ -1638,6 +1930,11 @@ func main() {
 	srv := &http.Server{
 		Addr:    cfg.ListenAddr,
 		Handler: bodyLimitMiddleware(authMiddleware.Wrap(mux)),
+		// サーバーがリクエストヘッダとアイドル keep-alive 接続を待つ時間を制限し、
+		// 遅いヘッダ（Slowloris）クライアントが接続を無期限に保持できないようにする。
+		// WriteTimeout は意図的に設定しない。/api/logs/stream はグローバルな書き込み
+		// 期限が切断してしまう長時間 SSE 応答だからだ。WebSocket 接続は conn を
+		// ハイジャックし、これらの値の影響を受けない。
 		// Bound how long the server waits for request headers and for an idle
 		// keep-alive connection, so a slow-header (Slowloris) client cannot
 		// hold connections open indefinitely. WriteTimeout is intentionally
@@ -1646,6 +1943,10 @@ func main() {
 		// and are likewise unaffected by these values.
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		// リクエストヘッダを明示的に制限する。Go の既定は 1 MiB で、このアプリの
+		// リクエストが必要とする量（大きな cookie も巨大な Authorization ヘッダも
+		// 無い）よりはるかに多い。64 KiB は接続ごとのメモリを制限し、過大なヘッダ
+		// リクエストを 1 MiB バッファへ読むのではなく 431 で即座に失敗させる。
 		// Cap request headers explicitly. Go's default is 1 MiB, which is far
 		// more than this app's requests need (no large cookies / no huge
 		// Authorization header); 64 KiB bounds memory per connection and makes
@@ -1673,5 +1974,8 @@ func main() {
 
 	// シャットダウン時、バッチ集約の窓に残っているアラートを送信する。
 	// Flush しないと、停止直前の数秒に発生した通知が失われる。
+	// On shutdown, send any alerts still in the batch window. Without the
+	// flush, notifications that occurred in the last few seconds before
+	// stopping are lost.
 	notifierMgr.Flush()
 }
