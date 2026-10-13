@@ -11,6 +11,7 @@ import (
 )
 
 // ============================================================
+// TelegramNotifier は Telegram Bot API で通知を送る。
 // TelegramNotifier sends notifications via the Telegram Bot API.
 // ============================================================
 type TelegramNotifier struct {
@@ -29,14 +30,19 @@ func NewTelegramNotifier(botToken, chatID string) *TelegramNotifier {
 
 func (t *TelegramNotifier) Name() string { return "telegram" }
 
+// telegramAPIBase はテストで上書き可能にし、実際の Telegram API ではなく
+// httptest サーバーへ向けられるようにする。
 // telegramAPIBase is overridable in tests so the notifier can be pointed at an
 // httptest server instead of the real Telegram API.
 var telegramAPIBase = "https://api.telegram.org"
 
 func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
+	// HTML モードを使い、特殊文字による 400 を避けるため動的な値をエスケープする。
 	// Use HTML mode and escape dynamic values to avoid 400s from special characters.
 	title := html.EscapeString(a.Title)
 	msg := html.EscapeString(a.FullMessage())
+	// Telegram は 4096 文字を超えるメッセージを拒否する（HTTP 400）。
+	// 長いアラート 1 件で通知全体が落ちないよう切り詰める。
 	// Telegram rejects messages longer than 4096 characters (HTTP 400).
 	// Truncate so one long alert cannot drop the whole notification.
 	text := truncateRunes(fmt.Sprintf("%s<b>%s</b>\n%s", a.IconPrefix(), title, msg), 4096)
@@ -68,6 +74,9 @@ func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("telegram returned status %d", resp.StatusCode)
 	}
+	// Telegram はリクエストが失敗しても（例: 不正な chat_id、ブロックされた bot）
+	// HTTP 200 を返す。本文が {"ok":false,"description":...} を運ぶため、
+	// ステータスだけのチェックでは未達通知を成功と報告してしまう。
 	// Telegram returns HTTP 200 even when the request failed (e.g. invalid
 	// chat_id, blocked bot). The body carries {"ok":false,"description":...},
 	// so a status-only check would report success on a dropped notification.
@@ -75,6 +84,9 @@ func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
+	// 期待する JSON でない 200 レスポンスは配信済みメッセージとして確認できない
+	// （例: プロキシやキャプティブポータルが HTML を返した）。解析不能な本文は、
+	// 未達かもしれない通知を成功と報告せず失敗として扱う。
 	// A 200 response whose body is not the expected JSON cannot be confirmed
 	// as a delivered message (e.g. a proxy or captive portal returned HTML).
 	// Treat an unparseable body as a failure rather than reporting success for

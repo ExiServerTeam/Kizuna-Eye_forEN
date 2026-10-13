@@ -8,6 +8,16 @@ import (
 	"Kizuna-Eye/pkg/config"
 )
 
+// newNotifyHTTPClient は通知チャンネル用の *http.Client を返す。
+//
+// すべてのリクエストを 10 秒のタイムアウトで制限し、決定的に、非公開の宛先への
+// リダイレクトを追わない。webhook URL 自体は設定層（config.ValidateWebhookURL）が
+// 検証するが、3xx レスポンスは dashboard を内部サービス（loopback、RFC1918、
+// クラウドメタデータ）へ向け得る。これはリダイレクト経由の SSRF だ。
+// リダイレクト先を同じ規則で再検証することでこの穴を塞ぐ。
+//
+// pkg/notify はどのプラグインからもインポートされないため、このファイルの変更は
+// プラグインのビルドハッシュに影響しない（プラグイン再ビルド不要）。
 // newNotifyHTTPClient returns an *http.Client for a notification channel.
 //
 // It bounds every request with a 10s timeout and, crucially, refuses to follow

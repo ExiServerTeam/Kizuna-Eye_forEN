@@ -9,6 +9,7 @@ import (
 )
 
 // ============================================================
+// SlackNotifier は Slack incoming webhook で通知を送る。
 // SlackNotifier sends notifications via a Slack incoming webhook.
 // ============================================================
 type SlackNotifier struct {
@@ -26,6 +27,10 @@ func NewSlackNotifier(webhookURL string) *SlackNotifier {
 func (s *SlackNotifier) Name() string { return "slack" }
 
 func (s *SlackNotifier) Send(ctx context.Context, a *Alert) error {
+	// アイコン・タイトル・本文を Slack の text フィールドへ結合する。Slack の
+	// text ブロックは 3000 文字上限なので、長いアラートが丸ごと拒否されないよう
+	// 切り詰める。Title/本文は攻撃者が制御し得るデータを含むため、埋め込む前に
+	// mrkdwn をエスケープする（メンション/リンク注入を防ぐ）。
 	// Combine icon, title, and body into the Slack text field. Slack text
 	// blocks are limited to 3000 characters; truncate so a long alert is not
 	// rejected wholesale. Title/body may contain attacker-controlled data, so
@@ -36,6 +41,7 @@ func (s *SlackNotifier) Send(ctx context.Context, a *Alert) error {
 
 	payload := map[string]interface{}{
 		"text": text,
+		// リンクプレビューと、アラート内容が引き起こすメンション解析を禁止する。
 		// Disallow link previews and any mention parsing triggered by the
 		// alert content.
 		"unfurl_links": false,

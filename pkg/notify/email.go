@@ -11,6 +11,7 @@ import (
 )
 
 // ============================================================
+// EmailNotifier は SMTP で通知を送る。
 // EmailNotifier sends notifications via SMTP.
 // ============================================================
 type EmailNotifier struct {
@@ -22,6 +23,8 @@ type EmailNotifier struct {
 	to       []string
 }
 
+// NewEmailNotifier は EmailNotifier を作る。
+// to はカンマ区切りの宛先リストだ。
 // NewEmailNotifier creates an EmailNotifier.
 // to is a comma-separated recipient list.
 func NewEmailNotifier(host, port, username, password, from, to string) *EmailNotifier {
@@ -50,6 +53,8 @@ func NewEmailNotifier(host, port, username, password, from, to string) *EmailNot
 
 func (e *EmailNotifier) Name() string { return "email" }
 
+// sanitizeHeader は CR と LF を除去し、値が余分なメールヘッダを注入できないようにする
+// （ヘッダインジェクション）。
 // sanitizeHeader removes CR and LF so a value cannot inject extra email
 // headers (header injection).
 func sanitizeHeader(s string) string {
@@ -66,6 +71,8 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 	subject := fmt.Sprintf("[Kizuna-Eye] %s%s", a.IconPrefix(), a.Title)
 	body := a.FullMessage() + "\n\n" + a.Timestamp.Format(time.RFC3339)
 
+	// すべてのヘッダ値から CR/LF を除去し、ヘッダインジェクションを防ぐ。
+	// アラートタイトルは解析済みログ行に由来し得るため、信頼できない。
 	// Strip CR/LF from every header value to prevent header injection. Alert
 	// titles can originate from parsed log lines, so they are untrusted.
 	headers := []string{
@@ -80,6 +87,9 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 
 	addr := e.host + ":" + e.port
 
+	// smtp.SendMail は context を無視しタイムアウトも無いため、SMTP サーバーが
+	// ハングするとこのゴルーチンが永久にブロックし、やがて notify マネージャの
+	// セマフォを枯渇させる。ctx（とその期限）を効かせるため手動で dial する。
 	// smtp.SendMail ignores context and has no timeout, so a hung SMTP server
 	// would block this goroutine forever and eventually exhaust the notify
 	// manager's semaphore. Dial manually so ctx (and its deadline) applies.
@@ -99,6 +109,15 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 	}
 	defer c.Close()
 
+	// STARTTLS でアップグレードする。これは FAIL-CLOSED だ。サーバーが
+	// STARTTLS を広告しない場合、続行せず拒否する。
+	//
+	// smtp.PlainAuth は接続がローカルでない限り暗号化されていない接続で
+	// パスワードを送るのを拒否するが、静かなダウングレードはすべての通知を
+	// 落とすか、（より悪いことに非 PlainAuth 機構で）資格情報を漏らす。
+	// ここで失敗させると、設定ミスが静かなセキュリティダウングレードではなく
+	// 可視の配送エラーになる。以前のコードは「サーバーが対応していれば」
+	// アップグレードするだけだった。
 	// Upgrade with STARTTLS. This is FAIL-CLOSED: if the server does not
 	// advertise STARTTLS we refuse to continue rather than fall through.
 	//
@@ -122,6 +141,11 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 		}
 	}
 
+	// エンベロープアドレスも無害化する。上のヘッダブロックは既に CR/LF を
+	// 除去しているが、c.Mail / c.Rcpt は生の値を SMTP コマンド行へ書き込む。
+	// （設定由来の）アドレスに埋め込まれた CRLF が余分な SMTP コマンドを
+	// 注入し得る。多層防御だ。アドレスは admin が設定するが、どの経路でも
+	// ヘッダ/コマンドインジェクションを許してはならない。
 	// Sanitize the envelope addresses too. The header block above already
 	// strips CR/LF, but c.Mail / c.Rcpt write the raw value into the SMTP
 	// command line; an embedded CRLF in a (config-supplied) address could
