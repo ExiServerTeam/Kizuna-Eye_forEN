@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"io"
 	"net/http"
 	"time"
 )
@@ -29,6 +30,10 @@ func NewTelegramNotifier(botToken, chatID string) *TelegramNotifier {
 
 func (t *TelegramNotifier) Name() string { return "telegram" }
 
+// telegramAPIBase is overridable in tests so the notifier can be pointed at an
+// httptest server instead of the real Telegram API.
+var telegramAPIBase = "https://api.telegram.org"
+
 func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 	// Use HTML mode and escape dynamic values to avoid 400s from special characters.
 	title := html.EscapeString(a.Title)
@@ -48,7 +53,7 @@ func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 		return fmt.Errorf("payload marshal: %w", err)
 	}
 
-	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
+	apiURL := fmt.Sprintf("%s/bot%s/sendMessage", telegramAPIBase, t.botToken)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("request build: %w", err)
@@ -63,6 +68,18 @@ func (t *TelegramNotifier) Send(ctx context.Context, a *Alert) error {
 
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("telegram returned status %d", resp.StatusCode)
+	}
+	// Telegram returns HTTP 200 even when the request failed (e.g. invalid
+	// chat_id, blocked bot). The body carries {"ok":false,"description":...},
+	// so a status-only check would report success on a dropped notification.
+	var out struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out); err == nil {
+		if !out.OK {
+			return fmt.Errorf("telegram api error: %s", out.Description)
+		}
 	}
 	return nil
 }
