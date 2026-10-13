@@ -15,18 +15,21 @@ import (
 	kelog "Kizuna-Eye/pkg/logger"
 )
 
+// AlertConfigProvider はアラートエンジンが実装する。
 // AlertConfigProvider is implemented by the alert engine.
 type AlertConfigProvider interface {
 	Snapshot() alert.Config
 	UpdateConfig(alert.Config)
 }
 
+// AlertConfigLogger は最小のロガーだ。
 // AlertConfigLogger is a minimal logger.
 type AlertConfigLogger interface {
 	Info(format string, args ...interface{})
 	Warn(format string, args ...interface{})
 }
 
+// AlertConfigHandler は実行時のアラート閾値設定を提供する。
 // AlertConfigHandler serves runtime alert threshold settings.
 type AlertConfigHandler struct {
 	engine     AlertConfigProvider
@@ -34,23 +37,29 @@ type AlertConfigHandler struct {
 	configPath string
 	logger     AlertConfigLogger
 
+	// mu は cfg への書き込みを直列化する。handlePut は cfg.Notifications を
+	// 変更してから cfg 全体を marshal するため、並行する 2 つの PUT がその共有
+	// struct 上で競合し（半端に更新された設定を永続化し）得る。
 	// mu serializes writes to cfg. handlePut mutates cfg.Notifications and
 	// then marshals the whole cfg, so two concurrent PUTs would race on that
 	// shared struct (and could persist a half-updated config).
 	mu sync.Mutex
 }
 
+// NewAlertConfigHandler は AlertConfigHandler を作る。
 // NewAlertConfigHandler creates an AlertConfigHandler.
 func NewAlertConfigHandler(engine AlertConfigProvider, cfg *config.DashboardConfig, configPath string, logger AlertConfigLogger) *AlertConfigHandler {
 	return &AlertConfigHandler{engine: engine, cfg: cfg, configPath: configPath, logger: logger}
 }
 
+// RegisterRoutes はアラート設定のルートを登録する。
 // RegisterRoutes registers the alert config routes.
 func (h *AlertConfigHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/alert-config", h.handleGet)
 	mux.HandleFunc("PUT /api/alert-config", h.handlePut)
 }
 
+// payload は API の JSON 形状だ。
 // payload is the JSON shape for the API.
 type alertConfigPayload struct {
 	MemoryWarnPct       float64 `json:"memory_warn_pct"`
@@ -82,6 +91,7 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 範囲検証。
 	// Range validation.
 	if err := validatePct("memory_warn_pct", p.MemoryWarnPct); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
@@ -100,6 +110,8 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// CPU温度は 0〜150℃ の範囲に限定する。負値や異常値を弾く。
+	// CPU temperature is limited to the 0-150 C range; negative or
+	// implausible values are rejected.
 	if err := validateTemp("cpu_temp_warn_c", p.CPUTempWarnC); err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
@@ -109,6 +121,7 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 警告閾値が危険閾値より高いのは設定ミス。
+	// A warning threshold above the critical threshold is a misconfiguration.
 	if p.MemoryWarnPct > p.MemoryCriticalPct {
 		writeJSONError(w, http.StatusBadRequest, "memory_warn_pct は memory_critical_pct 以下にしてください")
 		return
@@ -131,21 +144,29 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 	cur.CPUTempCritical = p.CPUTempCriticalC
 	cur.NotifyRecovery = p.NotifyRecovery
 
+	// cfg の変更 + 永続化を直列化し、並行する PUT が h.cfg 上で競合
+	// （marshal 中の変更）したり、ロールバックが割り込んだりしないようにする。
 	// Serialize cfg mutation + persist so concurrent PUTs cannot race on
 	// h.cfg (mutate-while-marshal) or interleave their rollbacks.
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	// メモリへ適用する「前に」dashboard_config.json へ永続化する。これにより、
+	// 保存失敗が実行中状態（engine + cfg）をファイルと不整合のまま残し、
+	// 再起動時に黙って失われることを防ぐ。
 	// Persist to dashboard_config.json BEFORE applying the change in memory,
 	// so a failed save cannot leave the running state (engine + cfg) out of
 	// sync with the file and silently lost on restart.
 	if h.cfg != nil {
 		if err := h.persistConfig(p); err != nil {
+			// 何も書かれていないので、メモリ内設定と engine は触らない
+			// （再起動時の無言の乖離なし）。
 			// Nothing was written, so the in-memory config and the engine are
 			// left untouched (no silent divergence on restart).
 			writeJSONError(w, http.StatusInternalServerError, "設定の保存に失敗しました: "+err.Error())
 			return
 		}
+		// 永続化済み: メモリ内設定へ新値を反映する。
 		// Persisted: reflect the new values in the in-memory config.
 		h.cfg.Notifications.MemoryWarnPct = p.MemoryWarnPct
 		h.cfg.Notifications.MemoryCriticalPct = p.MemoryCriticalPct
@@ -159,12 +180,23 @@ func (h *AlertConfigHandler) handlePut(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// 永続化成功後にのみ実行中 engine へ適用する。
 	// Only apply to the running engine after a successful persist.
 	h.engine.UpdateConfig(cur)
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }
 
+// persistConfig は通知閾値のキー「だけ」を dashboard_config.json へパッチする。
+// 現在ディスク上にあるファイル（起動時スナップショットではない）を読み、新値を
+// マージするため、他所（設定エディタ、別の API 呼び出し）で編集された無関係な設定を
+// 巻き戻したり、運用者のファイルの順序を変えたりすることが決してない。アトミックに
+// 書き、ファイルモードを保つため、締められた権限（例: webhook を含む設定の 0600）が
+// 閾値保存のたびに黙って広げられない。
+//
+// ファイル欠落または JSON オブジェクトでない場合は新しいオブジェクトへ
+// フォールバックし、有効な JSON でないファイルはエラーにする（理解できない
+// ファイルを上書きするのを拒否する）。
 // persistConfig patches ONLY the notification threshold keys into
 // dashboard_config.json. It reads the file that is currently on disk (not the
 // startup snapshot) and merges the new values in, so it can never revert an
@@ -212,6 +244,7 @@ func (h *AlertConfigHandler) persistConfig(p alertConfigPayload) error {
 	data = append(data, '\n')
 
 	dir := filepath.Dir(h.configPath)
+	// 設定ファイルは秘密を含む。ディレクトリも所有者のみに保つ。
 	// Config files hold secrets; keep the directory owner-only too.
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
@@ -223,12 +256,16 @@ func (h *AlertConfigHandler) persistConfig(p alertConfigPayload) error {
 
 	// fsutil.WriteFileAtomic: シンボリックリンクを拒否し、mode を適用してから
 	// fsync + rename する（L-12: 同じ処理が12箇所に重複していた）。
+	// fsutil.WriteFileAtomic: reject a symlink, apply the mode, then
+	// fsync + rename (L-12: the same logic was duplicated in twelve places).
 	return fsutil.WriteFileAtomic(h.configPath, data, mode)
 }
 
 func validatePct(name string, v float64) error {
 	// NaN/Inf は範囲比較がすべて false になるため、素の範囲チェックを
 	// すり抜ける。明示的に弾く（status.Validate と同じ方針）。
+	// NaN/Inf pass a naive range check because every comparison is false.
+	// Reject them explicitly (same policy as status.Validate).
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return fmt.Errorf("%s が不正な値です", name)
 	}
@@ -238,6 +275,7 @@ func validatePct(name string, v float64) error {
 	return nil
 }
 
+// validateTemp は CPU 温度閾値（0〜150℃）を検証する。
 // validateTemp validates a CPU temperature threshold (0〜150℃).
 func validateTemp(name string, v float64) error {
 	if math.IsNaN(v) || math.IsInf(v, 0) {

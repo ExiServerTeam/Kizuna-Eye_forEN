@@ -16,16 +16,25 @@ import (
 	"Kizuna-Eye/pkg/alert"
 )
 
+// AlertActioner は ID でアラートを特定し、ワンクリック対処の結果を記録できる
+// プロバイダが実装する（タスク2）。dashboard のアラートエンジンがこれを満たす。
 // AlertActioner is implemented by providers that can locate an alert by ID
 // and record the outcome of a one-click remediation (task 2).
 // The dashboard's alert engine satisfies it.
 type AlertActioner interface {
+	// FindAlertByID は指定 ID のアラートを返す。無ければ nil。
 	// FindAlertByID returns the alert with the given ID, or nil.
 	FindAlertByID(id string) *alert.HistoryEntry
+	// RecordAction は監査エントリをアラート履歴へ追記する。
 	// RecordAction appends an audit entry to the alert history.
 	RecordAction(a *alert.HistoryEntry, action, detail, result string)
 }
 
+// actionSocketPath は特権対処サービス（kizuna-action.service。kizuna-action.socket が
+// systemd ソケットアクティベーションでオンデマンド起動する）の Unix ソケットだ。
+// dashboard は非特権で動き、sudo ではなくこのソケットと話すため、dashboard unit は
+// NoNewPrivileges=yes / ProtectSystem=strict のまま保てる。サービスはシェルヘルパーを
+// 実行する前にアクションとその引数を再検証する。
 // actionSocketPath is the Unix socket of the privileged action service
 // (kizuna-action.service, started on demand by kizuna-action.socket via
 // systemd socket activation). The dashboard runs unprivileged and talks to
@@ -34,9 +43,11 @@ type AlertActioner interface {
 // action and its arguments before running the shell helper.
 var actionSocketPath = "/run/kizuna-eye/action.sock"
 
+// actionRequestTimeout は 1 回のアクション往復の上限だ。
 // actionRequestTimeout bounds a single action round-trip.
 const actionRequestTimeout = 15 * time.Second
 
+// actionSocketResponse は対処サービスからの JSON 応答だ。
 // actionSocketResponse is the JSON reply from the action service.
 type actionSocketResponse struct {
 	OK     bool   `json:"ok"`
@@ -44,6 +55,11 @@ type actionSocketResponse struct {
 	Error  string `json:"error"`
 }
 
+// runActionViaSocket は 1 つのアクションを Unix ソケット経由で特権サービスへ送り、
+// その detail（成功時）またはエラーテキスト（失敗時）を返す。失敗時は返り値の
+// エラーが非 nil なので呼び出し側が人間化できる。エラーテキストは第 1 返り値としても
+// 返すため、humanizeActionError がヘルパーの機械可読な理由を運用者向けメッセージへ
+// 対応付けられる。シェルは決して使わず、文字列をシェルへ渡すことも決してない。
 // runActionViaSocket sends one action to the privileged service over the Unix
 // socket and returns its detail (on success) or error text (on failure). The
 // returned error is non-nil on failure so callers can humanize it; the error
@@ -90,6 +106,9 @@ func runActionViaSocket(ctx context.Context, action string, args []string) (stri
 	return resp.Error, errors.New(resp.Error)
 }
 
+// allowedActions は UI が要求できる閉じた集合だ。map（slice ではなく）に保つことで
+// 所属判定が O(1) になり、意図も明白になる。ここに無い名前はプロセスを起動する前に
+// 拒否される。
 // allowedActions is the closed set the UI may request. Keeping it a map (not
 // a slice) makes the membership test O(1) and the intent obvious: any name
 // not listed here is rejected before a process is ever spawned.
@@ -102,6 +121,7 @@ var allowedActions = map[string]bool{
 	"restore_file": true,
 }
 
+// pidRe / ipRe は引数を 1 つ取るアクションの副次引数を検証する。
 // pidRe / ipRe validate the secondary argument for actions that take one.
 var (
 	pidRe  = regexp.MustCompile(`^[0-9]{1,10}$`)
@@ -109,16 +129,19 @@ var (
 	portRe = regexp.MustCompile(`^[0-9]{1,5}$`)
 )
 
+// ActionHandler は POST /api/alerts/{id}/action を提供する。
 // ActionHandler serves POST /api/alerts/{id}/action.
 type ActionHandler struct {
 	provider AlertActioner
 }
 
+// NewActionHandler は ActionHandler を作る。
 // NewActionHandler creates an ActionHandler.
 func NewActionHandler(provider AlertActioner) *ActionHandler {
 	return &ActionHandler{provider: provider}
 }
 
+// RegisterRoutes はアクションのルートを登録する。
 // RegisterRoutes registers the action route.
 func (h *ActionHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/alerts/{id}/action", h.handleAction)
@@ -126,6 +149,9 @@ func (h *ActionHandler) RegisterRoutes(mux *http.ServeMux) {
 
 type actionRequest struct {
 	Action string `json:"action"`
+	// Target は任意のアクション引数だ（IP、PID、cron ベース名、またはファイルパス）。
+	// kill_process では、クライアントが省略した場合に dashboard がアラートの
+	// プロセスヒントから埋める。
 	// Target is the optional action argument (IP, PID, cron base name, or
 	// file path). For kill_process the dashboard fills it from the alert's
 	// process hint when the client omits it.
@@ -133,6 +159,9 @@ type actionRequest struct {
 	Backup string `json:"backup"`
 }
 
+// handleAction はリクエストを検証し、sudo ヘルパーを実行し、結果をアラート履歴へ
+// 記録する。実際の特権境界はヘルパーであり、このハンドラはアラートをヘルパー引数へ
+// 対応付けるだけだ。
 // handleAction validates the request, runs the sudo helper, and records the
 // result in the alert history. The helper is the actual privilege boundary;
 // this handler only maps an alert to the helper arguments.
@@ -183,10 +212,14 @@ func (h *ActionHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 		// ヘルパーは機械可読な理由（"no process is listening on port N"
 		// など）を返すので、UI にそのまま出すと意味が伝わらない。
 		// 人間が次に何をすればよいか分かる文に変換する。
+		// The helper returns a machine-readable reason (e.g. "no process is
+		// listening on port N"), which is not meaningful verbatim in the UI;
+		// turn it into a sentence that tells the operator what to do next.
 		detail = humanizeActionError(req.Action, target, resultText, runErr)
 	}
 
 	// 実行結果をアラート履歴に記録する（監査証跡）。
+	// Record the outcome in the alert history (audit trail).
 	h.provider.RecordAction(a, req.Action, target, result+" "+detail)
 
 	status := http.StatusOK
@@ -201,6 +234,9 @@ func (h *ActionHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// humanizeActionError はヘルパーの stderr（または汎用の exec エラー）を、運用者が
+// 行動できるメッセージへ変換する。生のテキストはデバッグのために接尾辞として保つが、
+// 先頭の文が原因を説明する。
 // humanizeActionError turns the helper's stderr (or a generic exec error)
 // into a message an operator can act on. The raw text is kept as a suffix so
 // nothing is lost for debugging, but the leading sentence explains the cause.
@@ -230,6 +266,8 @@ func humanizeActionError(action, target, helperOut string, runErr error) string 
 	return fmt.Sprintf("対処に失敗しました: %v", runErr)
 }
 
+// buildActionArgs はアクション + リクエストをヘルパーの引数リストへ対応付け、
+// 厳格なアクションごとの形式に一致しないものは拒否する。
 // buildActionArgs maps an action + request to the helper's argument list,
 // rejecting anything that does not match the strict per-action format.
 func buildActionArgs(action string, req actionRequest, a *alert.HistoryEntry) ([]string, error) {
@@ -290,6 +328,15 @@ type actionError struct{ msg string }
 
 func (e *actionError) Error() string { return e.msg }
 
+// extractIPFromMessage はアラートメッセージ内で構文的に有効な IPv4/IPv6 アドレスと
+// なる最初のトークンを返す。SSH アラートは "接続元: <ip>" を含み、ポートアラートは
+// address:port を含むため、UI に確認用の既定ターゲットを与える。運用者は
+// 依然として上書きできる。
+//
+// 緩い正規表現ではなく net.ParseIP を使う。以前のパターン
+// (\b[0-9a-fA-F:]{3,45}\b) は素の数値（ポート "44444"、PID）や時刻（"12:34"）にも
+// 一致し、それが ipRe を通過して sudo ヘルパーへ不正なターゲットとして渡された。
+// ParseIP の成功を要求することでそれらを拒否する。
 // extractIPFromMessage returns the first token in the alert message that is a
 // syntactically valid IPv4/IPv6 address. The SSH alert contains
 // "接続元: <ip>" and the port alert contains an address:port, so this gives
@@ -312,6 +359,10 @@ func extractIPFromMessage(a *alert.HistoryEntry) string {
 	return ""
 }
 
+// extractPortFromAlert はリッスンポートのアラートから TCP ポートを抜き出す。
+// プラグインはそれを Command（"待ち受け: TCP 0.0.0.0:55555"）とメッセージ
+// （"TCP ポート 55555 が新たに..."）に記録するため、どちらの形式でも動く。
+// UI はポートを明示的に送る。これは API 呼び出し側のためのフォールバックだ。
 // extractPortFromAlert pulls the TCP port out of a listening-port alert.
 // The plugin records it in Command ("待ち受け: TCP 0.0.0.0:55555") and in
 // the message ("TCP ポート 55555 が新たに..."), so either form works. The
@@ -322,12 +373,18 @@ func extractPortFromAlert(a *alert.HistoryEntry) string {
 		return m[1]
 	}
 	re2 := regexp.MustCompile(`ポート\s*(\d{1,5})`)
-	if m := re2.FindStringSubmatch(a.Message); m != nil {
+	if m := re2.FindStringSubmatch(a.Command); m != nil {
+		return m[1]
+	}
+	re3 := regexp.MustCompile(`ポート\s*(\d{1,5})`)
+	if m := re3.FindStringSubmatch(a.Message); m != nil {
 		return m[1]
 	}
 	return ""
 }
 
+// extractCronName はアラートの source が crontab ファイル（…/crontabs/user）のとき、
+// そのベース名を返す。
 // extractCronName returns the basename of the alert source when it is a
 // crontab file (…/crontabs/user).
 func extractCronName(a *alert.HistoryEntry) string {
