@@ -36,7 +36,6 @@
         cpuCores: $('#cpuCores'),
         cpuModel: $('#cpuModel'),
         cpuTempBadge: $('#cpuTempBadge'),
-        cpuFreeBadge: $('#cpuFreeBadge'),
         cpuCard: $('#cpuCard'),
         memGauge: $('#memGauge'),
         memValue: $('#memValue'),
@@ -1087,9 +1086,6 @@
         // Memory thresholds are configured as *usage* percentages; convert
         // them to free-space percentages for the badge.
         updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal,
-            100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
-        // CPU カードのヘッダーにも空き容量を表示し、温度と横一列に並べる。
-        updateFreeBadge(elements.cpuFreeBadge, memoryTotal - memoryUsed, memoryTotal,
             100 - ALERT.mem.critical, 100 - ALERT.mem.warn);
         drawGauge(elements.memGauge, memoryPercent, 'mem');
 
