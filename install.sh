@@ -5,7 +5,7 @@
 #
 #   1. Ubuntu 判定・sudo 権限チェック
 #   2. 監視に必要なパッケージを「足りないものだけ」導入
-#      (smartmontools rsync git curl build-essential ca-certificates)
+#      (smartmontools rsync git curl build-essential ca-certificates bubblewrap)
 #   3. Go 1.27.1 を確認（無ければ公式導入を案内）
 #   4. ディレクトリ準備（/opt/kizuna-eye/bin{,/plugins}, logs, plugins）
 #   5. 本体をビルド（plugin-inspect → dashboard → agent）
@@ -90,13 +90,19 @@ elif command -v pacman >/dev/null 2>&1; then PM="pacman"; INSTALL_CMD="pacman -S
 fi
 
 if [ "$PM" = "apt" ]; then
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:build-essential" )
+    # A-3: bubblewrap (bwrap) is the isolation wrapper the dashboard/agent use
+    # to inspect an uploaded .so. Without it inspection fails closed
+    # (plugins.inspect_isolation="bwrap"), so it is a real dependency rather
+    # than an optional nicety.
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:build-essential" "bwrap:bubblewrap" )
     EXTRA_PKGS=( "ca-certificates" )
 elif [ "$PM" = "pacman" ]; then
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:base-devel" )
+    # A-3: bubblewrap (bwrap) は .so 検査の隔離に必須（詳細は apt 側のコメント参照）。
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:base-devel" "bwrap:bubblewrap" )
     EXTRA_PKGS=()
 else
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:gcc" )
+    # A-3: bubblewrap (bwrap) は .so 検査の隔離に必須（詳細は apt 側のコメント参照）。
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:gcc" "bwrap:bubblewrap" )
     EXTRA_PKGS=( "ca-certificates" )
 fi
 
@@ -188,6 +194,8 @@ if [ "$DO_BUILD" -eq 1 ]; then
     build_one plugin-inspect  ./cmd/plugin-inspect
     build_one dashboard_linux ./cmd/dashboard
     build_one agent_linux     ./cmd/agent
+    # A-3: plugin-sign は .so の分離署名（Ed25519）を作る運用ツール。
+    build_one plugin-sign     ./cmd/plugin-sign
 fi
 
 # ---- 6. プラグイン ----

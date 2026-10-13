@@ -28,6 +28,12 @@ type AgentConfig struct {
 	// Empty defaults to plugins/ next to the executable.
 	PluginsDir string `json:"plugins_dir"`
 
+	// Plugins is the A-3 authentication policy for plugin .so files. With
+	// require_signature=true the agent verifies <plugin>.so.sig against
+	// Plugins.PublicKeyFile before calling plugin.Open, so a tampered or
+	// unsigned .so is never executed.
+	Plugins PluginSecurityConfig `json:"plugins"`
+
 	// AutoUpdate controls the GitHub Releases version check. When enabled and
 	// a newer version is found, safe_update.sh is executed (which backs up the
 	// binaries, rebuilds host + plugins, and rolls back on failure).
@@ -42,6 +48,65 @@ type AutoUpdateConfig struct {
 	UpdateScript  string `json:"update_script"`  // default: safe_update.sh
 	// IntervalHours is how often to check. Default 6.
 	IntervalHours int `json:"interval_hours"`
+}
+
+// PluginSecurityConfig configures how plugin (.so) files are authenticated and
+// how they are inspected before installation (hardening item A-3). The agent
+// and the dashboard read the same keys so one policy governs both paths.
+//
+// JSON (both agent_config.json and dashboard_config.json):
+//
+//	"plugins": {
+//	  "require_signature": true,
+//	  "public_key_file": "/etc/kizuna-eye/plugin_signing.pub",
+//	  "inspect_isolation": "bwrap"
+//	}
+type PluginSecurityConfig struct {
+	// RequireSignature rejects any .so whose detached signature
+	// (<file>.so.sig) is missing or does not verify. false keeps the legacy
+	// behaviour (an unsigned .so is loaded) so upgrades are not disruptive.
+	RequireSignature bool `json:"require_signature"`
+
+	// PublicKeyFile is the Ed25519 public key used to verify signatures.
+	// Required when RequireSignature is true. A relative path is resolved
+	// against the config file's directory.
+	PublicKeyFile string `json:"public_key_file"`
+
+	// InspectIsolation selects how plugin-inspect is executed for an
+	// uploaded .so: "bwrap" (default) runs it inside bubblewrap with no
+	// network and no writable home, "off" runs it directly as before. When
+	// bwrap is selected but unavailable, uploads are rejected (fail-closed).
+	InspectIsolation string `json:"inspect_isolation"`
+
+	// BwrapPath overrides the bubblewrap binary location.
+	// Empty uses /usr/bin/bwrap.
+	BwrapPath string `json:"bwrap_path"`
+}
+
+// WantSignature reports whether an unverifiable .so must be rejected.
+func (c PluginSecurityConfig) WantSignature() bool { return c.RequireSignature }
+
+// WantInspectIsolation reports whether plugin-inspect must run under bwrap.
+// Only an explicit "off" disables it, so the safe default applies when the
+// key is absent.
+func (c PluginSecurityConfig) WantInspectIsolation() bool {
+	return !strings.EqualFold(strings.TrimSpace(c.InspectIsolation), "off")
+}
+
+// BwrapBinary returns the bubblewrap path to use.
+func (c PluginSecurityConfig) BwrapBinary() string {
+	if p := strings.TrimSpace(c.BwrapPath); p != "" {
+		return p
+	}
+	return "/usr/bin/bwrap"
+}
+
+// Validate returns a fail-closed error when the policy cannot be enforced.
+func (c PluginSecurityConfig) Validate() error {
+	if c.RequireSignature && strings.TrimSpace(c.PublicKeyFile) == "" {
+		return fmt.Errorf("plugins: require_signature=true には public_key_file が必須です（Ed25519 公開鍵のパス）")
+	}
+	return nil
 }
 
 // NotificationChannel is one notification channel config.
@@ -199,14 +264,18 @@ func (a AuthConfig) GuestSessionTTL() time.Duration {
 
 // DashboardConfig is the dashboard configuration.
 type DashboardConfig struct {
-	ListenAddr    string              `json:"listen_addr"`
-	LogFile       string              `json:"log_file"`
-	LogLevel      string              `json:"log_level"` // "debug"|"info"|"warn"|"error" (empty = debug)
-	StaticDir     string              `json:"static_dir"`
-	PluginsDir    string              `json:"plugins_dir"`
-	PluginsUpload *bool               `json:"plugins_upload_enabled"` // nil means unset
-	Notifications NotificationsConfig `json:"notifications"`
-	Auth          AuthConfig          `json:"auth"`
+	ListenAddr    string `json:"listen_addr"`
+	LogFile       string `json:"log_file"`
+	LogLevel      string `json:"log_level"` // "debug"|"info"|"warn"|"error" (empty = debug)
+	StaticDir     string `json:"static_dir"`
+	PluginsDir    string `json:"plugins_dir"`
+	PluginsUpload *bool  `json:"plugins_upload_enabled"` // nil means unset
+
+	// Plugins is the A-3 policy: signature verification of uploaded .so
+	// files and sandboxed execution of plugin-inspect.
+	Plugins       PluginSecurityConfig `json:"plugins"`
+	Notifications NotificationsConfig  `json:"notifications"`
+	Auth          AuthConfig           `json:"auth"`
 
 	// AlertHistoryFile persists the alert history across restarts.
 	// Empty uses the default (logs/alert_history.jsonl).
@@ -274,6 +343,7 @@ func absFromConfigDir(configDir, v string) string {
 func (c *AgentConfig) resolvePaths(configDir string) {
 	c.LogFile = absFromConfigDir(configDir, c.LogFile)
 	c.PluginsDir = absFromConfigDir(configDir, c.PluginsDir)
+	c.Plugins.PublicKeyFile = absFromConfigDir(configDir, c.Plugins.PublicKeyFile)
 }
 
 // resolvePaths anchors the dashboard's relative data paths at the config
@@ -285,6 +355,7 @@ func (c *DashboardConfig) resolvePaths(configDir string) {
 	c.LogFile = absFromConfigDir(configDir, c.LogFile)
 	c.AlertHistoryFile = absFromConfigDir(configDir, c.AlertHistoryFile)
 	c.PluginsDir = absFromConfigDir(configDir, c.PluginsDir)
+	c.Plugins.PublicKeyFile = absFromConfigDir(configDir, c.Plugins.PublicKeyFile)
 }
 
 // LoadAgentConfig reads the agent config file.
@@ -437,6 +508,10 @@ func validateAgentConfig(cfg *AgentConfig) error {
 	if strings.TrimSpace(cfg.DiskPath) == "" {
 		return fmt.Errorf("DiskPath が空です（必須）")
 	}
+	// A-3: fail closed when the signature policy is enabled but unusable.
+	if err := cfg.Plugins.Validate(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -506,6 +581,10 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 		if enabled == 0 {
 			fmt.Printf("[CONFIG] 警告: notifications.enabled=true ですが有効なチャンネルがありません\n")
 		}
+	}
+	// A-3: fail closed when the signature policy is enabled but unusable.
+	if err := cfg.Plugins.Validate(); err != nil {
+		return err
 	}
 	return nil
 }

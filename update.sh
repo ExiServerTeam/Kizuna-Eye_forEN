@@ -109,7 +109,7 @@ if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
 fi
 ROLLBACK_DIR="$BACKUP_ROOT/$STAMP"
 mkdir -p "$ROLLBACK_DIR" || { err "バックアップディレクトリ作成失敗"; exit 1; }
-for f in agent_linux dashboard_linux plugin-inspect; do
+for f in agent_linux dashboard_linux plugin-inspect plugin-sign; do
     [ -f "$BIN_DIR/$f" ] && cp -a "$BIN_DIR/$f" "$ROLLBACK_DIR/$f" || true
 done
 if [ -d "$PLUGIN_OUT_DIR" ]; then
@@ -121,7 +121,7 @@ PREV_VERSION="$(git describe --tags --always 2>/dev/null || echo unknown)"
 
 rollback() {
     warn "ロールバックします: $ROLLBACK_DIR"
-    for f in agent_linux dashboard_linux plugin-inspect; do
+    for f in agent_linux dashboard_linux plugin-inspect plugin-sign; do
         [ -f "$ROLLBACK_DIR/$f" ] && cp -a "$ROLLBACK_DIR/$f" "$BIN_DIR/$f"
     done
     [ -d "$ROLLBACK_DIR/plugins" ] && cp -a "$ROLLBACK_DIR/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
@@ -161,7 +161,8 @@ log "▶ 本体（Eye）を再ビルド中... (version=${VERSION})"
 build_one() { CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$1" "$2"; }
 if ! build_one plugin-inspect ./cmd/plugin-inspect \
    || ! build_one dashboard_linux ./cmd/dashboard \
-   || ! build_one agent_linux ./cmd/agent; then
+   || ! build_one agent_linux ./cmd/agent \
+   || ! build_one plugin-sign ./cmd/plugin-sign; then
     rollback; err "本体ビルド失敗。ロールバックしました。"; exit 1
 fi
 ok "本体再ビルド完了"

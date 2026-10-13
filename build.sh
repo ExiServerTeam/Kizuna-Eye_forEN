@@ -15,5 +15,8 @@ echo "🔨 ビルド中... (version=${VERSION})"
 CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
 CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
 CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+# A-3: plugin signing helper (Ed25519). CGO is not required, but keep the
+# build flags identical to the other binaries for a consistent toolchain.
+CGO_ENABLED=1 go build -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 echo "✅ ビルド完了"
 ls -la "$BIN_DIR"

@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - プラグイン削除で `.so` の削除に失敗した場合は 500 を返す（実行可能な孤児 `.so` を残したまま「削除成功」を返さない）
 - `plugin-inspect` の反射呼び出しにシグネチャ検証と recover を追加（悪意ある `.so` による panic を防止）
 - 設定エディタの秘密復元を位置ではなく `type` で対応付け（通知チャンネルの並べ替え・削除で別チャンネルの秘密を誤割り当てしない）
+- プラグイン `.so` の Ed25519 **分離署名検証**を追加（`internal/pluginsig` / `cmd/plugin-sign`）。Go プラグインは `plugin.Open` で `init()` が走るため、署名の無い/一致しない `.so` は**読み込み前**に拒否する（`plugins.require_signature=true` で fail-closed）
+- プラグイン検査（`plugin-inspect`）を bubblewrap で隔離実行（`--unshare-all --die-with-parent --ro-bind / / --tmpfs /tmp`）。`plugins.inspect_isolation` が `bwrap`（既定）で bwrap が無い場合は実行せずエラー（fail-closed）
+- アップロードされた `.so` は `plugins_dir/.quarantine`（0700）へ一時保管し、検証成功後に同一 FS 内 `rename` で配置。署名検証 → 隔離検査 → 配置の順に固定
+- プラグイン削除時に `.sig` も削除（同名 `.so` の再アップロードが過去の署名を継承しない）
+- agent を専用システムユーザー `kizuna-agent` で動かす systemd unit 一式と移行スクリプトを追加（A-4: `systemd/kizuna-agent.service` `kizuna-agent-a4.service` `kizuna-dashboard.service` `kizuna-watchdog.{service,timer}` `install-services.sh` `migrate-agent-user.sh` `setup-coredump.sh` `60-kizuna-core.conf`）
 
 ### Fixed
 - 手動バックアップ実行の二重起動ガードを `request_id` 照合に変更（定期実行の結果で誤って解除されない）
@@ -53,6 +58,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `scripts/verify.sh` は gcc 未検出時に `-race` を「失敗」ではなく「スキップ」に変更
 
 ### Added
+- `cmd/plugin-sign`: Ed25519 鍵対生成 / `.so` への分離署名 / 検証 / 一括署名（`-gen-key` `-sign` `-sign-all` `-verify` `-print-public-key`）。`build.sh`・`install.sh`・`update.sh`・`safe_update.sh`・`scripts/build.sh`・`scripts/verify.sh` のビルド/ロールバック対象へ組み込み
+- `install.sh` の必須パッケージに `bubblewrap` を追加（A-3 の隔離検査で使用。無い場合は検査が fail-closed で失敗するため）
 - ログイン / 初期セットアップ / ユーザー管理画面にダーク・ライトテーマ切替を追加（ダッシュボードと同じ `kizuna-theme` を共有、OS 設定にも追従）
 - 認証・ユーザー管理（任意、`auth.enabled` で有効化）
   - 初回アクセスで `/setup.html` に誘導し、最初のユーザーを管理者として作成

@@ -29,6 +29,7 @@
 - `agent_linux`
 - `dashboard_linux`
 - `plugin-inspect`
+- `plugin-sign`（プラグイン `.so` の Ed25519 署名ツール）
 
 ### 1.3 設定ファイルの準備
 
@@ -125,6 +126,8 @@
 ### 5.2 配備
 
 Web ダッシュボードの「モジュール管理」タブから `.so` をアップロードする。組み込みの `plugin-inspect` がプラグインを解析し、設定項目を抽出して動的な設定フォームを生成する。
+
+署名必須（`plugins.require_signature: true`、既定）の場合は、事前に `plugin-sign -sign my_plugin.so -private-key <秘密鍵>` で `my_plugin.so.sig` を作り、`.so` と同時にアップロードする。署名検証は `plugin-inspect`（＝`plugin.Open` による `init()` 実行）より**前**に行われ、署名が無い/一致しない `.so` は拒否される。
 
 ### 5.3 再ビルドが必要な場合
 

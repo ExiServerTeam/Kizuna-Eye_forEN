@@ -172,6 +172,8 @@ build_one() {
 build_one plugin-inspect ./cmd/plugin-inspect
 build_one dashboard_linux ./cmd/dashboard
 build_one agent_linux     ./cmd/agent
+# A-3: 署名ツール（.so の Ed25519 分離署名を作る）
+build_one plugin-sign     ./cmd/plugin-sign
 
 [ "$FAIL" -ne 0 ] && { head_ "ビルド失敗のため中断"; exit 1; }
 
@@ -288,6 +290,22 @@ if [ "$MODE" = "full" ]; then
         fi
     else
         echo "  [skip] .so が見つからないためスキップ ($BIN_DIR/plugins)"
+    fi
+
+    # A-3: the agent/dashboard verify a detached Ed25519 signature before a
+    # plugin is loaded (Go plugins run init() on Open, so verification must
+    # precede it). Verify the deployed pair here as a pre-flight check.
+    # 公開鍵は通常 /etc/kizuna-eye/plugin_signing.pub（KIZUNA_PLUGIN_PUBKEY で変更可）。
+    sig="${so}.sig"
+    pubkey="${KIZUNA_PLUGIN_PUBKEY:-/etc/kizuna-eye/plugin_signing.pub}"
+    if [ -z "$so" ] || [ ! -f "$sig" ] || [ ! -x "$BIN_DIR/plugin-sign" ]; then
+        skip "署名ファイルまたは plugin-sign が無いため A-3 署名検証をスキップ"
+    elif [ ! -r "$pubkey" ]; then
+        skip "公開鍵を読めないため A-3 署名検証をスキップ ($pubkey)"
+    elif "$BIN_DIR/plugin-sign" -verify "$so" -public-key "$pubkey" >/tmp/ke_sign.log 2>&1; then
+        ok "plugin-sign -verify $(basename "$so")"
+    else
+        ng "plugin-sign -verify $(basename "$so") (詳細: /tmp/ke_sign.log)"; cat /tmp/ke_sign.log
     fi
 fi
 

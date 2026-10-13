@@ -19,7 +19,6 @@ logs/
 # Kizuna-Security のソースを plugins/Kizuna-Security/ へ取り込んだため、
 # ディレクトリ丸ごとの無視はやめ、ビルド成果物と鍵だけを除外する。
 plugins/**/keys/
-plugins/**/*.so
 plugins/**/logs/
 plugins/Kizuna-Security/plugin/kizuna-security-plugin
 # Root-level build outputs only. A bare "dashboard" / "agent" /
@@ -83,6 +82,12 @@ Thumbs.db
 # deps / archives
 node_modules/
 vendor/
+# Go workspace files are developer-local. The plugin module carries its own
+# `replace Kizuna-Eye => ../../..`, so both modules build without a workspace
+# (install.sh/update.sh build the plugin with GOWORK=off), and CI must not
+# suddenly start evaluating the plugin module through a committed go.work.
+go.work
+go.work.sum
 *.tar.gz
 *.zip
 # stray editor temp name (Windows 8.3 artifact)

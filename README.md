@@ -103,6 +103,7 @@ Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the 
 - `agent_linux`
 - `dashboard_linux`
 - `plugin-inspect`
+- `plugin-sign`
 
 ### 4. Prepare configuration files
 
@@ -239,6 +240,8 @@ Build:
     CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
 
 Upload the `.so` from the **Module Management** tab. The bundled `plugin-inspect` tool analyses the plugin, inspects its configurable fields, and builds a dynamic configuration form.
+
+When signatures are required (`plugins.require_signature: true`), create `my_plugin.so.sig` with `plugin-sign -sign my_plugin.so -private-key <key>` and select it together with the `.so` in the same upload dialog. The signature is verified **before** the `.so` is loaded (i.e. before `plugin-inspect` runs the plugin's `init()`).
 
 Optionally implement `DisplayName()` to show a friendly name in the UI badge; otherwise the UI falls back to the plugin name.
 

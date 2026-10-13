@@ -6,6 +6,12 @@
     "disk_path": "/",
     "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+    "plugins": {
+        "require_signature": true,
+        "public_key_file": "/etc/kizuna-eye/plugin_signing.pub",
+        "inspect_isolation": "bwrap",
+        "bwrap_path": "/usr/bin/bwrap"
+    },
     "auto_update": {
         "enabled": false,
         "repository_url": "github.com/your-org/Kizuna-Eye",

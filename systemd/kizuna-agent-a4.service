@@ -1,0 +1,68 @@
+# ============================================================
+# Kizuna-Eye Agent systemd unit (A-4: 専用ユーザー kizuna-agent + 権限分離)
+#
+# A-4 の目的:
+#   - agent を運用アカウント `user` から切り離し、uid=1000 が奪われても
+#     FIM ベースライン / チェーン鍵 / アラート状態を改変できないようにする。
+#   - AmbientCapabilities=CAP_DAC_READ_SEARCH により /etc/shadow 等を
+#     読めるようにし、A-2 の「権限不足 INFO」も解消する（agent 全体は非 root）。
+#
+# 前提（systemd/migrate-agent-user.sh が作る）:
+#   - ユーザー kizuna-agent (system/nologin, home /var/lib/kizuna-eye)
+#   - /var/lib/kizuna-eye/{state,keys,logs} (0700, kizuna-agent 所有)
+#   - state/ に agent_config.json / modules.json と各状態ファイル・chain.key
+#
+# インストール:
+#   sudo systemd/migrate-agent-user.sh user
+# ============================================================
+[Unit]
+Description=Kizuna-Eye Agent (isolated user)
+Documentation=file://__DIR__/docs/PROCEDURE.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kizuna-agent
+Group=kizuna-agent
+WorkingDirectory=__DIR__
+
+Environment=GOGC=50
+Environment=GOMEMLIMIT=64MiB
+Environment=GOTRACEBACK=crash
+
+LimitCORE=infinity
+
+ExecStart=__BIN__/agent_linux -config /var/lib/kizuna-eye/state/agent_config.json -modules /var/lib/kizuna-eye/state/modules.json
+
+# ---- 権限分離 ----
+# /etc/shadow 等を読みつつ、agent プロセス自体は非 root のまま。
+AmbientCapabilities=CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+# ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
+ProtectSystem=strict
+# ホームは読み取り専用（状態・鍵は /var/lib/kizuna-eye に移設済み）。
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+# 書き込み許可: 状態/鍵/ログ、共有ログ、バックアップ先。
+ReadWritePaths=/var/lib/kizuna-eye /samba/share/Kizuna-Eye/logs /samba/share/CD
+
+Restart=on-failure
+RestartSec=5
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kizuna-agent
+
+[Install]
+WantedBy=multi-user.target
