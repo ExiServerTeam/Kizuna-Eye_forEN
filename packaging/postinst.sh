@@ -146,6 +146,22 @@ case "$1" in
     done
 
     # --- 8. systemd 有効化・起動 ---
+    # install.sh 経路は /etc/systemd/system に unit を置く。deb は /lib/systemd/system
+    # に置くが、/etc の unit が残っていると systemd は /etc を優先するため、
+    # deb の unit が無視され、prerm も停止できず二重管理になる（実機で発生）。
+    # deb 導入時は /etc 側の残骸を先に退避して取り除く。
+    # install.sh places units in /etc/systemd/system; the deb places them in
+    # /lib/systemd/system. systemd prefers /etc, so a leftover /etc unit would
+    # shadow the deb one and prerm could not stop it. Remove the /etc leftovers.
+    for u in kizuna-eye-agent kizuna-dashboard kizuna-action kizuna-agent kizuna-eye kizuna-log-collector kizuna-watchdog; do
+      for ext in service socket; do
+        f="/etc/systemd/system/$u.$ext"
+        if [ -f "$f" ] && ! dpkg -S "$f" >/dev/null 2>&1; then
+          mv -f "$f" "$f.deb-bak" 2>/dev/null || rm -f "$f"
+        fi
+      done
+    done
+
     # systemd が PID 1 でない環境（コンテナ等）では /run/systemd/system が無い。
     # その場合 systemctl が存在しても実体に繋がらないため、無条件に叩くと
     # 「System has not been booted with systemd」警告が出る。ここで検出して

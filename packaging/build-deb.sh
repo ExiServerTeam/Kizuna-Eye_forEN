@@ -18,7 +18,19 @@ VERSION_RAW="$(cat VERSION 2>/dev/null || echo v0.8.0)"
 VERSION="${VERSION_RAW#v}"
 ARCH="${KIZUNA_DEB_ARCH:-amd64}"
 PKG="kizuna-eye"
-BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
+# バイナリの参照先。優先順:
+#   1. KIZUNA_BIN_DIR（docker-build-deb.sh が dist/bin を指定）
+#   2. dist/bin（ステージング出力があればそれを使う）
+#   3. /opt/kizuna-eye/bin（手動ビルドの従来経路）
+# これにより、インストール済み /opt の中身を誤って梱包しない。
+# Binary source: KIZUNA_BIN_DIR > dist/bin > /opt/kizuna-eye/bin.
+if [ -n "${KIZUNA_BIN_DIR:-}" ]; then
+    BIN_DIR="$KIZUNA_BIN_DIR"
+elif [ -x "$ROOT/dist/bin/dashboard_linux" ]; then
+    BIN_DIR="$ROOT/dist/bin"
+else
+    BIN_DIR="/opt/kizuna-eye/bin"
+fi
 OUT_DIR="$ROOT/dist"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT

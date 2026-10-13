@@ -282,6 +282,24 @@ if [ "$LANG_SET" -eq 0 ] && [ -t 0 ]; then
     log "   言語: $UI_LANG"
 fi
 
+# ---- 0b. deb（apt）管理下の検出 ----
+# deb で導入済みの環境で install.sh を走らせると、dpkg の管理するファイルを
+# 上書きし、unit も /etc/systemd/system と /lib/systemd/system の二重管理に
+# なって apt upgrade / apt purge が壊れる。検出したら中止して apt を案内する。
+# If installed via deb/apt, running install.sh would overwrite dpkg-managed
+# files and create duplicate units (/etc vs /lib), breaking apt upgrade/purge.
+if command -v dpkg >/dev/null 2>&1 && dpkg -s kizuna-eye >/dev/null 2>&1; then
+    echo ""
+    warn "kizuna-eye は apt（deb）で導入されています。"
+    warn "install.sh は使いません。更新・削除は apt で行ってください:"
+    echo ""
+    echo "     更新: sudo apt update && sudo apt upgrade kizuna-eye"
+    echo "     削除: sudo apt purge kizuna-eye"
+    echo ""
+    warn "（ソースから入れ直す場合は先に sudo apt purge kizuna-eye）"
+    exit 1
+fi
+
 # ---- 1. 前提チェック ----
 # os-release は「必要な値だけ」サブシェルで取り出す。`. /etc/os-release` を
 # 親シェルで実行すると VERSION 等が上書きされ、後段の ldflags が壊れる

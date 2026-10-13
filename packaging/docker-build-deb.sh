@@ -39,6 +39,11 @@ export GOTOOLCHAIN=local
 export GOFLAGS=-buildvcs=false
 
 go version
+# /opt ではなくリポジトリ内のステージング先へビルドする。これにより、
+# install.sh で導入済みの /opt の中身を deb に巻き込まない（混在防止）。
+# Build into a repo-local staging dir, not /opt, so an existing install
+# is never packaged into the deb.
+export KIZUNA_BIN_DIR=/src/dist/bin
 ./build.sh
 ./packaging/build-deb.sh
 "

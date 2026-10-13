@@ -17,7 +17,12 @@ if ! go version | grep -q "go1\.27\.2"; then
     echo "⚠️  go version is $(go version); forcing ${PINNED_GO} via GOTOOLCHAIN"
 fi
 
-BIN_DIR="/opt/kizuna-eye/bin"
+# 出力先は環境変数で上書きできる。deb ビルド（docker-build-deb.sh）は
+# /opt と切り離したステージング先を指定し、インストール済み環境のバイナリを
+# 誤って梱包しないようにする。
+# BIN_DIR is overridable so the deb build can use a staging dir instead of
+# /opt (which may hold binaries from a previous install).
+BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 mkdir -p "$BIN_DIR"
 
 # バージョン情報を ldflags で埋め込む
