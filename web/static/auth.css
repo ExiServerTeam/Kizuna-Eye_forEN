@@ -6,6 +6,11 @@
 /* ===== テーマ切替ボタン（画面右上に固定） ===== */
 .auth-theme-toggle {
     position: fixed;
+    /* max(env()) 非対応の古いブラウザでは top/right が丸ごと無効になり、
+       ボタンが通常フロー位置（カード中央付近）に浮く。先に固定値を書き、
+       対応ブラウザだけ env() でセーフエリアを考慮する。 */
+    top: 16px;
+    right: 16px;
     top: max(16px, env(safe-area-inset-top));
     right: max(16px, env(safe-area-inset-right));
     width: 44px;
