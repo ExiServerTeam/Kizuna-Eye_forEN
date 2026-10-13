@@ -129,7 +129,7 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 
 ## 3. 認証
 
-認証は既定で無効である。有効にするには `dashboard_config.json` の `auth` ブロックで `enabled` を `true` にする。
+認証は**インストーラ（`install.sh` / `.deb`）が新規設定で自動的に有効化**する（`auth.enabled: true` / `public_viewer: false`）。無効のままになるのは、`dashboard_config.example.json`（`auth.enabled: false` を同梱）から手動で設定を置いた場合だけである。変更するには `dashboard_config.json` の `auth` ブロックで `enabled` を切り替える。
 
 有効にすると、初回アクセス時に `/setup.html` へ移動し、最初のユーザーを作成する。最初に作成したユーザーが管理者となる。
 
