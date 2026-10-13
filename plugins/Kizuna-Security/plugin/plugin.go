@@ -56,6 +56,10 @@ func (p *SecurityPlugin) Name() string { return pluginName }
 
 func (p *SecurityPlugin) DisplayName() string { return "Kizuna-Security" }
 
+// Tag is the short badge shown on the plugin card. Kizuna-Security is a
+// guard-class plugin, so it declares "GUARD".
+func (p *SecurityPlugin) Tag() string { return "GUARD" }
+
 func (p *SecurityPlugin) Description() string {
 	return "SSHログイン・sudo・インストール・改ざん・新規ポート・SUID/SGID・cron変更・不審IPを監視するセキュリティプラグイン"
 }
@@ -388,14 +392,8 @@ func (p *SecurityPlugin) Configure(config interface{}) error {
 	// 始めず critical として通知する（改ざんの痕跡が「消えた」ように見える
 	// のを防ぐ）。log 側にも chain_quarantined として残している。
 	if archive, reason := fl.Quarantine(); archive != "" {
-		mon.emit(module.SecurityEvent{
-			Category:  "integrity",
-			Level:     "critical",
-			Title:     msg(cfg.Language, "integrity.quarantine.title"),
-			Message:   msg(cfg.Language, "integrity.quarantine.msg", cfg.LogPath, archive, reason),
-			Source:    "log_chain_quarantined",
-			Timestamp: time.Now(),
-		})
+		mon.emit(i18nEvent(cfg.Language, "integrity", "critical", "integrity.quarantine.title", "integrity.quarantine.msg",
+			module.SecurityEvent{Source: "log_chain_quarantined", Timestamp: time.Now()}, cfg.LogPath, archive, reason))
 	}
 	// F-4: ベースライン自身の改ざんを検知するため、ログチェーンと同じ鍵で
 	// 署名する（鍵が無ければ鍵なし SHA-256）。鍵は読み込み前に渡す。あとから
@@ -408,7 +406,7 @@ func (p *SecurityPlugin) Configure(config interface{}) error {
 
 	var portMon *PortMonitor
 	if cfg.ListenPortCheck {
-		portMon = NewPortMonitor(cfg.ListenPortBaselinePath, p.logger, mon.emit)
+		portMon = NewPortMonitorWithCooldown(cfg.ListenPortBaselinePath, cfg.ListenPortRenotifyCooldownSec, cfg.Language, p.logger, mon.emit)
 	}
 	var suidMon *SUIDMonitor
 	if cfg.SUIDCheck {
@@ -440,7 +438,8 @@ func (p *SecurityPlugin) Configure(config interface{}) error {
 		fimDir = NewFIMDirWatcher(cfg.FIMWatchPaths, cfg.FIMWatchIgnore, cfg.FIMWatchBaselinePath,
 			cfg.FIMWatchInterval, cfg.FIMWatchMaxFiles, cfg.FIMWatchMaxSizeKB,
 			p.logger, mon.emit, readChainKey(cfg.ChainKeyPath),
-			WithFIMDirMaxDepth(cfg.FIMWatchMaxDepth))
+			WithFIMDirMaxDepth(cfg.FIMWatchMaxDepth),
+			WithFIMHeadBytes(cfg.FIMWatchHeadBytes))
 		fimDir.SetLang(cfg.Language)
 		// label はログの識別子（SUID 監視と区別する）。
 		fimWatch = newInotifyWatcher(cfg.FIMWatchPaths, "FIM", p.logger, fimDir.HandleChanges,

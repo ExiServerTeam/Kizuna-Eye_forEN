@@ -1,6 +1,7 @@
 package alert
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,8 +18,10 @@ func TestHistoryLoadCompacts(t *testing.T) {
 	// Write 50 entries with a small max of 10.
 	h := NewHistory(10)
 	h.SetPersistence(path)
+	// Distinct messages keep these from collapsing as repeats; this test is
+	// about persistence/compaction, not the dedup stage.
 	for i := 0; i < 50; i++ {
-		h.Add(&notify.Alert{Type: "t", Level: notify.LevelInfo, Title: "x", Timestamp: time.Now()})
+		h.Add(&notify.Alert{Type: "t", Level: notify.LevelInfo, Title: "x", Message: fmt.Sprintf("e-%d", i), Timestamp: time.Now()})
 	}
 
 	// The file may have grown past max; reload into a fresh History.

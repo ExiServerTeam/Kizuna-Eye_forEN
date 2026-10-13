@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -50,17 +52,15 @@ func (p *SecurityPlugin) runIntegrityChecks() {
 	if cfg.LogPath != "" {
 		key := readChainKey(cfg.ChainKeyPath)
 		if err := VerifyChainKeyed(cfg.LogPath, key); err != nil {
-			p.emitIntegrityAlert(mon, "critical", "log_chain_broken",
-				msg(cfg.Language, "integrity.chain.title"),
-				msg(cfg.Language, "integrity.chain.msg", cfg.LogPath, err.Error()))
+			p.emitIntegrityAlert(mon, cfg.Language, "critical", "log_chain_broken",
+				"integrity.chain.title", "integrity.chain.msg", cfg.LogPath, err.Error())
 		}
 		// F-2: HMAC チェーンは行の改ざんと先頭削除を検知できるが、末尾を
 		// 削った場合は残った前方部分が正しく検証できてしまう。行数の最大値を
 		// 記録して、末尾削除・古いファイルへの巻き戻しを検知する。
 		if reason, level := checkLogMonotonic(cfg.LogPath, logStatePathFor(cfg.LogPath)); reason != "" {
-			p.emitIntegrityAlert(mon, level, "log_truncated",
-				msg(cfg.Language, "integrity.logtrunc.title"),
-				msg(cfg.Language, "integrity.logtrunc.msg", cfg.LogPath, reason))
+			p.emitIntegrityAlert(mon, cfg.Language, level, "log_truncated",
+				"integrity.logtrunc.title", "integrity.logtrunc.msg", cfg.LogPath, reason)
 		}
 		if cfg.ChainKeyPath != "" {
 			warnChainKeyPermissions(p, mon, cfg.ChainKeyPath, cfg.Language)
@@ -71,28 +71,36 @@ func (p *SecurityPlugin) runIntegrityChecks() {
 	if cfg.AlertHistoryPath != "" {
 		reason, level := checkAlertHistory(cfg.AlertHistoryPath, cfg.AlertHistoryStatePath)
 		if reason != "" {
-			p.emitIntegrityAlert(mon, level, "alert_history_tamper",
-				msg(cfg.Language, "integrity.alerthist.title"),
-				msg(cfg.Language, "integrity.alerthist.msg", cfg.AlertHistoryPath, reason))
+			p.emitIntegrityAlert(mon, cfg.Language, level, "alert_history_tamper",
+				"integrity.alerthist.title", "integrity.alerthist.msg", cfg.AlertHistoryPath, reason)
+		}
+		// V2-C: verify the per-line HMAC signature. Only signed lines are
+		// verified; unsigned (legacy) lines are skipped, so enabling signing
+		// never produces a false positive on old history. The existing V2-B
+		// line-count/hash check above is left untouched.
+		if key := readChainKey(cfg.AlertHistoryKeyPath); len(key) > 0 {
+			if reason, lineNo := verifyAlertHistorySigs(cfg.AlertHistoryPath, key); reason != "" {
+				p.emitIntegrityAlert(mon, cfg.Language, "critical", "alert_history_sig",
+					"integrity.alerthistsig.title", "integrity.alerthistsig.msg", cfg.AlertHistoryPath, lineNo, reason)
+			}
 		}
 	}
 }
 
-// emitIntegrityAlert emits an event and logs it.
-func (p *SecurityPlugin) emitIntegrityAlert(mon *Monitor, level, event, title, body string) {
-	mon.emit(module.SecurityEvent{
-		Category:  "integrity",
-		Level:     level,
-		Title:     title,
-		Message:   body,
-		Source:    event,
-		Timestamp: time.Now(),
-	})
+// emitIntegrityAlert emits an integrity event and logs it. titleKey/msgKey
+// are message-catalog keys so both language renderings are stored (task 9).
+func (p *SecurityPlugin) emitIntegrityAlert(mon *Monitor, lang, level, event, titleKey, msgKey string, args ...interface{}) {
+	if mon == nil {
+		return
+	}
+	mon.emit(i18nEvent(lang, "integrity", level, titleKey, msgKey,
+		module.SecurityEvent{Source: event, Timestamp: time.Now()}, args...))
 	if p.logger != nil {
+		localized := msg(lang, msgKey, args...)
 		if level == "critical" {
-			p.logger.Error("Kizuna-Security 整合性検証失敗: %s", body)
+			p.logger.Error("Kizuna-Security 整合性検証失敗: %s", localized)
 		} else {
-			p.logger.Warn("Kizuna-Security 整合性検証: %s", body)
+			p.logger.Warn("Kizuna-Security 整合性検証: %s", localized)
 		}
 	}
 }
@@ -203,6 +211,52 @@ func checkAlertHistory(path, statePath string) (string, string) {
 		}
 	}
 	return reason, level
+}
+
+// verifyAlertHistorySigs checks each line that carries a "sig" field against
+// its HMAC-SHA256 (computed over the line with "sig" removed). Unsigned lines
+// are skipped. It returns ("", 0) when all present signatures verify, or a
+// (reason, lineNumber) for the first mismatch.
+func verifyAlertHistorySigs(path string, key []byte) (string, int) {
+	if len(key) == 0 {
+		return "", 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", 0 // missing/unreadable is reported by checkAlertHistory
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	lineNo := 0
+	for sc.Scan() {
+		lineNo++
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var m map[string]interface{}
+		if err := json.Unmarshal(line, &m); err != nil {
+			continue // non-JSON line: V2-B handles structure; skip here
+		}
+		got, _ := m["sig"].(string)
+		if got == "" {
+			continue // unsigned/legacy line: not verified
+		}
+		delete(m, "sig")
+		data, err := json.Marshal(m)
+		if err != nil {
+			continue
+		}
+		h := hmac.New(sha256.New, key)
+		h.Write(data)
+		want := hex.EncodeToString(h.Sum(nil))
+		if !hmac.Equal([]byte(got), []byte(want)) {
+			return "alert history line HMAC mismatch", lineNo
+		}
+	}
+	return "", 0
 }
 
 // logLinesState はセキュリティログの行数の最大値（単調増加のアンカー）。
@@ -341,9 +395,8 @@ func warnChainKeyPermissions(p *SecurityPlugin, mon *Monitor, keyPath, lang stri
 	if !chainKeyPermWarner.shouldWarn(keyPath, permStr, time.Now()) {
 		return
 	}
-	p.emitIntegrityAlert(mon, "warning", "chain_key_permissions",
-		msg(lang, "integrity.keyperm.title"),
-		msg(lang, "integrity.keyperm.msg", keyPath, permStr))
+	p.emitIntegrityAlert(mon, lang, "warning", "chain_key_permissions",
+		"integrity.keyperm.title", "integrity.keyperm.msg", keyPath, permStr)
 }
 
 func dirOf(p string) string {

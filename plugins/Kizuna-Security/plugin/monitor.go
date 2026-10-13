@@ -142,6 +142,32 @@ func (m *Monitor) tr(key string, args ...interface{}) string {
 	return msg(m.cfg.Language, key, args...)
 }
 
+// emitI18n emits a security event with BOTH language renderings stored, so
+// the dashboard can show the log and alert history in the selected UI
+// language without re-deriving the string from a key (task 9). Title/Message
+// hold the configured language (for notifications); TitleEN/MessageEN hold
+// English.
+func (m *Monitor) emitI18n(category, level, titleKey, msgKey string, fields module.SecurityEvent, args ...interface{}) {
+	titleJa := msg("ja", titleKey)
+	msgJa := msg("ja", msgKey, args...)
+	titleEn := msg("en", titleKey)
+	msgEn := msg("en", msgKey, args...)
+
+	localizedTitle, localizedMsg := titleJa, msgJa
+	if m.cfg.Language == "en" {
+		localizedTitle, localizedMsg = titleEn, msgEn
+	}
+
+	event := fields
+	event.Category = category
+	event.Level = level
+	event.Title = localizedTitle
+	event.Message = localizedMsg
+	event.TitleEN = titleEn
+	event.MessageEN = msgEn
+	m.emit(event)
+}
+
 func (m *Monitor) Scan() {
 	now := time.Now()
 	for _, path := range m.cfg.WatchFiles {
@@ -252,18 +278,16 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 	}
 
 	if strings.Contains(path, "auth.log") || strings.Contains(path, "secure") {
-		// V5: if this exact line was seen in journald with a non-sshd
-		// origin (logger -t sshd), it is forged. Report and still process
-		// it so the operator sees the forged content too.
+		// 偽装行（journald の _COMM が sshd 以外、または _UID が 0 以外）は
+		// spoofed_log として記録し、ssh_login / ssh_failed の集計には
+		// 流さない。logger -t sshd で偽の「Accepted password」を注入しても
+		// ログイン成功のカウントには入らず、バースト判定を誤発火させない。
+		// 偽装行はここで return するので、以降の reSudo / reSSHLogin /
+		// reSSHFailed などのマッチはすべてスキップされる（二重記録なし）。
 		if m.spoof != nil && m.spoof.contains(trimmed) {
-			m.emit(module.SecurityEvent{
-				Category:  "spoofed_log",
-				Level:     "critical",
-				Title:     m.tr("spoofed.title"),
-				Message:   m.tr("spoofed.msg", trimmed),
-				Source:    path,
-				Timestamp: now,
-			})
+			m.emitI18n("spoofed_log", "critical", "spoofed.title", "spoofed.msg",
+				module.SecurityEvent{Source: path, Timestamp: now}, trimmed)
+			return
 		}
 		if mm := reSudo.FindStringSubmatch(trimmed); mm != nil {
 			actor := mm[1]
@@ -272,30 +296,30 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 			if m.isIgnoredSudo(command) {
 				return
 			}
-			m.emit(module.SecurityEvent{
-				Category:  "sudo",
-				Level:     "warning",
-				Title:     m.tr("sudo.title"),
-				Message:   m.tr("sudo.msg", actor, target, command),
-				Source:    path,
-				Actor:     actor,
-				Timestamp: now,
-			})
+			m.emitI18n("sudo", "warning", "sudo.title", "sudo.msg",
+				module.SecurityEvent{Source: path, Actor: actor, Timestamp: now}, actor, target, command)
 			return
 		}
 
 		if mm := reSSHLogin.FindStringSubmatch(trimmed); mm != nil {
 			user, ip := mm[1], mm[2]
-			m.emit(module.SecurityEvent{
-				Category:  "ssh_login",
-				Level:     "info",
-				Title:     m.tr("ssh_login.title"),
-				Message:   m.tr("ssh_login.msg", user, ip),
-				Source:    path,
-				Actor:     user,
-				IP:        ip,
-				Timestamp: now,
-			})
+			// 監視端末など、既知のホストからの反復ログインは「ログイン成功の
+			// 急増」critical を誤発火させ、ログイン集計も汚す。allowlist に
+			// 載っている IP の ssh_login は記録もカウントもしない（タスク7）。
+			if m.isLoginAllowed(ip) {
+				return
+			}
+			m.emitI18n("ssh_login", "info", "ssh_login.title", "ssh_login.msg",
+				module.SecurityEvent{
+					Source:     path,
+					Actor:      user,
+					IP:         ip,
+					Timestamp:  now,
+					Command:    fmt.Sprintf("ssh %s@<host> (from %s)", user, ip),
+					DetectFile: "monitor.go",
+					DetectLine: 289,
+					RelatedLog: trimmed,
+				}, user, ip)
 			m.checkLoginAnomaly(user, ip, now)
 			return
 		}
@@ -315,15 +339,8 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 
 		if mm := reSudoFail.FindStringSubmatch(trimmed); mm != nil {
 			actor := strings.TrimSpace(mm[1])
-			m.emit(module.SecurityEvent{
-				Category:  "sudo",
-				Level:     "warning",
-				Title:     m.tr("sudo.fail.title"),
-				Message:   m.tr("sudo.fail.msg", actor),
-				Source:    path,
-				Actor:     actor,
-				Timestamp: now,
-			})
+			m.emitI18n("sudo", "warning", "sudo.fail.title", "sudo.fail.msg",
+				module.SecurityEvent{Source: path, Actor: actor, Timestamp: now}, actor)
 			return
 		}
 
@@ -335,6 +352,8 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 				Message:   trimmed,
 				Source:    path,
 				Timestamp: now,
+				TitleEN:   msg("en", "account.title"),
+				MessageEN: trimmed,
 			})
 			return
 		}
@@ -351,14 +370,7 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 			case "remove":
 				titleKey, verbKey = "install.remove.title", "install.verb.remove"
 			}
-			m.emit(module.SecurityEvent{
-				Category:  "install",
-				Level:     "warning",
-				Title:     m.tr(titleKey),
-				Message:   m.tr("install.msg", pkg, m.tr(verbKey)),
-				Source:    path,
-				Timestamp: now,
-			})
+			m.emitInstall(path, now, titleKey, pkg, verbKey)
 			return
 		}
 	}
@@ -370,14 +382,8 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 			if len(pkgs) > 200 {
 				pkgs = pkgs[:200] + "..."
 			}
-			m.emit(module.SecurityEvent{
-				Category:  "install",
-				Level:     "warning",
-				Title:     m.tr("apt.title", action),
-				Message:   action + ": " + pkgs,
-				Source:    path,
-				Timestamp: now,
-			})
+			m.emitI18n("install", "warning", "apt.title", "apt.msg",
+				module.SecurityEvent{Source: path, Timestamp: now, MessageEN: action + ": " + pkgs}, action, pkgs)
 			return
 		}
 	}
@@ -393,17 +399,17 @@ func (m *Monitor) classify(path, line string, now time.Time) {
 			case "Erased", "Obsoleted":
 				titleKey, verbKey = "install.remove.title", "install.verb.remove"
 			}
-			m.emit(module.SecurityEvent{
-				Category:  "install",
-				Level:     "warning",
-				Title:     m.tr(titleKey),
-				Message:   m.tr("install.msg", pkg, m.tr(verbKey)),
-				Source:    path,
-				Timestamp: now,
-			})
+			m.emitInstall(path, now, titleKey, pkg, verbKey)
 			return
 		}
 	}
+}
+
+// emitInstall emits a package install/upgrade/remove event with both
+// languages (task 9). verbKey is the message verb (install/upgrade/remove).
+func (m *Monitor) emitInstall(path string, now time.Time, titleKey, pkg, verbKey string) {
+	m.emitI18n("install", "warning", titleKey, "install.msg",
+		module.SecurityEvent{Source: path, Timestamp: now}, pkg, msg(m.cfg.Language, verbKey))
 }
 
 func (m *Monitor) checkLoginAnomaly(user, ip string, now time.Time) {
@@ -450,28 +456,31 @@ func (m *Monitor) checkLoginAnomaly(user, ip string, now time.Time) {
 	m.mu.Unlock()
 
 	if isNew {
-		m.emit(module.SecurityEvent{
-			Category:  "ssh_login",
-			Level:     "warning",
-			Title:     m.tr("ssh_login.unknown.title"),
-			Message:   m.tr("ssh_login.unknown.msg", user, ip),
-			Actor:     user,
-			IP:        ip,
-			Timestamp: now,
-		})
+		m.emitI18n("ssh_login", "warning", "ssh_login.unknown.title", "ssh_login.unknown.msg",
+			module.SecurityEvent{Actor: user, IP: ip, Timestamp: now}, user, ip)
 	}
 	if notifyBurst {
-		body := m.tr("ssh_login.burst.msg", ip, count)
+		titleJa := msg("ja", "ssh_login.burst.title")
+		bodyJa := msg("ja", "ssh_login.burst.msg", ip, count)
+		titleEn := msg("en", "ssh_login.burst.title")
+		bodyEn := msg("en", "ssh_login.burst.msg", ip, count)
 		if !isNew {
 			// 既知 IP（運用端末・監視ツール）からの反復接続でも同じ急増が起きる
 			// ことを伝え、本物の失敗と取り違えられないようにする。
-			body += m.tr("ssh_login.burst.known.note")
+			bodyJa += msg("ja", "ssh_login.burst.known.note")
+			bodyEn += msg("en", "ssh_login.burst.known.note")
+		}
+		localTitle, localBody := titleJa, bodyJa
+		if m.cfg.Language == "en" {
+			localTitle, localBody = titleEn, bodyEn
 		}
 		m.emit(module.SecurityEvent{
 			Category:  "ssh_login",
 			Level:     "critical",
-			Title:     m.tr("ssh_login.burst.title"),
-			Message:   body,
+			Title:     localTitle,
+			Message:   localBody,
+			TitleEN:   titleEn,
+			MessageEN: bodyEn,
 			Actor:     user,
 			IP:        ip,
 			Timestamp: now,
@@ -646,37 +655,75 @@ func (m *Monitor) emitSSHFailure(path, user, ip string, now time.Time) {
 	}
 
 	level := "warning"
-	title := m.tr("ssh_failed.title")
-	body := m.tr("ssh_failed.msg", safeLogValue(user, 64))
+	titleKey := "ssh_failed.title"
+	msgKey := "ssh_failed.msg"
+	var msgArgs []interface{}
 	if notifyCritical {
 		level = "critical"
 		switch rule {
 		case "sustained":
-			title = m.tr("ssh_failed.sustained.title")
-			body = m.tr("ssh_failed.sustained.msg", ip, int(sustainedWindow.Seconds()), count)
+			titleKey = "ssh_failed.sustained.title"
+			msgKey = "ssh_failed.sustained.msg"
+			msgArgs = []interface{}{ip, int(sustainedWindow.Seconds()), count}
 		case "enum":
-			title = m.tr("ssh_failed.enum.title")
-			body = m.tr("ssh_failed.enum.msg", ip, count, strings.Join(names, ", "))
+			titleKey = "ssh_failed.enum.title"
+			msgKey = "ssh_failed.enum.msg"
+			msgArgs = []interface{}{ip, count, strings.Join(names, ", ")}
 		default:
-			title = m.tr("ssh_failed.burst.title")
-			body = m.tr("ssh_failed.burst.msg", ip, count)
+			titleKey = "ssh_failed.burst.title"
+			msgKey = "ssh_failed.burst.msg"
+			msgArgs = []interface{}{ip, count}
 		}
+	} else {
+		msgArgs = []interface{}{safeLogValue(user, 64)}
 	}
+
+	titleJa := msg("ja", titleKey)
+	bodyJa := msg("ja", msgKey, msgArgs...)
+	titleEn := msg("en", titleKey)
+	bodyEn := msg("en", msgKey, msgArgs...)
 	if loopback {
 		// ループバック経由の失敗は「ホスト上の誰か」または「127.0.0.1 への
 		// トンネル」であり、接続元 IP では攻撃元を特定できない。
-		body += m.tr("ssh_failed.loopback.note")
+		bodyJa += msg("ja", "ssh_failed.loopback.note")
+		bodyEn += msg("en", "ssh_failed.loopback.note")
 	}
 
+	// タスク1: 詳細表示用。検知ロジックの行番号はルール別に変える。
+	detectLine := 660 // 単発失敗
+	remediation := fmt.Sprintf("ユーザー %s へのログイン失敗が %s から発生しました。心当たりが無ければ fail2ban/自動ブロックの有効化、SSH の鍵認証限定化、パスワード認証の無効化を検討してください。", user, ip)
+	switch rule {
+	case "burst":
+		detectLine = 631
+		remediation = fmt.Sprintf("IP %s から短時間に %d 回のログイン失敗を検知しました（総当たり攻撃の可能性）。このIPをブロックし、SSH のパスワード認証を無効化してください。", ip, count)
+	case "sustained":
+		detectLine = 633
+		remediation = fmt.Sprintf("IP %s から %d 秒間に %d 回のログイン失敗を検知しました（low-and-slow 攻撃）。このIPをブロックしてください。", ip, int(sustainedWindow.Seconds()), count)
+	case "enum":
+		detectLine = 635
+		remediation = fmt.Sprintf("IP %s から %d 種類のユーザー名でログイン失敗を検知しました（ユーザー列挙の可能性）。このIPをブロックし、存在しないユーザー名への応答を遅延/非公開にしてください。", ip, count)
+	}
+
+	localTitle, localBody := titleJa, bodyJa
+	if m.cfg.Language == "en" {
+		localTitle, localBody = titleEn, bodyEn
+	}
 	m.emit(module.SecurityEvent{
-		Category:  "ssh_failed",
-		Level:     level,
-		Title:     title,
-		Message:   body,
-		Source:    path,
-		Actor:     user,
-		IP:        ip,
-		Timestamp: now,
+		Category:    "ssh_failed",
+		Level:       level,
+		Title:       localTitle,
+		Message:     localBody,
+		TitleEN:     titleEn,
+		MessageEN:   bodyEn,
+		Source:      path,
+		Actor:       user,
+		IP:          ip,
+		Timestamp:   now,
+		Command:     fmt.Sprintf("ssh %s@%s", user, ip),
+		DetectFile:  "monitor.go",
+		DetectLine:  detectLine,
+		Remediation: remediation,
+		RelatedLog:  fmt.Sprintf("%s: ユーザー %s のログイン失敗 (ip=%s)", path, user, ip),
 	})
 }
 
@@ -812,12 +859,26 @@ func (m *Monitor) emit(ev module.SecurityEvent) {
 	}
 
 	if m.fileLog != nil {
-		m.fileLog.log(strings.ToUpper(ev.Level), ev.Category, ev.Title, map[string]interface{}{
+		extra := map[string]interface{}{
 			"actor":   ev.Actor,
 			"ip":      ev.IP,
 			"source":  ev.Source,
 			"message": ev.Message,
-		})
+		}
+		// Extra carries plugin-specific fields (dedup_key, count ...) so a
+		// suppressed/deduplicated event stays aggregatable with jq.
+		for k, v := range ev.Extra {
+			extra[k] = v
+		}
+		// Both language renderings are persisted so the UI can switch the
+		// log view between ja and en (task 9). Older lines lack these keys.
+		if ev.TitleEN != "" {
+			extra["title_en"] = ev.TitleEN
+		}
+		if ev.MessageEN != "" {
+			extra["message_en"] = ev.MessageEN
+		}
+		m.fileLog.log(strings.ToUpper(ev.Level), ev.Category, ev.Title, extra)
 	}
 
 	if levelRank(ev.Level) < levelRank(m.cfg.NotifyMinimal) {
@@ -878,6 +939,23 @@ func itoa(n int) string {
 		b[i] = '-'
 	}
 	return string(b[i:])
+}
+
+// isLoginAllowed reports whether ip is in ssh_login_allowlist, meaning its
+// ssh_login events are not recorded or counted (task 7). A monitoring host or
+// the operator's workstation reconnects often and would otherwise fire the
+// "login burst" critical and pollute the login counters.
+func (m *Monitor) isLoginAllowed(ip string) bool {
+	if ip == "" || len(m.cfg.SSHLoginAllowlist) == 0 {
+		return false
+	}
+	for _, a := range m.cfg.SSHLoginAllowlist {
+		a = strings.TrimSpace(a)
+		if a != "" && a == ip {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Monitor) isIgnoredSudo(command string) bool {

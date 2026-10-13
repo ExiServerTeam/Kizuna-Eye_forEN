@@ -141,6 +141,12 @@ func (m *Monitor) spoofWatchLoop(ctx context.Context) {
 		// whose real origin is not the privileged sshd process are forgeries
 		// (e.g. logger -t sshd). Legitimate sudo/systemd auth entries have a
 		// different SYSLOG_IDENTIFIER and must NOT be flagged.
+		//
+		// 判定は2つ: (1) _COMM が sshd 以外（logger 等の別プロセス）、
+		// (2) _UID が 0 以外（非 root）。本物の sshd は _COMM=sshd かつ
+		// _UID=0 なので、どちらかが崩れていれば SYSLOG_IDENTIFIER を
+		// sshd と偽った注入とみなせる。_UID 単独の判定は、_COMM を sshd
+		// に偽装できる高度な攻撃（bind mount 等）への第二の壁になる。
 		if e.SyslogIdentifier == "sshd" && (e.Comm != "sshd" || e.UID != "0") {
 			if e.Message != "" {
 				m.spoof.add(e.Message, time.Now())

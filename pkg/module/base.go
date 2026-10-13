@@ -313,15 +313,42 @@ type BackupRunner interface {
 
 // SecurityEvent is one security-relevant event detected by a plugin.
 type SecurityEvent struct {
-	Plugin    string    `json:"plugin"`
-	Category  string    `json:"category"` // ssh_login / ssh_failed / sudo / install / account / config
-	Level     string    `json:"level"`    // critical / warning / info
-	Title     string    `json:"title"`
-	Message   string    `json:"message"`
+	Plugin   string `json:"plugin"`
+	Category string `json:"category"` // ssh_login / ssh_failed / sudo / install / account / config
+	Level    string `json:"level"`    // critical / warning / info
+	Title    string `json:"title"`
+	Message  string `json:"message"`
+	// TitleEN / MessageEN carry the English rendering of Title/Message so
+	// the UI can show the log and alert history in the selected language
+	// without re-deriving the string from a key. Older records omit them;
+	// the UI falls back to Title/Message (Japanese).
+	TitleEN   string    `json:"title_en,omitempty"`
+	MessageEN string    `json:"message_en,omitempty"`
 	Source    string    `json:"source,omitempty"` // log file the event came from
 	Actor     string    `json:"actor,omitempty"`  // user who performed the action
 	IP        string    `json:"ip,omitempty"`     // source IP address
 	Timestamp time.Time `json:"timestamp"`
+
+	// --- アラート詳細表示用 (タスク1) ---
+	// Command is the command line that triggered the event, when it can be
+	// recovered (cron entry, SUID file path, etc.).
+	Command string `json:"command,omitempty"`
+	// DetectFile is the plugin source file that contains the detection logic
+	// (e.g. "cronmon.go").
+	DetectFile string `json:"detect_file,omitempty"`
+	// DetectLine is the 1-based line number of the detection logic in
+	// DetectFile.
+	DetectLine int `json:"detect_line,omitempty"`
+	// Remediation is a human-readable suggested action (proposed fix).
+	Remediation string `json:"remediation,omitempty"`
+	// RelatedLog is the raw log line (or a representative excerpt) that the
+	// detection was based on.
+	RelatedLog string `json:"related_log,omitempty"`
+
+	// Extra carries additional structured fields (e.g. dedup_key, count)
+	// that the plugin wants in the security log for later aggregation with
+	// jq. Keys are written verbatim alongside the standard fields.
+	Extra map[string]string `json:"extra,omitempty"`
 }
 
 // SecurityEventProvider is implemented by security plugins.
@@ -477,4 +504,21 @@ func ApplyDefaults(fields []ConfigField, values map[string]string) map[string]st
 // Plugins that implement it show this name; otherwise the frontend falls back to "PLUGIN".
 type DisplayNameProvider interface {
 	DisplayName() string
+}
+
+// ============================================================
+// Tag self-declaration (optional).
+// ============================================================
+
+// TagProvider lets a plugin declare the short tag shown as a badge on its
+// card (e.g. "GUARD" for Kizuna-Security, "LITE"/"PRO" for backup
+// variants). The value is what the plugin itself decides, so the plugin —
+// not the UI — is the single source of truth for how it is labelled.
+// A plugin that does not implement it falls back to "PLUGIN".
+//
+// The inspector (cmd/plugin-inspect) reads this method by reflection, so a
+// plugin only has to add a `Tag() string` method; it does not have to import
+// this package for the call to work.
+type TagProvider interface {
+	Tag() string
 }

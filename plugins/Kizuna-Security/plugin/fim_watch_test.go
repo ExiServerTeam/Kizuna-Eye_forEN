@@ -253,8 +253,10 @@ func TestFIMDirWatcherIgnoresPatterns(t *testing.T) {
 	f.Check()
 
 	events := take()
-	if n := fimDirEventCount(events, "", ignored); n != 0 {
-		t.Fatalf("除外パターンに一致するファイルを通知してはいけません: %+v", events)
+	// 除外パターン一致は critical/warning を出さない（タスク3で info の
+	// 可視化記録のみ追加）。除外されないファイルは critical で通知される。
+	if n := fimDirEventCount(events, "critical", ignored); n != 0 {
+		t.Fatalf("除外パターンに一致するファイルを重大通知してはいけません: %+v", events)
 	}
 	if n := fimDirEventCount(events, "critical", kept); n != 1 {
 		t.Fatalf("除外されないファイルは通知されるべきです: %+v", events)

@@ -26,11 +26,21 @@ type PortMonitor struct {
 	baselinePath string
 	logger       module.Logger
 	emitFn       func(module.SecurityEvent)
+	// language is the configured notification language ("ja"/"en"). The
+	// event stores both renderings (TitleEN/MessageEN) regardless (task 9).
+	language string
+	// renotifyCooldown suppresses re-notifying the same port reopened within
+	// this window (task 8). 0 disables it.
+	renotifyCooldown time.Duration
 
 	mu          sync.Mutex
 	known       map[string]portInfo
 	loaded      bool
 	hasBaseline bool
+
+	// lastNotified maps a port key to the last time its opening was notified,
+	// so a flap inside the cooldown is recorded (info) but not re-notified.
+	lastNotified map[string]time.Time
 
 	// missingNotified は「ss を実行できない」警告を繰り返さないためのフラグ（F-3）。
 	missingNotified bool
@@ -47,12 +57,49 @@ type portState struct {
 }
 
 func NewPortMonitor(baselinePath string, logger module.Logger, emitFn func(module.SecurityEvent)) *PortMonitor {
-	return &PortMonitor{
-		baselinePath: baselinePath,
-		logger:       logger,
-		emitFn:       emitFn,
-		known:        make(map[string]portInfo),
+	return NewPortMonitorWithCooldown(baselinePath, 0, "ja", logger, emitFn)
+}
+
+// NewPortMonitorWithCooldown is NewPortMonitor with a re-notify cooldown
+// (seconds) and the notification language. cooldownSec<=0 keeps the old
+// behaviour (every new port notifies).
+func NewPortMonitorWithCooldown(baselinePath string, cooldownSec int, language string, logger module.Logger, emitFn func(module.SecurityEvent)) *PortMonitor {
+	if language != "en" {
+		language = "ja"
 	}
+	return &PortMonitor{
+		baselinePath:     baselinePath,
+		logger:           logger,
+		emitFn:           emitFn,
+		language:         language,
+		known:            make(map[string]portInfo),
+		lastNotified:     make(map[string]time.Time),
+		renotifyCooldown: time.Duration(cooldownSec) * time.Second,
+	}
+}
+
+// emitI18n builds and emits a port event with both language renderings, so
+// the dashboard can show the log/history in the selected UI language (task 9).
+func (m *PortMonitor) emitI18n(level, titleKey, msgKey string, fields module.SecurityEvent, args ...interface{}) {
+	if m.emitFn == nil {
+		return
+	}
+	titleJa := msg("ja", titleKey)
+	msgJa := msg("ja", msgKey, args...)
+	titleEn := msg("en", titleKey)
+	msgEn := msg("en", msgKey, args...)
+
+	event := fields
+	event.Level = level
+	event.Title = titleJa
+	event.Message = msgJa
+	if m.language == "en" {
+		event.Title = titleEn
+		event.Message = msgEn
+	}
+	event.TitleEN = titleEn
+	event.MessageEN = msgEn
+	m.emitFn(event)
 }
 
 func portKey(p portInfo) string {
@@ -71,15 +118,13 @@ func (m *PortMonitor) Check() {
 		notified := m.missingNotified
 		m.missingNotified = true
 		m.mu.Unlock()
-		if !notified && m.emitFn != nil {
-			m.emitFn(module.SecurityEvent{
-				Category:  "listen_port",
-				Level:     "warning",
-				Title:     "新規リッスンポートの検知が停止しています",
-				Message:   fmt.Sprintf("ss の実行に失敗しました（%v）。ss のパスと実行権限を確認してください。", err),
-				Source:    "ss",
-				Timestamp: time.Now(),
-			})
+		if !notified {
+			m.emitI18n("warning", "listen_port.stop.title", "listen_port.stop.msg",
+				module.SecurityEvent{
+					Category:  "listen_port",
+					Source:    "ss",
+					Timestamp: time.Now(),
+				}, err)
 		}
 		return
 	}
@@ -123,15 +168,57 @@ func (m *PortMonitor) Check() {
 		return newPorts[i].Proto < newPorts[j].Proto
 	})
 
+	now := time.Now()
 	for _, p := range newPorts {
-		m.emitFn(module.SecurityEvent{
+		key := portKey(p)
+		// firstEver is true on the very first notification of this port (no
+		// prior entry in lastNotified). It decides whether the "re-detected"
+		// note is added, so the check must happen BEFORE lastNotified is
+		// updated for this round.
+		firstEver := true
+		// 再通知抑制（タスク8）。クールダウン内に同一ポートが再待受したら、
+		// 通知はせず info で「抑制した」ことだけを記録する。どのポートが何回
+		// 抑制されたかを後で jq 集計できるよう dedup_key/port を extra に載せる。
+		if m.renotifyCooldown > 0 {
+			m.mu.Lock()
+			last, seen := m.lastNotified[key]
+			if seen && now.Sub(last) < m.renotifyCooldown {
+				m.lastNotified[key] = now
+				m.mu.Unlock()
+				m.emitI18n("info", "listen_port.suppress.title", "listen_port.suppress.msg",
+					module.SecurityEvent{
+						Category:  "listen_port",
+						Source:    "ss",
+						Timestamp: now,
+						Extra: map[string]string{
+							"dedup_key": "listen_port_renotify_suppressed",
+							"port":      strconv.Itoa(p.Port),
+						},
+					}, strings.ToUpper(p.Proto), p.Port, m.renotifyCooldown)
+				continue
+			}
+			firstEver = !seen
+			m.lastNotified[key] = now
+			m.mu.Unlock()
+		}
+
+		// クールダウン経過後の再検知は初回と同じ level。運用者が「再検知」と
+		// 分かるようメッセージに注記する（初回は注記なし）。
+		msgKey := "listen_port.msg"
+		if m.renotifyCooldown > 0 && !firstEver {
+			msgKey = "listen_port.redetect.msg"
+		}
+		m.emitI18n("warning", "listen_port.title", msgKey, module.SecurityEvent{
 			Category:  "listen_port",
-			Level:     "warning",
-			Title:     "新規リッスンポートを検知",
-			Message:   fmt.Sprintf("%s ポート %d が新たに待ち受けを開始しました（%s）。", strings.ToUpper(p.Proto), p.Port, p.Address),
 			Source:    "ss",
-			Timestamp: time.Now(),
-		})
+			Timestamp: now,
+			// タスク1: 詳細表示用
+			Command:     fmt.Sprintf("待ち受け: %s %s:%d", strings.ToUpper(p.Proto), p.Address, p.Port),
+			DetectFile:  "portmon.go",
+			DetectLine:  127,
+			Remediation: fmt.Sprintf("このポートが不要なら待ち受けプロセスを停止してください (ss -ltnp | grep :%d)。心当たりが無ければ不正なバックドアの可能性があるため、該当プロセスの実行ファイルと起動元を調査し、必要なら kill と自動起動の無効化を行ってください。", p.Port),
+			RelatedLog:  fmt.Sprintf("ss: %s %s:%d (新規)", strings.ToUpper(p.Proto), p.Address, p.Port),
+		}, strings.ToUpper(p.Proto), p.Port, p.Address)
 	}
 }
 

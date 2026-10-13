@@ -156,15 +156,28 @@ func TestFIMDirWatcherOversizedFileIsTrackedByMetadata(t *testing.T) {
 		t.Fatalf("大容量ファイルはメタ情報で記録するべきです: %+v", entry)
 	}
 
-	// サイズが変われば（＝内容が変われば）warning で検知する。
+	// mtime だけが変わった場合は warning（メタ情報の変化）。
+	// head を変えないので critical にはならない。
 	time.Sleep(10 * time.Millisecond)
-	if err := os.WriteFile(target, []byte(strings.Repeat("B", 5000)), 0600); err != nil {
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(target, future, future); err != nil {
 		t.Fatal(err)
 	}
 	f.Check()
 	events = take()
 	if !fimDirHasTitle(events, "fimwatch.large.change.title", target) {
-		t.Fatalf("大容量ファイルの変更は warning で通知するべきです: %+v", events)
+		t.Fatalf("メタ情報のみの変化は warning で通知するべきです: %+v", events)
+	}
+
+	// 先頭（内容）を書き換えた場合は critical（head ハッシュの変化）。
+	time.Sleep(10 * time.Millisecond)
+	if err := os.WriteFile(target, []byte(strings.Repeat("B", 4096)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	f.Check()
+	events = take()
+	if !fimDirHasTitle(events, "fimwatch.large.head.title", target) {
+		t.Fatalf("大容量ファイルの先頭変更は critical で通知するべきです: %+v", events)
 	}
 
 	// 削除も検知する（以前は「存在しない」扱いで 1 件も出なかった）。
@@ -248,8 +261,13 @@ func TestFIMDirWatcherIgnoresFilesInsideIgnoredDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.HandleChanges([]string{inside}, nil)
-	if got := take(); len(got) != 0 {
-		t.Fatalf("除外ディレクトリ直下のファイルを通知してはいけません: %+v", got)
+	// 除外対象は critical/warning を出さない（タスク3で info の可視化
+	// 記録だけを追加した。誤って改ざん扱いしないことを確認する）。
+	events := take()
+	for _, ev := range events {
+		if ev.Level == "critical" || ev.Level == "warning" {
+			t.Fatalf("除外ディレクトリ直下のファイルを重大通知してはいけません: %+v", ev)
+		}
 	}
 }
 

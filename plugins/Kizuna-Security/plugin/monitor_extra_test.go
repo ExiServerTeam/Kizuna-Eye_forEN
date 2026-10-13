@@ -20,6 +20,8 @@ func TestScanFileKeepsPartialLine(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.WatchFiles = []string{path}
 	cfg.NotifyMinimal = "info" // SSHログイン成功(info)もキューに積む
+	// 共有の ./logs ログインベースラインに書き込まない（テスト順序依存の防止）。
+	cfg.SSHLoginBaselinePath = ""
 	m := NewMonitor(cfg, nil, nil)
 	m.loginKnownIPs["1.2.3.4"] = true
 
@@ -86,6 +88,8 @@ func TestFailTrackerEviction(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.FailedBurst = 5
 	cfg.BurstWindow = 60
+	// 共有の ./logs ログインベースラインに書き込まない（テスト順序依存の防止）。
+	cfg.SSHLoginBaselinePath = ""
 	m := NewMonitor(cfg, nil, nil)
 
 	// 上限を超える件数の異なるIPを処理する。
@@ -103,6 +107,8 @@ func TestFailTrackerEviction(t *testing.T) {
 func TestQueueLimit(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.NotifyMinimal = "info"
+	// 共有の ./logs ログインベースラインに書き込まない（テスト順序依存の防止）。
+	cfg.SSHLoginBaselinePath = ""
 	m := NewMonitor(cfg, nil, nil)
 
 	for i := 0; i < maxQueueSize+500; i++ {
