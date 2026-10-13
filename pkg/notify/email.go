@@ -114,11 +114,16 @@ func (e *EmailNotifier) Send(ctx context.Context, a *Alert) error {
 		}
 	}
 
-	if err := c.Mail(e.from); err != nil {
+	// Sanitize the envelope addresses too. The header block above already
+	// strips CR/LF, but c.Mail / c.Rcpt write the raw value into the SMTP
+	// command line; an embedded CRLF in a (config-supplied) address could
+	// otherwise inject extra SMTP commands. Defense in depth: the addresses
+	// are admin-configured, but no path should allow header/command injection.
+	if err := c.Mail(sanitizeHeader(e.from)); err != nil {
 		return fmt.Errorf("email mail: %w", err)
 	}
 	for _, rcpt := range e.to {
-		if err := c.Rcpt(rcpt); err != nil {
+		if err := c.Rcpt(sanitizeHeader(rcpt)); err != nil {
 			return fmt.Errorf("email rcpt: %w", err)
 		}
 	}
