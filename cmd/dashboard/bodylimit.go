@@ -4,6 +4,11 @@ import (
 	"net/http"
 )
 
+// bodyLimitMiddleware はリクエスト本文のサイズを制限し、過大な JSON や
+// multipart アップロードによるメモリ/ディスク枯渇を防ぐ。
+//
+// JSON API リクエストは jsonLimitBytes に制限し、プラグインアップロード
+// エンドポイントは .so バイナリを運ぶため uploadLimitBytes を与える。
 // bodyLimitMiddleware caps the size of request bodies to protect against
 // memory/disk exhaustion from oversized JSON or multipart uploads.
 //
@@ -20,6 +25,8 @@ func bodyLimitMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/plugins/upload" {
 			limit = int64(uploadLimitBytes)
 		}
+		// アバターアップロードは multipart 画像（最大 1 MiB）なので、
+		// multipart のフレーミング分だけ JSON 上限より少し多く許可する。
 		// Avatar upload is a multipart image (max 1 MiB), so allow a little
 		// more than the JSON limit for the multipart framing.
 		if r.Method == http.MethodPost && r.URL.Path == "/api/auth/avatar" {

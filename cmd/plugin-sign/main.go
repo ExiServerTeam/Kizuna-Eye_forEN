@@ -1,3 +1,22 @@
+// plugin-sign コマンドは Kizuna-Eye プラグイン（.so）ファイルの分離 Ed25519 署名を
+// 作成・検証する。これはハードニング項目 A-3 の運用者向けの半分だ。agent と
+// dashboard は、設定済み公開鍵に対して署名が検証できない .so のロードを拒否する。
+//
+// 使い方:
+//
+//	# 1) 鍵対を作る（秘密鍵はオフホスト保管。共有に置かないこと）
+//	plugin-sign -gen-key -key-dir /secure/kizuna
+//
+//	# 2) プラグインに署名する（<file>.so.sig を書き出す）
+//	plugin-sign -sign /opt/kizuna-eye/bin/plugins/Foo.so -private-key /secure/kizuna/plugin_signing.key
+//
+//	# 3) 検証する（配置前の確認）
+//	plugin-sign -verify /opt/kizuna-eye/bin/plugins/Foo.so -public-key /etc/kizuna-eye/plugin_signing.pub
+//
+//	# まとめて署名する
+//	plugin-sign -sign-all /opt/kizuna-eye/bin/plugins -private-key /secure/kizuna/plugin_signing.key
+//
+// 終了コード: 0 = OK、1 = エラー、2 = 使い方。
 // Command plugin-sign creates and verifies detached Ed25519 signatures for
 // Kizuna-Eye plugin (.so) files. It is the operator-facing half of hardening
 // item A-3: the agent and the dashboard refuse to load a .so whose signature
@@ -127,6 +146,7 @@ func run(args []string) error {
 	}
 }
 
+// generateKeyPair は新しい鍵対を dir へ書き出す。
 // generateKeyPair writes a fresh key pair into dir.
 func generateKeyPair(dir string, force bool) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -147,6 +167,9 @@ func generateKeyPair(dir string, force bool) error {
 	if err != nil {
 		return err
 	}
+	// 秘密鍵は全プラグイン署名の信頼の根なので、素の os.WriteFile では決して
+	// 書かない。それは最終パス要素の symlink を辿るため、privPath に仕込まれた
+	// リンクが鍵を攻撃者の選んだファイルへ誘導し得る（CWE-59）。
 	// The private key is the root of trust for every plugin signature, so it
 	// is never written with a plain os.WriteFile: that follows a symlink at
 	// the final path component, so a link planted at privPath would redirect
@@ -164,6 +187,12 @@ func generateKeyPair(dir string, force bool) error {
 	return nil
 }
 
+// writeKeyFile は symlink を決して辿らずに鍵ファイルを書く。
+//
+// force=false は O_CREATE|O_EXCL を使い、既存パス（symlink 含む）を拒否し、
+// 存在確認と書き込みの間の TOCTOU 窓を閉じる。force=true は共有のアトミック
+// ライタを使い、これも symlink ターゲットを拒否しつつ既存ファイルの置き換えを
+// 許す。
 // writeKeyFile writes a key file without ever following a symlink.
 //
 // force=false uses O_CREATE|O_EXCL, which refuses an existing path (including
@@ -191,6 +220,7 @@ func writeKeyFile(path string, data []byte, perm os.FileMode, force bool) error 
 	return f.Close()
 }
 
+// printPublicKey は秘密鍵ファイルから公開鍵を導出して表示する。
 // printPublicKey derives and prints the public key from a private key file.
 func printPublicKey(privPath string) error {
 	if privPath == "" {
@@ -208,6 +238,7 @@ func printPublicKey(privPath string) error {
 	return nil
 }
 
+// signOne は 1 ファイルに署名する。
 // signOne signs a single file.
 func signOne(soPath, privPath, out string) error {
 	if privPath == "" {
@@ -227,6 +258,7 @@ func signOne(soPath, privPath, out string) error {
 	return nil
 }
 
+// signAllIn は dir 直下のすべての *.so に署名する。
 // signAllIn signs every *.so directly under dir.
 func signAllIn(dir, privPath string, force bool) error {
 	if privPath == "" {
@@ -276,6 +308,7 @@ func signAllIn(dir, privPath string, force bool) error {
 	return nil
 }
 
+// embedOne は .so ファイルに埋め込み署名トレーラを追記する。
 // embedOne appends an embedded signature trailer to a .so file.
 func embedOne(soPath, privPath string) error {
 	if privPath == "" {
@@ -295,6 +328,7 @@ func embedOne(soPath, privPath string) error {
 	return nil
 }
 
+// embedAllIn は dir 直下のすべての *.so に署名を埋め込む。
 // embedAllIn embeds a signature into every *.so directly under dir.
 func embedAllIn(dir, privPath string) error {
 	if privPath == "" {
@@ -335,6 +369,8 @@ func embedAllIn(dir, privPath string) error {
 	return nil
 }
 
+// verifyOne はファイルを検証する。埋め込みトレーラを先に試し、無ければ分離
+// <file>.sig を使う。一致したソースを表示する。
 // verifyOne verifies a file. The embedded trailer is tried first; if there is
 // none, the detached <file>.sig is used. The source that matched is printed.
 func verifyOne(soPath, pubPath string) error {
