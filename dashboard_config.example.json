@@ -13,6 +13,10 @@
         "bwrap_path": "/usr/bin/bwrap"
     },
     "alert_history_file": "logs/alert_history.jsonl",
+    "log_forward": {
+        "url": "",
+        "timeout_sec": 5
+    },
     "auth": {
         "enabled": false,
         "secure_cookies": false,

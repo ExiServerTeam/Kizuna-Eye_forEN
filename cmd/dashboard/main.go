@@ -908,10 +908,12 @@ func main() {
 	}
 
 	lg := logger.NewLogger(&logger.Options{
-		LogFile: cfg.LogFile,
-		Level:   level,
-		Prefix:  "[DASHBOARD]",
-		UseUTC:  false,
+		LogFile:        cfg.LogFile,
+		Level:          level,
+		Prefix:         "[DASHBOARD]",
+		UseUTC:         false,
+		ForwardURL:     cfg.LogForward.URL,
+		ForwardTimeout: cfg.LogForward.Timeout(),
 	})
 	defer lg.Sync()
 

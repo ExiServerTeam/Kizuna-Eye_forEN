@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,10 +42,59 @@ type AgentConfig struct {
 	// binaries, rebuilds host + plugins, and rolls back on failure).
 	AutoUpdate AutoUpdateConfig `json:"auto_update"`
 
+	// LogForward mirrors log lines to a remote HTTP(S) endpoint (opt-in).
+	LogForward LogForwardConfig `json:"log_forward"`
+
 	// ConfigVersion is the config schema version. It is stamped by the
 	// installer for new configs. 0 (absent) keeps the legacy behavior so an
 	// upgrade never changes an existing installation. See CurrentConfigVersion.
 	ConfigVersion int `json:"config_version,omitempty"`
+}
+
+// LogForwardConfig mirrors local log lines to a remote collector. It is off by
+// default and never blocks logging: a bounded in-memory queue drops lines when
+// the collector is slow or unreachable.
+type LogForwardConfig struct {
+	// URL is the http(s) endpoint that receives one log line per POST
+	// (application/x-ndjson). Empty disables forwarding.
+	URL string `json:"url"`
+	// TimeoutSec bounds one forward request (default: 5).
+	TimeoutSec int `json:"timeout_sec"`
+}
+
+// Enabled reports whether forwarding is configured.
+func (c LogForwardConfig) Enabled() bool { return strings.TrimSpace(c.URL) != "" }
+
+// Timeout returns the request timeout, defaulting to 5s.
+func (c LogForwardConfig) Timeout() time.Duration {
+	if c.TimeoutSec <= 0 {
+		return 5 * time.Second
+	}
+	return time.Duration(c.TimeoutSec) * time.Second
+}
+
+// ValidateForwardURL checks a log-forward URL. Only http/https with a host is
+// accepted. It does not apply the SSRF private-IP rules used for webhooks: a
+// log collector on the LAN (e.g. http://192.168.0.10:9200) is a normal, useful
+// deployment, so blocking private addresses here would make the feature
+// unusable. The value is operator-configured (admin), and redirects are
+// refused by the client, so the blast radius stays the operator's own choice.
+func ValidateForwardURL(raw string) error {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return nil
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("log_forward.url を解析できません: %w", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("log_forward.url は http または https のみ許可されます: %s", u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("log_forward.url にホストがありません")
+	}
+	return nil
 }
 
 // AutoUpdateConfig configures the automatic update check.
@@ -370,6 +420,9 @@ type DashboardConfig struct {
 	// (backward compatible).
 	AlertHistoryKeyPath string `json:"alert_history_key_path"`
 
+	// LogForward mirrors log lines to a remote HTTP(S) endpoint (opt-in).
+	LogForward LogForwardConfig `json:"log_forward"`
+
 	// ConfigVersion is the config schema version. New configs are stamped by
 	// the installer; the loader uses it to decide whether secure defaults
 	// apply to keys that are absent. 0 (absent) keeps the legacy defaults so
@@ -677,6 +730,9 @@ func validateAgentConfig(cfg *AgentConfig) error {
 	if err := cfg.Plugins.Validate(); err != nil {
 		return err
 	}
+	if err := ValidateForwardURL(cfg.LogForward.URL); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -760,6 +816,9 @@ func validateDashboardConfig(cfg *DashboardConfig) error {
 	}
 	// A-3: fail closed when the signature policy is enabled but unusable.
 	if err := cfg.Plugins.Validate(); err != nil {
+		return err
+	}
+	if err := ValidateForwardURL(cfg.LogForward.URL); err != nil {
 		return err
 	}
 	return nil

@@ -167,10 +167,12 @@ func main() {
 		level = logger.ParseLevel(cfg.LogLevel)
 	}
 	lg := logger.NewLogger(&logger.Options{
-		LogFile: cfg.LogFile,
-		Level:   level,
-		Prefix:  "[AGENT]",
-		UseUTC:  false,
+		LogFile:        cfg.LogFile,
+		Level:          level,
+		Prefix:         "[AGENT]",
+		UseUTC:         false,
+		ForwardURL:     cfg.LogForward.URL,
+		ForwardTimeout: cfg.LogForward.Timeout(),
 	})
 	defer lg.Sync()
 

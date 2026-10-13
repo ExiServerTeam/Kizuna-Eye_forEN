@@ -42,6 +42,14 @@ type Options struct {
 	MaxSizeMB int
 	// MaxBackups is the number of rotated files to keep (default: 5).
 	MaxBackups int
+
+	// ForwardURL, when set, mirrors every emitted log line to this HTTP(S)
+	// endpoint (one line per request, non-blocking, bounded queue, redirects
+	// refused). Opt-in and off by default. pkg/logger is host-only, so this
+	// does not change any plugin build hash.
+	ForwardURL string
+	// ForwardTimeout bounds one forward request (default: 5s).
+	ForwardTimeout time.Duration
 }
 
 type Logger struct {
@@ -51,6 +59,8 @@ type Logger struct {
 	prefix string
 	file   *os.File
 	writer io.Writer
+	// fw, when set, mirrors lines to a remote endpoint (see forward.go).
+	fw *forwardWriter
 }
 
 // ============================================================
@@ -234,6 +244,17 @@ func NewLogger(opts *Options) *Logger {
 		}
 	}
 
+	var fw *forwardWriter
+	if strings.TrimSpace(opts.ForwardURL) != "" {
+		f, ferr := newForwardWriter(opts.ForwardURL, opts.ForwardTimeout)
+		if ferr != nil {
+			fmt.Fprintf(os.Stderr, "ログ転送の初期化に失敗: %v\n", ferr)
+		} else {
+			fw = f
+			writer = io.MultiWriter(writer, fw)
+		}
+	}
+
 	flag := 0
 	if opts.UseUTC {
 		flag |= log.LUTC
@@ -246,6 +267,7 @@ func NewLogger(opts *Options) *Logger {
 		level:  opts.Level,
 		prefix: opts.Prefix,
 		file:   file,
+		fw:     fw,
 	}
 	// nil の *rotatingWriter を writer に入れてはいけない。型アサーションは
 	// 成功するため Sync/Close が nil レシーバを触り、シャットダウン時に
@@ -361,10 +383,11 @@ func (l *Logger) Close() {
 func (l *Logger) closeLocked() {
 	if rw, ok := l.writer.(*rotatingWriter); ok && rw != nil {
 		_ = rw.Close()
-		return
-	}
-	if l.file != nil {
+	} else if l.file != nil {
 		l.file.Close()
+	}
+	if l.fw != nil {
+		_ = l.fw.Close()
 	}
 }
 

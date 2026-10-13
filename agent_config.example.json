@@ -7,6 +7,10 @@
     "disk_path": "/",
     "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+    "log_forward": {
+        "url": "",
+        "timeout_sec": 5
+    },
     "plugins": {
         "require_signature": true,
         "public_key_file": "/etc/kizuna-eye/plugin_signing.pub",
