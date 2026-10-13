@@ -149,6 +149,10 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
+    /* Keep the header above the cards so the account dropdown is not
+       painted underneath the gauge grid. */
+    position: relative;
+    z-index: 300;
     padding: 14px 24px;
     border-radius: 16px;
     background: var(--bg-header);
@@ -612,11 +616,13 @@ body.card-dragging {
     border-color: rgba(239, 68, 68, 0.6);
 }
 
+/* ヘッダーは 2 行: 1 行目=タイトル+型番、2 行目=バッジ群。
+   これで型番が全幅を使え、温度と空き容量が常に横一列に並ぶ。 */
 .gauge-header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     width: 100%;
     margin-bottom: 12px;
 }
@@ -629,11 +635,12 @@ body.card-dragging {
     display: flex;
     align-items: baseline;
     gap: 8px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     min-width: 0;
+    width: 100%;
 }
 
-/* ★ 修正: CPU型番を折り返して全表示 */
+/* CPU 型番は 1 行で表示する。カード幅に収まらない分だけ省略する。 */
 .cpu-model {
     font-size: 0.65rem;
     color: var(--text-muted);
@@ -641,17 +648,20 @@ body.card-dragging {
     font-family: monospace;
     letter-spacing: 0;
     line-height: 1.35;
-    word-break: break-word;
-    white-space: normal;
-    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1 1 auto;
 }
 
-/* ヘッダー右側のバッジ群 */
+/* バッジ群はタイトルの下に、常に 1 行で並べる。 */
 .header-badges {
-    display: inline-flex;
+    display: flex;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 6px;
-    flex-shrink: 0;
+    width: 100%;
 }
 
 /* ===== 温度バッジ（5段階カラー対応） ===== */
