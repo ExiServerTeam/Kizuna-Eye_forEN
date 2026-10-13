@@ -111,6 +111,7 @@
   **agent と全 `.so` を同一ソース・同一ツールチェーンで同時再ビルド**。
   片方だけだと `plugin was built with a different version of package` で全滅。
 - **`-trimpath` を host と全 plugin で必ず同じ設定にする**（現在は常時 ON）。片方だけ付けるとハッシュがずれるが、両方に付けば build ID がパス非依存になり、ビルドしたユーザー（sudo/root か user か）に依存せず一致する。
+- **モジュール解決の方法も一致させる**。ホストは `go.work`、プラグインは `GOWORK=off`（=プラグイン側の `replace Kizuna-Eye => ...`）でビルドすると、同じソース・同じツールチェーン・同じ `-trimpath` でも共有パッケージの build ID が食い違い、`plugin was built with a different version of package Kizuna-Eye/pkg/fsutil` でロードできない（2026-10-10 に実機で発生）。**ホストと全プラグインを 1 つの combined go.work（`use` にホスト＋各プラグインディレクトリを列挙）の下でビルドする**。`build-all.sh` / `update.sh` / `scripts/build-plugin.sh` はすべてこの方式に統一済み。
 - **ツールチェーンはパッチまで固定**（`toolchain go1.27.2`）。
 - 一度 `Open` した `.so` は再 `Open` できない（Go の制約）。→ **コンストラクタを
   キャッシュ**して、無効化→有効化を**再起動なし**で行えるようにした。

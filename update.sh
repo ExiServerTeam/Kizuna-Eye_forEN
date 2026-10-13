@@ -205,7 +205,37 @@ export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 log ""
 log "▶ 本体（Eye）を再ビルド中... (version=${KVERSION})"
-build_one() { CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$1" "$2"; }
+
+# ----------------------------------------------------------------------------
+# ABI: build host AND plugins under ONE combined go.work.
+#
+# ホストは go.work 有効でビルドされ、プラグインは GOWORK=off（=プラグイン側の
+# replace Kizuna-Eye => ...）でビルドされると、共有パッケージ
+# (pkg/module, pkg/status, pkg/fsutil) の build ID が食い違う。同じソースでも
+# モジュール解決方法が違えばハッシュが変わるため、同一ツールチェーン・同一
+# フラグでも plugin.Open が
+#     plugin was built with a different version of package Kizuna-Eye/pkg/fsutil
+# で失敗し、更新後に全プラグインがロード不能になる（実機 2026-10-10 で発生）。
+# build-all.sh と同じく、ホストとプラグインを 1 つの combined go.work の下で
+# ビルドしてハッシュを一致させる。
+# ----------------------------------------------------------------------------
+WORKFILE=""
+cleanup_work() { [ -n "$WORKFILE" ] && rm -f "$WORKFILE"; }
+trap cleanup_work EXIT
+if [ -n "$SEC_PLUGIN_DIR" ] || [ -n "$LITE_PLUGIN_DIR" ]; then
+    WORKFILE="$(mktemp /tmp/kizuna-update-XXXXXX.work)"
+    {
+        printf 'go 1.27.1\n'
+        printf 'toolchain go1.27.2\n\n'
+        printf 'use (\n'
+        printf '\t%s\n' "$PWD"
+        [ -n "$SEC_PLUGIN_DIR" ]  && [ -d "$SEC_PLUGIN_DIR" ]  && printf '\t%s\n' "$SEC_PLUGIN_DIR"
+        [ -n "$LITE_PLUGIN_DIR" ] && [ -d "$LITE_PLUGIN_DIR" ] && printf '\t%s\n' "$LITE_PLUGIN_DIR"
+        printf ')\n'
+    } > "$WORKFILE"
+    log "ℹ️  combined go.work を使用: $WORKFILE"
+fi
+build_one() { CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$1" "$2"; }
 if ! build_one plugin-inspect ./cmd/plugin-inspect \
    || ! build_one dashboard_linux ./cmd/dashboard \
    || ! build_one agent_linux ./cmd/agent \
@@ -223,7 +253,9 @@ build_plugin() {
     [ -d "$dir" ] || { log "ℹ️  プラグインソース無し: $dir"; return 0; }
     grep -rqsE '^package main' "$dir"/*.go || { warn "$name: main パッケージでないためスキップ"; return 0; }
     log "🔌 ビルド: $name"
-    if ( cd "$dir" && GOWORK=off GOTOOLCHAIN=auto CGO_ENABLED=1 go build -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . ); then
+    # ホストと同じ combined go.work でビルドする（ABI 一致）。WORKFILE が無い
+    # 場合（プラグインソース未設定）はプラグイン自身のモジュールへフォールバック。
+    if ( cd "$dir" && GOWORK=${WORKFILE:-off} GOTOOLCHAIN=auto CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o "$PLUGIN_OUT_DIR/${name}.so" . ); then
         PLUGINS_REBUILT=$((PLUGINS_REBUILT + 1))
         return 0
     fi

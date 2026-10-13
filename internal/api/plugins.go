@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"net"
@@ -446,7 +447,12 @@ func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name, rawLang
 	case "ja":
 		lang = "ja"
 	}
-	src := "/plugins/" + name + "/_asset/" + entry + "?lang=" + lang
+	// html.EscapeString is defense in depth: safeWebUIEntry already rejects
+	// quotes/angle brackets, but the value is written into an attribute of a
+	// page served from the dashboard's own origin, so it must never be able
+	// to break out of the attribute even if a future change loosens the
+	// entry validation.
+	src := "/plugins/" + name + "/_asset/" + html.EscapeString(entry) + "?lang=" + lang
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -493,6 +499,15 @@ func (p *PluginManager) safeWebUIEntry(name string) string {
 	}
 	clean := path.Clean(p2)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fallback
+	}
+	// Reject HTML metacharacters. The entry is embedded in the sandbox
+	// wrapper's <iframe src="..."> attribute (serveSandboxWrapper), and a
+	// quote would let a hostile module close the attribute and inject an
+	// onload= handler into the dashboard's own origin (stored XSS via a
+	// crafted .so). Traversal is already blocked above; this closes the
+	// markup-injection angle as well. Fail-closed to index.html.
+	if strings.ContainsAny(clean, "<>\"'&`") {
 		return fallback
 	}
 	return clean

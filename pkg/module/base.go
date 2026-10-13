@@ -72,7 +72,13 @@ func NewModuleManager(logger Logger) ModuleManager {
 
 func (m *moduleManager) Register(ctx context.Context, module Module) error {
 	m.mu.Lock()
-	name := module.Name()
+	// Name() is plugin code. It is the first thing Register touches, so a
+	// panic here would crash the agent before any other safety net runs.
+	name := safeName(module)
+	if name == "" {
+		m.mu.Unlock()
+		return fmt.Errorf("module returned an empty Name()（プラグインの Name() が空か、パニックしました）")
+	}
 	if _, exists := m.modules[name]; exists {
 		m.mu.Unlock()
 		return fmt.Errorf("module %s already registered", name)
@@ -171,7 +177,14 @@ func (m *moduleManager) Start(ctx context.Context) {
 	}
 
 	for _, mod := range mods {
-		name := mod.Name()
+		// safeName: Name() is plugin code; a panic here would crash the
+		// whole agent at startup. A module whose Name() panics is skipped
+		// (it was registered under the safe name, so cancels is keyed the
+		// same way).
+		name := safeName(mod)
+		if name == "" {
+			continue
+		}
 		modCtx, modCancel := context.WithCancel(ctx)
 		m.mu.Lock()
 		m.cancels[name] = modCancel
@@ -181,6 +194,31 @@ func (m *moduleManager) Start(ctx context.Context) {
 	}
 }
 
+// safeName returns mod.Name() with panic recovery. Name() is plugin code and
+// is called before (or inside) other safety nets, so a plugin that panics here
+// must not crash the agent. The empty string is returned on panic so the
+// caller can reject the module instead of registering it under a bad name.
+func safeName(mod Module) (name string) {
+	defer func() {
+		if r := recover(); r != nil {
+			name = ""
+		}
+	}()
+	return mod.Name()
+}
+
+// safeInterval returns mod.Interval() with panic recovery. A panic is treated
+// as "no interval" (0), which stops the run loop for this one module rather
+// than taking down the process.
+func safeInterval(mod Module) (d time.Duration) {
+	defer func() {
+		if r := recover(); r != nil {
+			d = 0
+		}
+	}()
+	return mod.Interval()
+}
+
 // safeInit calls a module's Init with panic recovery. A third-party plugin
 // that panics in Init must not crash the agent (Register holds the manager
 // lock at this point). The panic is converted into an error so registration
@@ -188,10 +226,14 @@ func (m *moduleManager) Start(ctx context.Context) {
 func safeInit(ctx context.Context, mod Module, lg Logger) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Use safeName: the recover handler itself must not call a
+			// panicking Name() (a panic inside recover is unrecovered and
+			// would crash the agent).
+			name := safeName(mod)
 			if lg != nil {
-				lg.Error("モジュール '%s' の Init がパニックしました: %v\n%s", mod.Name(), r, debug.Stack())
+				lg.Error("モジュール '%s' の Init がパニックしました: %v\n%s", name, r, debug.Stack())
 			}
-			err = fmt.Errorf("module %s: Init panicked: %v", mod.Name(), r)
+			err = fmt.Errorf("module %s: Init panicked: %v", name, r)
 		}
 	}()
 	return mod.Init(ctx)
@@ -205,7 +247,7 @@ func (m *moduleManager) safeRun(ctx context.Context, mod Module) {
 	defer func() {
 		if r := recover(); r != nil {
 			if m.logger != nil {
-				m.logger.Error("モジュール '%s' の Run がパニックしました: %v\n%s", mod.Name(), r, debug.Stack())
+				m.logger.Error("モジュール '%s' の Run がパニックしました: %v\n%s", safeName(mod), r, debug.Stack())
 			}
 		}
 	}()
@@ -214,19 +256,23 @@ func (m *moduleManager) safeRun(ctx context.Context, mod Module) {
 
 func (m *moduleManager) runModuleLoop(ctx context.Context, mod Module) {
 	defer m.wg.Done()
-	if mod.Interval() <= 0 {
+	// Interval() and Name() are plugin code running in their own goroutine: a
+	// panic here is unrecovered and would terminate the whole process (and
+	// with it every other plugin and the system monitoring). Call them through
+	// the panic-safe wrappers.
+	if safeInterval(mod) <= 0 {
 		return
 	}
 
 	m.mu.RLock()
-	resetCh := m.resets[mod.Name()]
+	resetCh := m.resets[safeName(mod)]
 	m.mu.RUnlock()
 
 	m.safeRun(ctx, mod)
 
 	for {
 		// Re-read the interval every cycle so a config change takes effect.
-		interval := mod.Interval()
+		interval := safeInterval(mod)
 		if interval <= 0 {
 			return
 		}

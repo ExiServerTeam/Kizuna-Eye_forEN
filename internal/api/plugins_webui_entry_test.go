@@ -104,6 +104,37 @@ func TestWebUIWrapperForwardsLang(t *testing.T) {
 	}
 }
 
+// A hostile entry that contains HTML metacharacters must fall back to
+// index.html so it cannot break out of the wrapper's src attribute and inject
+// script into the dashboard's own origin (stored XSS via a crafted module).
+func TestWebUIWrapperRejectsMarkupInjectionEntry(t *testing.T) {
+	for _, entry := range []string{
+		`index.html"><script>alert(1)</script>`,
+		`a"onload=alert(1)`,
+		`x'><img src=x onerror=alert(1)>`,
+	} {
+		dir := t.TempDir()
+		webDir := filepath.Join(dir, "kizuna_demo.web")
+		if err := os.MkdirAll(webDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		writeMeta(t, dir, "kizuna_demo", "third_party", entry)
+
+		p := &PluginManager{pluginsDir: dir}
+		rec := httptest.NewRecorder()
+		p.handleWebUI(rec, webUIRequest("kizuna_demo", ""))
+		body := rec.Body.String()
+		for _, bad := range []string{"<script>", "onerror", "onload", "<img"} {
+			if strings.Contains(body, bad) {
+				t.Fatalf("entry %q leaked %q into wrapper: %s", entry, bad, body)
+			}
+		}
+		if !strings.Contains(body, "/_asset/index.html") {
+			t.Fatalf("entry %q must fall back to index.html: %s", entry, body)
+		}
+	}
+}
+
 // safeWebUIEntry defaults to index.html when meta is missing or empty.
 func TestSafeWebUIEntryDefault(t *testing.T) {
 	dir := t.TempDir()

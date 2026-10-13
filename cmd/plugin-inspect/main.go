@@ -13,6 +13,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // InspectResult は plugin-inspect が吐き出す JSON のルートや。
@@ -310,7 +312,14 @@ func extractWebAssets(v reflect.Value, res *InspectResult, outDir string) {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			continue
 		}
-		_ = os.WriteFile(target, content, 0o644)
+		// fsutil.WriteFileAtomic rejects a symlink at the final path component
+		// and writes via temp+fsync+rename. The extraction directory lives
+		// under pluginsDir (writable by the agent user), so a symlink planted
+		// there would otherwise redirect the write to an arbitrary file
+		// (CWE-59). The bubblewrap isolation used by default binds the rest of
+		// the filesystem read-only, but the extraction must stay safe on its
+		// own (a deployment may set inspect_isolation=off).
+		_ = fsutil.WriteFileAtomic(target, content, 0o644)
 	}
 	res.WebAssetsDir = base
 }

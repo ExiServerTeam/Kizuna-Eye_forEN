@@ -37,7 +37,18 @@ const defined = new Set([...ja, ...en]);
 const used = new Set();
 let m;
 for (const f of fs.readdirSync(dir)) {
-  const text = fs.readFileSync(path.join(dir, f), 'utf8');
+  // Skip sub-directories (e.g. web/static/fonts/). readFileSync on a directory
+  // throws EISDIR, which used to abort the whole check with a stack trace
+  // instead of reporting i18n inconsistencies.
+  const full = path.join(dir, f);
+  let stat;
+  try {
+    stat = fs.statSync(full);
+  } catch (e) {
+    continue;
+  }
+  if (!stat.isFile()) continue;
+  const text = fs.readFileSync(full, 'utf8');
   if (f.endsWith('.html')) {
     // data-i18n / data-i18n-placeholder / data-i18n-title / data-i18n-aria-label をすべて対象にする
     const re = /data-i18n(?:-[a-z-]+)?="([^"]+)"/g;

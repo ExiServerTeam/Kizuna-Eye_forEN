@@ -64,11 +64,51 @@ PLUGIN_LDFLAGS="-s -w"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     PLUGIN_LDFLAGS=""
 fi
+
+# ----------------------------------------------------------------------------
+# CRITICAL: build host AND plugins under ONE combined go.work.
+#
+# The host module carries a go.work, but a plugin directory (outside the repo)
+# has none, so `go build` there falls back to the plugin's own
+# `replace Kizuna-Eye => ...` directive. go.work and replace resolve the same
+# source but produce a DIFFERENT build ID for every shared package
+# (pkg/module, pkg/status, pkg/fsutil): the workspace changes how the module
+# graph and the build flags are hashed. Mixing the two makes plugin.Open fail
+# with
+#     plugin was built with a different version of package Kizuna-Eye/pkg/fsutil
+# even though both were built with the same toolchain and -trimpath (observed
+# on the host 2026-10-10: a fresh plugin built with GOWORK=off would not load
+# into a workspace-built agent).
+#
+# A single go.work that `use`s the host and every plugin directory makes both
+# graphs identical, so the build IDs match. Plugins outside the workspace (no
+# source dir configured) are simply absent from the file.
+# ----------------------------------------------------------------------------
+WORKFILE=""
+cleanup_work() { [ -n "$WORKFILE" ] && rm -f "$WORKFILE"; }
+trap cleanup_work EXIT
+if [ -n "$SEC_PLUGIN_DIR" ] || [ -n "$LITE_PLUGIN_DIR" ]; then
+    WORKFILE="$(mktemp /tmp/kizuna-build-XXXXXX.work)"
+    # printf (not echo) for the tab-indented paths: some echo builtins do not
+    # expand \t, which would leave a literal "\t" and make go resolve the path
+    # relative to the work file's directory (/tmp).
+    {
+        printf 'go 1.27.1\n'
+        printf 'toolchain %s\n\n' "${PINNED_GO}"
+        printf 'use (\n'
+        printf '\t%s\n' "$PWD"
+        [ -n "$SEC_PLUGIN_DIR" ]  && [ -d "$SEC_PLUGIN_DIR" ]  && printf '\t%s\n' "$SEC_PLUGIN_DIR"
+        [ -n "$LITE_PLUGIN_DIR" ] && [ -d "$LITE_PLUGIN_DIR" ] && printf '\t%s\n' "$LITE_PLUGIN_DIR"
+        printf ')\n'
+    } > "$WORKFILE"
+    log "using combined go.work: $WORKFILE"
+fi
+
 mkdir -p "$BIN_DIR"
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
-CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+CGO_ENABLED=1 GOWORK=${WORKFILE:-auto} GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign
 log "    host OK (version=${VERSION})"
 
 build_plugin() {
@@ -82,7 +122,12 @@ build_plugin() {
         return 1
     fi
     log "2/3 plugin $name ($dir)"
-    ( cd "$dir" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$PLUGIN_LDFLAGS" -buildmode=plugin -o "$name.so" . )
+    # Build under the SAME combined go.work as the host (see the note above):
+    # GOWORK=off here would fall back to the plugin's `replace` and change the
+    # shared-package build IDs, breaking plugin.Open against a workspace-built
+    # host. When no combined workspace was created (no plugin dirs), fall back
+    # to the plugin's own module (GOWORK=off).
+    ( cd "$dir" && GOWORK=${WORKFILE:-off} CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${TRIMPATH} -ldflags "$PLUGIN_LDFLAGS" -buildmode=plugin -o "$name.so" . )
     if [ ! -r "$SIGNING_KEY" ]; then
         log "WARN signing key not readable ($SIGNING_KEY); leaving $name.so unsigned"
     else

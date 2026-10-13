@@ -373,7 +373,12 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 				if reg, ok := loadedPlugins.byCfg[cfg.Name]; ok {
 					tracked = reg
 				} else if mod, ok := manager.Get(cfg.Name); ok {
-					tracked = mod.Name()
+					// Name() is plugin code; a panic here (modules.json reload
+					// path) must not crash the agent. An empty result leaves
+					// tracked == cfg.Name, which is the safe fallback.
+					if n := safeModuleName(mod, lg); n != "" {
+						tracked = n
+					}
 				}
 			}
 			if loadedPlugins.names[tracked] {
@@ -669,7 +674,42 @@ func loadAndRegisterPlugin(
 		return "", fmt.Errorf("モジュール登録失敗: %w", err)
 	}
 
-	return pluginMod.Name(), nil
+	// Name() is plugin code. Register already validated it via a panic-safe
+	// wrapper, but this is a second call: a plugin whose Name() panics on the
+	// second invocation (or is simply non-deterministic) must not crash the
+	// agent here either. Fall back to an empty name, which the caller turns
+	// into cfg.Name.
+	return safePluginName(pluginMod, lg), nil
+}
+
+// safeModuleName returns mod.Name() with panic recovery, so a plugin that
+// panics in Name() cannot crash the agent (e.g. while resolving the name a
+// disabled module registered under). An empty string is returned on panic.
+func safeModuleName(mod module.Module, lg *logger.Logger) (name string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.ErrorT("agent.plugin_name_panic", r)
+			}
+			name = ""
+		}
+	}()
+	return mod.Name()
+}
+
+// safePluginName returns mod.Name() with panic recovery, so a plugin that
+// panics in Name() cannot crash the agent when its name is read after
+// registration.
+func safePluginName(mod module.PluginModule, lg *logger.Logger) (name string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.ErrorT("agent.plugin_name_panic", r)
+			}
+			name = ""
+		}
+	}()
+	return mod.Name()
 }
 
 // constructPlugin runs the plugin's constructor with panic recovery, so a
@@ -981,7 +1021,7 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 				// unsent remainder back so a transient write error does not
 				// silently drop security events (SSH brute force, FIM, ...).
 				if requeuer, ok := provider.(module.SecurityEventRequeuer); ok {
-					requeuer.RequeueSecurityEvents(events[i:])
+					requeueSecurityEventsSafe(requeuer, events[i:], lg)
 				}
 				if lg != nil {
 					lg.ErrorT("agent.sec_event_failed", err)
@@ -993,6 +1033,24 @@ func sendSecurityEvents(w *wsWriter, manager module.ModuleManager, lg *logger.Lo
 			}
 		}
 	}
+}
+
+// requeueSecurityEventsSafe calls the plugin's RequeueSecurityEvents with
+// panic recovery. sendSecurityEvents runs in the agent's main goroutine (the
+// runAgent send loop), and this is a plugin method: a panic here is
+// unrecovered and would terminate the whole agent (and every other plugin and
+// the system monitoring), exactly like DrainSecurityEvents below. The events
+// are already drained, so on panic they are lost, but losing one batch is far
+// better than killing the agent.
+func requeueSecurityEventsSafe(requeuer module.SecurityEventRequeuer, events []module.SecurityEvent, lg *logger.Logger) {
+	defer func() {
+		if r := recover(); r != nil {
+			if lg != nil {
+				lg.ErrorT("agent.sec_event_requeue_panic", r)
+			}
+		}
+	}()
+	requeuer.RequeueSecurityEvents(events)
 }
 
 // drainSecurityEventsSafe calls the plugin's DrainSecurityEvents with panic

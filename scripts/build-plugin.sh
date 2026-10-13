@@ -89,7 +89,7 @@ SO="$NAME.so"
 SIG="$NAME.so.sig"
 
 # --- 1) ビルド ---
-log "1/4 ビルド (GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin)"
+log "1/4 ビルド (combined go.work CGO_ENABLED=1 go build -buildmode=plugin)"
 # メモリ最適化: プラグインも -s -w で縮める（agent にマップされ RSS に効く）。
 # デバッグ時は KIZUNA_DEBUG_BUILD=1。
 # -trimpath は host と全 plugin で必ず同じ設定にする（ここでは常時 ON）。
@@ -101,7 +101,26 @@ PLUGIN_LDFLAGS="-s -w"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     PLUGIN_LDFLAGS=""
 fi
-if ( cd "$PLUGIN_DIR" && GOWORK=off CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${PLUGIN_TRIMPATH} -ldflags "${PLUGIN_LDFLAGS}" -buildmode=plugin -o "$SO" . ); then
+# ABI: build the plugin under a combined go.work that ALSO includes the host
+# repo. With GOWORK=off the plugin resolves Kizuna-Eye via its own
+# `replace Kizuna-Eye => ...`, which yields a DIFFERENT build ID for every
+# shared package (pkg/module, pkg/status, pkg/fsutil) than the workspace-built
+# host. The single plugin would then fail to load into the running agent with
+# "plugin was built with a different version of package Kizuna-Eye/pkg/fsutil"
+# even with the same toolchain and -trimpath. Listing both the host and the
+# plugin dir in one workspace makes the module graphs identical.
+WORKFILE="$(mktemp /tmp/kizuna-build-plugin-XXXXXX.work)"
+cleanup_work() { rm -f "$WORKFILE"; }
+trap cleanup_work EXIT
+{
+    printf 'go 1.27.1\n'
+    printf 'toolchain %s\n\n' "$PINNED_GO"
+    printf 'use (\n'
+    printf '\t%s\n' "$REPO_ROOT"
+    printf '\t%s\n' "$PLUGIN_DIR"
+    printf ')\n'
+} > "$WORKFILE"
+if ( cd "$PLUGIN_DIR" && GOWORK="$WORKFILE" CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build ${PLUGIN_TRIMPATH} -ldflags "${PLUGIN_LDFLAGS}" -buildmode=plugin -o "$SO" . ); then
     ok "ビルド成功: $PLUGIN_DIR/$SO"
 else
     ng "ビルド失敗"
