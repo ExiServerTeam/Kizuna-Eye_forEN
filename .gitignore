@@ -97,3 +97,13 @@ dist/
 # APT repository output and its signing key (generated; never commit the key)
 apt-repo/
 .gnupg-apt/
+
+# 手元資料（リポジトリ外のドキュメント・個人メモ。追跡しない）
+# Local reference materials (out-of-repo docs / personal notes; never tracked).
+Kizunaシリーズ　資料/
+
+# エディタ/手動バックアップの残骸
+# Stray editor / manual backup artifacts.
+*.bak
+*.bak-*
+install.sh.bak*
