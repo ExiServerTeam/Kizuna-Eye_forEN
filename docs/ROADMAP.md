@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 1. ネットワーク | B | リバースプロキシ前提、agent_token、CSWSH/CSRF 対策、レート制限 | `listen_addr` 既定が全IF、`secure_cookies` 既定 false → セキュアデフォルト化 |
 | 2. 認証 | C | ロール/ bcrypt / セッション / 最終管理者保護 | `auth.enabled` 既定 false、`public_viewer` 既定 true、`agent_token` 既定 空 → セキュアデフォルト化 |
-| 3. プラグイン | B- | 別プロセス検査、Ed25519 署名検証（任意）、bwrap 分離（任意） | `require_signature` 既定 false → 既定 true 化、共有型の最小化 |
+| 3. プラグイン（設計書第5章の将来構想） | B- | 別プロセス検査、Ed25519 署名検証（任意）、bwrap 分離（任意） | `require_signature` 既定 false → 既定 true 化、共有型の最小化 |
 | 4. ログ | B+ | HMAC チェーン＋定期検証、alert_history 整合性、inode 追跡、FIM | リモート転送、alert_history への HMAC 署名 |
 | 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities） | systemd 保護の他ユニットへの横展開、HMAC 鍵ローテーション自動化 |
 | 6. 運用 | C+ | CONTRIBUTING 受入範囲、CI(go test/-race) | SECURITY.md 拡充(済)、govulncheck CI(済)、ROADMAP(本書)、脆弱性開示ポリシー |

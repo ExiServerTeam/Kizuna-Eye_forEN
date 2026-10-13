@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"Kizuna-Eye/internal/pluginsig"
 	"Kizuna-Eye/pkg/configsnap"
 	"Kizuna-Eye/pkg/fsutil"
 )
@@ -535,6 +536,11 @@ func (h *ModuleHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		candidates = append(candidates,
 			filepath.Join(h.pluginsDir, name+".so"),
+			// A-3: remove the detached signature with the .so. Leaving
+			// <name>.so.sig behind would make a later upload of a different
+			// .so under the same name fail verification (the stale signature
+			// does not match), so the plugin would silently refuse to load.
+			pluginsig.SigPath(filepath.Join(h.pluginsDir, name+".so")),
 			filepath.Join(h.pluginsDir, name+".meta.json"),
 		)
 		for _, p := range candidates {

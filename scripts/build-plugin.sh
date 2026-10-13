@@ -90,11 +90,13 @@ SIG="$NAME.so.sig"
 
 # --- 1) ビルド ---
 log "1/4 ビルド (GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin)"
-# メモリ最適化: プラグインも -s -w -trimpath で縮める（agent にマップされ
-# RSS に効く）。デバッグ時は KIZUNA_DEBUG_BUILD=1。
-# -trimpath は使わない（ホストとプラグインの ABI ハッシュがずれて
-# plugin.Open が "different version of package" で失敗する）。
-PLUGIN_TRIMPATH=""
+# メモリ最適化: プラグインも -s -w で縮める（agent にマップされ RSS に効く）。
+# デバッグ時は KIZUNA_DEBUG_BUILD=1。
+# -trimpath は host と全 plugin で必ず同じ設定にする（ここでは常時 ON）。
+# 外すと、ビルドしたユーザーの GOMODCACHE 絶対パス（/root/go と
+# /home/user/go など）がパッケージの build ID に埋め込まれ、agent を sudo で、
+# plugin を user でビルドしただけで ABI 不一致でロード不能になる（実機で発生）。
+PLUGIN_TRIMPATH="-trimpath"
 PLUGIN_LDFLAGS="-s -w"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     PLUGIN_LDFLAGS=""

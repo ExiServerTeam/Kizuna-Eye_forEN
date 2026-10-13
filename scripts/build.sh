@@ -20,9 +20,10 @@ BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 
 # メモリ最適化（低スペック機向け）: -s -w でシンボルを削る。
-# -trimpath は使わない（ホストとプラグインの ABI ハッシュがずれて
-# プラグインがロードできなくなるため）。
-TRIMPATH=""
+# -trimpath は host と全 plugin で必ず同じ設定にする（ここでは常時 ON）。
+# 外すとビルドしたユーザーの GOMODCACHE 絶対パスが build ID に埋め込まれ、
+# agent を sudo・plugin を user でビルドしただけで ABI 不一致になる。
+TRIMPATH="-trimpath"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     : # keep LDFLAGS as-is
 else

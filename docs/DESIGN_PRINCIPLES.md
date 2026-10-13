@@ -110,7 +110,7 @@
 - 共有パッケージ（`pkg/module` / `pkg/status` / `pkg/fsutil`）を変更したら、
   **agent と全 `.so` を同一ソース・同一ツールチェーンで同時再ビルド**。
   片方だけだと `plugin was built with a different version of package` で全滅。
-- **`-trimpath` を使わない**（ホストとプラグインでハッシュがずれる）。
+- **`-trimpath` を host と全 plugin で必ず同じ設定にする**（現在は常時 ON）。片方だけ付けるとハッシュがずれるが、両方に付けば build ID がパス非依存になり、ビルドしたユーザー（sudo/root か user か）に依存せず一致する。
 - **ツールチェーンはパッチまで固定**（`toolchain go1.27.2`）。
 - 一度 `Open` した `.so` は再 `Open` できない（Go の制約）。→ **コンストラクタを
   キャッシュ**して、無効化→有効化を**再起動なし**で行えるようにした。

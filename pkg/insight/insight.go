@@ -81,15 +81,27 @@ func CategoryOf(typ string) string {
 // IP 抽出
 // ---------------------------------------------------------------------------
 
-// ipCandidateRe finds IP-shaped runs of characters. The surrounding character
-// class excludes hex digits, ':' and '.', so "abc1.2.3.4" is not treated as an
-// address (RE2 has no lookarounds, so the neighbours are matched explicitly).
-var ipCandidateRe = regexp.MustCompile(`(?i)(?:^|[^0-9a-f:.])([0-9a-f:.]{3,45})(?:[^0-9a-f:.]|$)`)
+// isIPByte reports whether c can appear in an IP candidate: hex digit, ':'
+// or '.'. IPv6 uses hex + ':', IPv4 uses digits + '.'.
+func isIPByte(c byte) bool {
+	return (c >= '0' && c <= '9') ||
+		(c >= 'a' && c <= 'f') ||
+		(c >= 'A' && c <= 'F') ||
+		c == ':' || c == '.'
+}
 
 // ExtractIPs returns every IP address that appears in s, in order of
 // appearance, de-duplicated. An IPv4 address followed by ":port" is returned
 // without the port. Unspecified and broadcast addresses are dropped: they are
 // bind/listen addresses, not peers ("TCP ポート 44444 が … （0.0.0.0）").
+//
+// It scans for maximal runs of IP-shaped bytes (hex digits, ':' and '.') and
+// only calls net.ParseIP on those runs. A run must be flanked by a non-IP byte
+// (or a string end), so "abc1.2.3.4" is not treated as an address. This is a
+// single linear pass with no regexp backtracking: a 5+ MB log line of hex-ish
+// text parses in well under a second, and each candidate is parsed once (the
+// previous regexp version produced ~N/45 candidates for a run of 'a's and
+// parsed each twice).
 //
 // 注意: メッセージ本文からの抽出なので、「接続元」以外の IP（待ち受け
 // アドレス等）を拾う可能性が残る。集計のヒントとして使い、断定には使わない。
@@ -97,8 +109,30 @@ var ipCandidateRe = regexp.MustCompile(`(?i)(?:^|[^0-9a-f:.])([0-9a-f:.]{3,45})(
 func ExtractIPs(s string) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, m := range ipCandidateRe.FindAllStringSubmatch(s, -1) {
-		cand := strings.Trim(m[1], ".")
+	i := 0
+	n := len(s)
+	for i < n {
+		if !isIPByte(s[i]) {
+			i++
+			continue
+		}
+		start := i
+		for i < n && isIPByte(s[i]) {
+			i++
+		}
+		// A run must be bounded by non-IP bytes (or the string ends), so it is
+		// not a fragment cut out of a larger hex token (e.g. "abc1.2.3.4").
+		if start > 0 && isIPByte(s[start-1]) {
+			continue
+		}
+		if i < n && isIPByte(s[i]) {
+			continue
+		}
+		run := s[start:i]
+		if len(run) < 3 || len(run) > 45 {
+			continue
+		}
+		cand := strings.Trim(run, ".")
 		if cand == "" {
 			continue
 		}

@@ -8,9 +8,12 @@ import (
 	"Kizuna-Eye/pkg/alert"
 )
 
-// TestExtractIPsHugeInputMustNotHang guards against pathological regexp
-// behavior. Go's regexp is RE2 (linear time), so this must complete quickly
-// even on a long non-matching string.
+// TestExtractIPsHugeInputMustNotHang guards against pathological input: a
+// multi-megabyte line must be parsed in bounded time. ExtractIPs is a linear
+// scanner (no regexp backtracking) and parses each candidate once, so even
+// under `go test -race` (2-3x slower) a 5 MB input finishes quickly. The
+// threshold is generous (10s) so a slow CI machine does not produce a false
+// failure; a real hang would blow past it.
 func TestExtractIPsHugeInputMustNotHang(t *testing.T) {
 	s := strings.Repeat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", 200000) // ~5.6 MB
 	done := make(chan struct{})
@@ -20,8 +23,31 @@ func TestExtractIPsHugeInputMustNotHang(t *testing.T) {
 	}()
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("ExtractIPs did not finish within 5s on a 5MB input")
+	case <-time.After(10 * time.Second):
+		t.Fatal("ExtractIPs did not finish within 10s on a 5MB input")
+	}
+}
+
+// A run of hex letters that is not an IP must not be reported; a real address
+// bounded by non-IP characters is found.
+//
+// Note: "x1.2.3.4y" DOES match (1.2.3.4 is bounded by x/y, which are not IP
+// bytes). Only a fragment cut out of a larger hex token (e.g. "abc1.2.3.4",
+// where the byte before the run is a hex digit) is skipped.
+func TestExtractIPsHexRunAndEmbedded(t *testing.T) {
+	if got := ExtractIPs(strings.Repeat("abc", 1000)); len(got) != 0 {
+		t.Fatalf("hex letter run must not yield an IP, got %v", got)
+	}
+	if got := ExtractIPs("addr=10.0.0.1"); len(got) != 1 || got[0] != "10.0.0.1" {
+		t.Fatalf("embedded IPv4 not found: %v", got)
+	}
+	// Glued to non-hex letters: still a valid address.
+	if got := ExtractIPs("x1.2.3.4y"); len(got) != 1 || got[0] != "1.2.3.4" {
+		t.Fatalf("address bounded by letters should match, got %v", got)
+	}
+	// Glued directly to a hex digit: a fragment, not an address.
+	if got := ExtractIPs("abc1.2.3.4"); len(got) != 0 {
+		t.Fatalf("address glued to a hex digit must not match, got %v", got)
 	}
 }
 

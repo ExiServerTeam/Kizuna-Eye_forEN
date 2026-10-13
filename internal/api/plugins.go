@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -289,13 +291,23 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 
 	if thirdParty {
 		// _asset/ 以外（トップや index.html 直指定）はラッパーを返す。
-		// 直接 _asset を開かれても、CSP の connect-src 'none' で API は叩けない。
-		// サードパーティの実体は baseDir/_asset/ 配下に置く前提なので、
-		// rel はそのまま（"_asset/..."）として baseDir に結合する。
+		// これにより実体ファイルは sandbox iframe 経由でしか取得できない
+		// （/plugins/<name>/index.html を直接開いてもラッパーが返る）。
 		if !strings.HasPrefix(rel, "_asset/") {
-			p.serveSandboxWrapper(w, name)
+			// Forward the dashboard's ?lang=<ui> to the wrapper so the inner
+			// iframe can render in the current language (the outer request's
+			// query is otherwise lost). The value is validated to ja/en in
+			// serveSandboxWrapper before it is embedded in the URL/HTML.
+			p.serveSandboxWrapper(w, name, r.URL.Query().Get("lang"))
 			return
 		}
+		// 実体は plugin-inspect --web-out が WebAssets() の相対パスを
+		// baseDir 直下へ展開する。ラッパーは同一オリジン制約と sandbox の
+		// 都合で _asset/ 経由で参照するため、ここで接頭辞を剥がして実際の
+		// ファイル（baseDir/<rel>）へ解決する。剥がさないと baseDir/_asset/
+		// <rel> を探して必ず 404 になり、サードパーティの Web UI が
+		// 何も表示されない（設計書 5.4 の隔離 UI が機能しない）。
+		rel = strings.TrimPrefix(rel, "_asset/")
 	}
 	if rel == "" {
 		rel = "index.html"
@@ -342,17 +354,20 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h := w.Header()
+	// Content-Type is derived from the file extension below (CSS/JS/fonts
+	// must not be mislabelled: with nosniff a wrong type breaks the asset).
 	h.Set("X-Content-Type-Options", "nosniff")
 	// X-Frame-Options: サードパーティ UI はラッパーの sandbox iframe 内で
 	// 表示するため、DENY だとブラウザが埋め込みを拒否して何も出ない。
 	// 埋め込み許可は CSP の frame-ancestors で制御する（サードパーティは
 	// 'self' のみ、純正は 'none'）。XFO は CSP 非対応の古いブラウザ向けの
 	// 補助で、サードパーティは SAMEORIGIN、純正は DENY とする。
-	if thirdParty {
-		h.Set("X-Frame-Options", "SAMEORIGIN")
-	} else {
-		h.Set("X-Frame-Options", "DENY")
-	}
+	// Both origins are embedded by the dashboard as the module-provided
+	// card (design 5.4: the core provides a generic iframe host). Only the
+	// same origin may frame them; a cross-origin page cannot (clickjacking
+	// protection). Denying framing outright (DENY / frame-ancestors 'none')
+	// made the card render blank for every module.
+	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Referrer-Policy", "no-referrer")
 	if thirdParty {
 		// サードパーティ UI: 本体 API へのアクセスを禁止する（多層防御）。
@@ -366,19 +381,47 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 				"base-uri 'none'; "+
 				"form-action 'none'")
 	} else {
-		// 純正 UI: 本体と同水準（script は 'self' のみ）。
+		// 純正 UI: 本体と同水準（script は 'self' のみ）。埋め込みは
+		// 同一オリジン（ダッシュボードのカード枠）だけを許可する。
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self'; "+
 				"style-src 'self' 'unsafe-inline'; "+
 				"img-src 'self' data:; "+
 				"connect-src 'self'; "+
-				"frame-ancestors 'none'; "+
+				"frame-ancestors 'self'; "+
 				"base-uri 'self'; "+
 				"form-action 'self'")
 	}
 
-	http.ServeFile(w, r, realPath)
+	// Serve with ServeContent instead of ServeFile: ServeFile has a special
+	// case that 301-redirects any request whose URL path ends in
+	// "/index.html" to the same path without it. The sandbox wrapper's iframe
+	// src is exactly "/plugins/<name>/_asset/index.html", so ServeFile
+	// answered every third-party UI load with a 301. Serving the already
+	// validated regular file directly avoids that redirect while keeping the
+	// symlink/containment checks above.
+	f, ferr := os.Open(realPath)
+	if ferr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	fi, serr := f.Stat()
+	if serr != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Set the type from the extension. For an extension Go does not know (a
+	// module's custom asset), fall back to text/html so the entry document
+	// still renders; nosniff then makes the browser treat it as HTML rather
+	// than guessing a type that could execute.
+	ct := mime.TypeByExtension(filepath.Ext(realPath))
+	if ct == "" {
+		ct = "text/html; charset=utf-8"
+	}
+	h.Set("Content-Type", ct)
+	http.ServeContent(w, r, filepath.Base(realPath), fi.ModTime(), f)
 }
 
 // serveSandboxWrapper writes the sandbox-iframe wrapper for a third-party
@@ -386,18 +429,39 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 // content runs in an opaque origin: it cannot read the parent's cookies, call
 // the dashboard API, or touch the parent DOM. Only the assets under
 // /plugins/{name}/_asset/ are loaded.
-func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name string) {
+func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name, rawLang string) {
 	// name is sanitizeName()-checked ([A-Za-z0-9_-]); safe to embed in the URL.
-	src := "/plugins/" + name + "/_asset/index.html"
+	// Use the entry the module declared via WebUIPath() (recorded in meta.json
+	// as web_ui_path), not a hardcoded index.html: a module may name its entry
+	// differently, and ignoring the declaration would 404 a valid UI (design
+	// 5.4: the module owns its UI). p.safeWebUIEntry() rejects absolute paths,
+	// ".." and backslashes, so the value stays inside _asset/.
+	entry := p.safeWebUIEntry(name)
+	// Only ja/en are accepted, so the value is safe to embed in the URL and the
+	// html lang attribute (no injection, no arbitrary query pass-through).
+	lang := "ja"
+	switch strings.ToLower(strings.TrimSpace(rawLang)) {
+	case "en":
+		lang = "en"
+	case "ja":
+		lang = "ja"
+	}
+	src := "/plugins/" + name + "/_asset/" + entry + "?lang=" + lang
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("X-Frame-Options", "DENY")
+	// The dashboard embeds this wrapper in a same-origin iframe as the
+	// module-provided card. X-Frame-Options: DENY (and a CSP without an
+	// explicit frame-ancestors, which falls back to default-src 'none' =
+	// 'none') makes the browser refuse that embedding, so the card renders
+	// blank. Allow only the same origin; the wrapper holds no secrets, and
+	// the module's real UI is isolated by the inner sandboxed iframe.
+	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Cache-Control", "no-store")
 	h.Set("Content-Security-Policy",
-		"default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'; base-uri 'none'")
-	page := "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n" +
+		"default-src 'none'; frame-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'self'")
+	page := "<!DOCTYPE html>\n<html lang=\"" + lang + "\">\n<head>\n<meta charset=\"utf-8\">\n" +
 		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n" +
 		"<title>Plugin UI</title>\n" +
 		"<style>html,body{margin:0;height:100%;background:transparent}" +
@@ -407,6 +471,31 @@ func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name string) 
 		"referrerpolicy=\"no-referrer\" src=\"" + src + "\"></iframe>\n" +
 		"</body>\n</html>\n"
 	_, _ = io.WriteString(w, page)
+}
+
+// safeWebUIEntry returns the module's declared entry document (meta.json's
+// web_ui_path) as a safe path relative to the UI root, defaulting to
+// "index.html". It reuses the same traversal rules as the asset extractor, so
+// a hostile meta cannot make the sandbox wrapper load outside _asset/.
+func (p *PluginManager) safeWebUIEntry(name string) string {
+	const fallback = "index.html"
+	data, err := os.ReadFile(filepath.Join(p.pluginsDir, name+".meta.json"))
+	if err != nil {
+		return fallback
+	}
+	var m PluginMeta
+	if json.Unmarshal(data, &m) != nil || m.WebUIPath == "" {
+		return fallback
+	}
+	p2 := strings.TrimSpace(m.WebUIPath)
+	if strings.HasPrefix(p2, "/") || strings.Contains(p2, "\\") {
+		return fallback
+	}
+	clean := path.Clean(p2)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return fallback
+	}
+	return clean
 }
 
 // isOfficialPlugin reports whether a plugin's meta.json proves origin=official.
@@ -426,6 +515,30 @@ func (p *PluginManager) isOfficialPlugin(name string) bool {
 		return false
 	}
 	return m.Origin == "official"
+}
+
+// reconcileWebUIDir moves a plugin's extracted web UI from the upload-name
+// directory to the canonical-name directory, so /plugins/<canonical>/ (and the
+// HasWebUI flag, both derived from meta.Name) resolve after an upload whose
+// file name differs from the plugin's own Name(). Without this the iframe
+// 404s and the orphan <upload>.web directory is never cleaned up on delete
+// (delete removes <canonical>.web only). Best-effort: on any failure the
+// caller proceeds, because a missing card is not a security or load problem.
+func (p *PluginManager) reconcileWebUIDir(fromName, toName string) {
+	if fromName == "" || toName == "" || fromName == toName {
+		return
+	}
+	src := filepath.Join(p.pluginsDir, fromName+".web")
+	dst := filepath.Join(p.pluginsDir, toName+".web")
+	if _, err := os.Stat(src); err != nil {
+		return // no web UI was extracted
+	}
+	if _, err := os.Stat(dst); err == nil {
+		return // a directory for the canonical name already exists
+	}
+	if err := os.Rename(src, dst); err != nil && p.logger != nil {
+		kelog.LogWarn(p.logger, "api.plugin_webdir_rename_failed", fromName, toName, err)
+	}
 }
 
 // fileExists reports whether path exists (any type).
@@ -846,6 +959,18 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		canonical = safe
+	}
+
+	// The web UI was extracted under the UPLOAD name (<name>.web), but the
+	// .so / meta.json / modules.json are keyed by the canonical name. When the
+	// plugin's own Name() differs from the uploaded file name, the served
+	// path /plugins/<canonical>/ and the HasWebUI check (both derived from
+	// meta.Name) would look at a directory that does not exist, so the card's
+	// iframe 404s and the web UI appears missing. Rename the directory to the
+	// canonical name; a failure here is non-fatal (the card just will not
+	// render), matching inspectPlugin's own tolerance.
+	if canonical != name {
+		p.reconcileWebUIDir(name, canonical)
 	}
 
 	// Refuse a duplicate BEFORE touching the installed plugin's files.

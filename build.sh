@@ -26,13 +26,15 @@ LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/ap
 # マップページが減る（低スペック機で効く）。Go のスタックトレースは
 # pclntab から生成されるため -s -w でも関数名・行番号は出る。
 # ソースレベルデバッグ（gdb/dlv）が必要なときは KIZUNA_DEBUG_BUILD=1。
-# NOTE: -trimpath is intentionally NOT used. It changes the recorded
-# package build info, and a host built with it refuses to load a plugin
-# built without it (and vice versa): "plugin was built with a different
-# version of package Kizuna-Eye/pkg/fsutil". The host and every plugin must
-# use identical flags, so -trimpath is dropped everywhere. -s -w alone is
-# safe and already shrinks the binaries by ~30%.
-TRIMPATH=""
+#
+# -trimpath は「host と全 plugin で必ず同じ設定」にする（ここでは常時 ON）。
+# これを外すと、ビルドしたユーザーの GOMODCACHE 絶対パス（/root/go と
+# /home/user/go など）がパッケージの build ID に埋め込まれ、agent を sudo で、
+# plugin を user でビルドしただけで `plugin was built with a different version
+# of package github.com/shirou/gopsutil/v3/common` でロード不能になる（実機で
+# 発生）。-trimpath を両方に付ければ build ID がパス非依存になり、誰がビルド
+# しても一致する。以前壊れたのは「片方だけ付けた」ため。
+TRIMPATH="-trimpath"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     LDFLAGS="$LDFLAGS"
 else

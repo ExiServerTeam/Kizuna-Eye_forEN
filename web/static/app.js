@@ -1331,16 +1331,32 @@
         const enabledNames = new Set(
             (lastModules || []).filter(m => m.enabled).map(m => m.name)
         );
+        // The role the dashboard is currently running as (set by
+        // checkAccessMode). A card that declares min_role must not be mounted
+        // for a lower role; the module's own UI is served by /plugins/ which is
+        // operator+, so this keeps the mount decision consistent with the
+        // server. Unknown/empty min_role defaults to operator (module API
+        // default).
+        const rank = { viewer: 1, operator: 2, admin: 3 }[accessRole] || 0;
         const out = [];
         for (const [name, meta] of pluginMetaMap) {
             if (!enabledNames.has(name)) continue;
             const cards = Array.isArray(meta.dashboard_cards) ? meta.dashboard_cards : [];
             for (const c of cards) {
                 if (!c || !c.id) continue;
+                const need = rankOfRole(c.min_role || 'operator');
+                if (rank < need) continue;
                 out.push({ module: name, meta, card: c });
             }
         }
         return out;
+    }
+
+    // rankOfRole maps a role name to its rank (viewer=1, operator=2, admin=3).
+    // An unknown value maps to 0 so an unrecognized min_role fails closed
+    // (the card is not mounted) rather than being treated as viewer.
+    function rankOfRole(role) {
+        return { viewer: 1, operator: 2, admin: 3 }[String(role || '').toLowerCase()] || 0;
     }
 
     // moduleCardSection builds the generic card shell (header + iframe host)
@@ -2319,7 +2335,15 @@
     //   - viewer: 履歴・アラートは閲覧可（サーバーが viewer 以上に開放）。
     //     モジュール/プラグイン(operator)とアラートのクリア(operator)は隠す。
     //   - operator/admin: 全て表示。
+    // accessRole is the role the dashboard is running as ('admin' |
+    // 'operator' | 'viewer' | null for a public viewer). It is set by
+    // applyAccessMode and read by declaredModuleCards so a card's declared
+    // min_role is honored. (modules.js has its own currentRole for the module
+    // management page; app.js must not reference that variable.)
+    let accessRole = null;
+
     function applyAccessMode(role) {
+        accessRole = role;
         const rank = { viewer: 1, operator: 2, admin: 3 }[role] || 0;
 
         if (rank === 0) {

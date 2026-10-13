@@ -35,9 +35,10 @@
 
     cp dashboard_config.example.json dashboard_config.json
     cp agent_config.example.json agent_config.json
-    cp modules.json.example modules.json
 
 各ファイルを環境に合わせて編集する。秘密情報を含むため、権限は 0600 に保つこと。
+
+`modules.json`（モジュール登録）は**作成しない**。モジュールは Web UI の「モジュール管理」から追加するもので、初回インストールでは存在しないのが正しい状態である（無ければ「モジュール無し」として扱われる）。example をコピーすると未設定のモジュールが有効になり、空ファイルを作っても UI に不要な項目が出る。
 
 ### 1.4 セットアップ（install.sh 一本）
 

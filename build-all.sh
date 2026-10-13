@@ -46,13 +46,15 @@ log "1/3 host binaries"
 VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
-# メモリ最適化: -s -w -trimpath でバイナリを約3割縮める（RSS の大半は
+# メモリ最適化: -s -w でバイナリを約3割縮める（RSS の大半は
 # バイナリのファイルマップページ）。ソースレベルデバッグが要るときは
 # KIZUNA_DEBUG_BUILD=1 を付ける。
-# NOTE: -trimpath is intentionally NOT used (see build.sh): it makes the
-# host and plugin ABI hashes differ, so the agent would refuse to load the
-# plugins. -s -w alone is safe.
-TRIMPATH=""
+#
+# -trimpath は host と全 plugin で必ず同じ設定にする（ここでは常時 ON）。
+# 外すと、ビルドしたユーザーの GOMODCACHE 絶対パスが build ID に埋め込まれ、
+# agent を sudo で、plugin を user でビルドしただけで ABI 不一致になる
+# （実機で発生）。両方に付けば build ID がパス非依存になり一致する。
+TRIMPATH="-trimpath"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     : # keep LDFLAGS as-is
 else

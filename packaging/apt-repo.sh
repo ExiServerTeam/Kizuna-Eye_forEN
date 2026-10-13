@@ -37,6 +37,22 @@ if [ ${#DEBS[@]} -eq 0 ]; then
 fi
 
 log "リポジトリ再構築: $REPO_DIR"
+# 安全ガード: REPO_DIR を丸ごと消すため、空・"/"・ホーム直下・リポジトリ直下
+# 以外の「想定外に浅いパス」を拒否する。KIZUNA_APT_REPO_DIR の誤設定で
+# `rm -rf /` や `rm -rf $HOME` を実行しないようにする（過去に root の
+# ワイルドカード操作で chmod 600 /* を踏んだ事故と同種の防止）。
+case "$REPO_DIR" in
+  ""|"/"|"$HOME"|"$ROOT")
+    echo "❌ 安全のため REPO_DIR を削除しません（想定外のパス: '$REPO_DIR'）。" >&2
+    echo "   KIZUNA_APT_REPO_DIR を確認してください（既定: <repo>/apt-repo）。" >&2
+    exit 1
+    ;;
+esac
+# 親ディレクトリが存在し、かつ書き込み可能であることも確認する。
+if [ ! -w "$(dirname "$REPO_DIR")" ] && [ ! -e "$REPO_DIR" ]; then
+    echo "❌ 出力先の親ディレクトリに書き込めません: $(dirname "$REPO_DIR")" >&2
+    exit 1
+fi
 rm -rf "$REPO_DIR"
 mkdir -p "$REPO_DIR/pool/$COMPONENT/k/$PKG"
 mkdir -p "$REPO_DIR/dists/$SUITE/$COMPONENT/binary-$ARCH"

@@ -36,7 +36,7 @@ understanding.
 
 1. Fork the repository
 2. Clone your fork
-3. Install Go 1.27.1 or later
+3. Install Go 1.27.2 or later (the exact patch is pinned via `toolchain` in go.mod; host and plugins must be built with the same version)
 4. Run `go mod download`
 5. Build with `./build.sh`
 

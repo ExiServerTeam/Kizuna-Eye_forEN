@@ -64,6 +64,14 @@ func TestWebUIThirdPartySandboxWrapper(t *testing.T) {
 	if !strings.Contains(body, "/plugins/kizuna_demo/_asset/index.html") {
 		t.Fatalf("wrapper must reference the _asset path: %s", body)
 	}
+	// The dashboard embeds the wrapper in a same-origin iframe; DENY (or a CSP
+	// frame-ancestors of 'none') would make the card render blank.
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "SAMEORIGIN" {
+		t.Fatalf("wrapper X-Frame-Options = %q, want SAMEORIGIN", xfo)
+	}
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'self'") {
+		t.Fatalf("wrapper CSP must allow same-origin framing: %q", csp)
+	}
 	if strings.Contains(body, "hi</html>") {
 		t.Fatal("wrapper must not inline the plugin HTML directly")
 	}
@@ -72,15 +80,16 @@ func TestWebUIThirdPartySandboxWrapper(t *testing.T) {
 // The _asset path for a third-party plugin must be served with a CSP that
 // forbids network access (connect-src 'none'), so the isolated UI cannot call
 // the dashboard API.
+//
+// 実体は baseDir 直下（WebAssets の相対パスそのまま）に展開され、URL は
+// ラッパーが参照する _asset/ 経由で届く。handleWebUI は _asset/ を剥がして
+// baseDir/<rel> を配信する。
 func TestWebUIThirdPartyAssetCSP(t *testing.T) {
 	p := newWebUITestManager(t, "kizuna_demo", "third_party", map[string]string{
-		"_asset/index.html": "<html>asset</html>",
+		"index.html": "<html>asset</html>",
 	})
-	// ラッパーは _asset/index.html を参照する。ServeFile は "/index.html" を
-	// ディレクトリ "/" へ 301 リダイレクトする（ブラウザが追従する）ため、
-	// ここではリダイレクト先の _asset/ を要求して 200 と CSP を確認する。
 	rec := httptest.NewRecorder()
-	p.handleWebUI(rec, webUIRequest("kizuna_demo", "_asset/"))
+	p.handleWebUI(rec, webUIRequest("kizuna_demo", "_asset/index.html"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
@@ -147,5 +156,13 @@ func TestWebUIOfficialDirect(t *testing.T) {
 	csp := rec.Header().Get("Content-Security-Policy")
 	if !strings.Contains(csp, "script-src 'self'") || strings.Contains(csp, "'unsafe-inline'") && strings.Contains(csp, "script-src 'self' 'unsafe-inline'") {
 		t.Fatalf("official CSP should restrict scripts to 'self': %q", csp)
+	}
+	// The dashboard embeds the official UI as the module card; same-origin
+	// framing must be allowed or the card renders blank.
+	if !strings.Contains(csp, "frame-ancestors 'self'") {
+		t.Fatalf("official CSP must allow same-origin framing: %q", csp)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "SAMEORIGIN" {
+		t.Fatalf("official X-Frame-Options = %q, want SAMEORIGIN", xfo)
 	}
 }

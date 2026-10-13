@@ -6,8 +6,12 @@ import (
 	"time"
 )
 
-// Version is the app version. Overridable via -ldflags at build time.
-var Version = "v0.7.0"
+// Version is the app version. It is normally set at build time via
+// -ldflags "-X Kizuna-Eye/internal/api.Version=..." from the repo VERSION
+// file (see build.sh / Makefile), so this literal is only the fallback used
+// when the binary is built without ldflags (e.g. a bare `go run`). Keep it in
+// step with VERSION so a non-ldflags build does not report a stale version.
+var Version = "v0.7.1"
 
 // BuildTime is the build timestamp (optional).
 var BuildTime = ""
