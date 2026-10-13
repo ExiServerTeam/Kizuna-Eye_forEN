@@ -191,7 +191,11 @@ type Hub struct {
 	// authentication (legacy heuristic detection only).
 	agentToken string
 
-	agentConn         *wsClient
+	agentConn *wsClient
+
+	// Callbacks are set once during startup and read from WS goroutines.
+	// They are guarded by the embedded RWMutex so a late assignment cannot
+	// race with a reader (use SetCallbacks / the onX accessors).
 	onAgentDisconnect func()
 	onAgentStatus     func(*status.SystemStatus)
 	onAgentEvent      func([]byte)
@@ -209,6 +213,41 @@ func NewHub(maxClients int, log *logger.Logger) *Hub {
 		log:        log,
 		maxSamples: 3600, // ~1h at the Agent's 1s interval
 	}
+}
+
+// SetCallbacks installs the agent callbacks under the hub lock. Any of the
+// three may be nil to clear it.
+func (h *Hub) SetCallbacks(
+	onDisconnect func(),
+	onStatus func(*status.SystemStatus),
+	onEvent func([]byte),
+) {
+	h.Lock()
+	h.onAgentDisconnect = onDisconnect
+	h.onAgentStatus = onStatus
+	h.onAgentEvent = onEvent
+	h.Unlock()
+}
+
+// SetOnAgentEvent installs just the agent-event callback.
+func (h *Hub) SetOnAgentEvent(fn func([]byte)) {
+	h.Lock()
+	h.onAgentEvent = fn
+	h.Unlock()
+}
+
+// onDisconnectFn returns the disconnect callback under the read lock.
+func (h *Hub) onDisconnectFn() func() {
+	h.RLock()
+	defer h.RUnlock()
+	return h.onAgentDisconnect
+}
+
+// onEventFn returns the event callback under the read lock.
+func (h *Hub) onEventFn() func([]byte) {
+	h.RLock()
+	defer h.RUnlock()
+	return h.onAgentEvent
 }
 
 func (h *Hub) Broadcast(msg []byte) {
@@ -257,9 +296,12 @@ func (h *Hub) Remove(client *wsClient) {
 
 	// Invoke the callback after releasing the lock. The callback reaches into
 	// the alert engine (and may, in the future, touch the hub again), so
-	// calling it under the lock risks a deadlock.
-	if wasAgent && h.onAgentDisconnect != nil {
-		h.onAgentDisconnect()
+	// calling it under the lock risks a deadlock. Read it via the locked
+	// accessor so a concurrent SetCallbacks cannot race here.
+	if wasAgent {
+		if fn := h.onDisconnectFn(); fn != nil {
+			fn()
+		}
 	}
 
 	if err := client.conn.Close(); err != nil {
@@ -298,10 +340,11 @@ func (h *Hub) SetLastStatus(s *status.SystemStatus) {
 	if h.maxSamples > 0 && len(h.samples) > h.maxSamples {
 		h.samples = h.samples[len(h.samples)-h.maxSamples:]
 	}
+	statusFn := h.onAgentStatus
 	h.Unlock()
 
-	if h.onAgentStatus != nil {
-		h.onAgentStatus(s)
+	if statusFn != nil {
+		statusFn(s)
 	}
 }
 
@@ -453,8 +496,7 @@ func main() {
 
 	hub := NewHub(100, lg)
 	hub.agentToken = cfg.Auth.AgentToken
-	hub.onAgentStatus = engine.OnStatus
-	hub.onAgentDisconnect = engine.OnAgentDisconnect
+	hub.SetCallbacks(engine.OnAgentDisconnect, engine.OnStatus, nil)
 	if cfg.Auth.AgentToken != "" {
 		lg.Info("Agent トークン認証: 有効")
 	}
@@ -576,8 +618,8 @@ func main() {
 						continue
 					}
 					lg.Debug("イベント受信: %s", envelope.Event)
-					if hub.onAgentEvent != nil {
-						hub.onAgentEvent(msg)
+					if fn := hub.onEventFn(); fn != nil {
+						fn(msg)
 					}
 					hub.BroadcastToBrowsers(msg)
 					continue
@@ -648,12 +690,12 @@ func main() {
 
 	// Handle agent events: release the plugin run guard AND turn security
 	// events into notifications + alert history entries.
-	hub.onAgentEvent = func(msg []byte) {
+	hub.SetOnAgentEvent(func(msg []byte) {
 		if pluginManager != nil {
 			pluginManager.HandleAgentEvent(msg)
 		}
 		handleSecurityEvent(msg, engine, lg)
-	}
+	})
 
 	// ---- Metrics API ----
 	metricHandler := api.NewMetricHandler(hub)
