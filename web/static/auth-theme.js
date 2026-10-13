@@ -5,12 +5,20 @@
 // - CSP 対策のため外部ファイル。インラインスクリプトは使わない。
 // - #authThemeToggle / #authThemeIcon と #themeToggle / #themeIcon の
 //   両方に対応する。
+// Kizuna-Eye - shared theme control (for auth / user-management pages)
+// - Uses the same localStorage key (kizuna-theme) as the dashboard.
+// - Also follows the OS setting (prefers-color-scheme).
+// - An external file for CSP: no inline scripts.
+// - Handles both #authThemeToggle / #authThemeIcon and
+//   #themeToggle / #themeIcon.
 // ============================================================
 (function () {
     'use strict';
 
     var STORAGE_KEY = 'kizuna-theme';
 
+    // t() は i18n 辞書があれば使い、無ければキー自体（または既定値）へ
+    // フォールバックする。これにより i18n.js のロード前でもこのファイルが動く。
     // t() uses the shared i18n dictionary when present, falling back to the
     // key itself (or a default) so this file also works before i18n.js loads.
     function t(key, fallback) {
@@ -28,6 +36,9 @@
     function applyTheme(theme) {
         // テーマ切替中はトランジションを止める（背景だけ遅れて変わるのを防ぐ）。
         // 2 フレーム後に解除し、次回以降のホバー等の遷移は通常どおり動かす。
+        // Suppress transitions during the theme switch (prevents the background
+        // from changing with a visible delay). Release after two frames so
+        // later transitions (hover, etc.) run normally again.
         var root = document.documentElement;
         root.classList.add('theme-switching');
         root.setAttribute('data-theme', theme);
@@ -36,6 +47,9 @@
         });
         // アイコンは HTML 内の SVG（月/太陽）で、CSS が data-theme に応じて
         // 出し分ける。ここで textContent を触ると SVG が消えるので何もしない。
+        // The icon is an inline SVG (moon/sun) toggled by CSS based on
+        // data-theme. Touching textContent here would wipe the SVG, so do
+        // nothing.
         var label = theme === 'dark'
             ? t('theme.toggle_to_light', 'Switch to light mode')
             : t('theme.toggle_to_dark', 'Switch to dark mode');
@@ -55,6 +69,7 @@
         try { localStorage.setItem(STORAGE_KEY, theme); } catch (e) { /* ignore */ }
     }
 
+    // 間違ったテーマが一瞬表示されないよう、可能な限り早く適用する。
     // Apply as early as possible so the page does not flash the wrong theme.
     var saved = null;
     try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) { /* ignore */ }
@@ -70,6 +85,11 @@
         // が死んで」しまう（ダーク→ライト→ダーク）。したがって auth-theme.js
         // が click を張るのは認証ページ専用の #authThemeToggle だけにする。
         // #themeToggle にはアイコン/ラベルの反映（applyTheme）だけ行う。
+        // NOTE: app.js handles the click on the dashboard's #themeToggle.
+        // Adding another click here would toggle twice per click, making the
+        // switch look "dead" (dark -> light -> dark). So auth-theme.js only
+        // wires a click on the auth-page-only #authThemeToggle. For
+        // #themeToggle it only reflects the icon/label (applyTheme).
         var authBtn = document.getElementById('authThemeToggle');
         var any = false;
         if (authBtn && authBtn.dataset.themeWired !== '1') {
@@ -80,9 +100,11 @@
             });
         }
         // アイコン/ラベルを現在のテーマに合わせる（click は張らない）。
+        // Match the icon/label to the current theme (no click wiring).
         applyTheme(getTheme());
         void any;
 
+        // ユーザーが手動で選んでいないときのみ OS 変更に追従する。
         // Follow OS changes only when the user has not chosen manually.
         if (window.matchMedia) {
             var mq = window.matchMedia('(prefers-color-scheme: dark)');
@@ -102,6 +124,8 @@
         wire();
     }
 
+    // 言語変更時にテーマラベルを再適用する（aria-label / title は計算値のため
+    // data-i18n ではない）。
     // Re-apply the theme label when the language changes (the aria-label /
     // title are not data-i18n because they are computed).
     window.addEventListener('kizuna-lang-change', function () { applyTheme(getTheme()); });

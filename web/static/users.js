@@ -1,4 +1,5 @@
 // Kizuna-Eye - ユーザー管理（管理者のみ）
+// Kizuna-Eye - user management (admin only)
 (function () {
     'use strict';
 
@@ -9,6 +10,7 @@
     const addError = document.getElementById('addError');
 
     // i18n 翻訳ヘルパー
+    // i18n translation helper
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
     function showError(el, msg) {
