@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `install.sh` に systemd 登録（dashboard + agent）を内蔵。`--no-systemd` で手動管理に切替可
 - `update.sh` にプラグイン再署名ステップを追加（再ビルド後に `plugin-sign -sign-all`）
 
+### Removed
+- 内部記録（作業記録・計画書・プラグイン監査記録）を `Kizunaシリーズ　資料/` へ退避し、公開リポジトリから削除。`docs/` は `PROCEDURE.md` / `ROADMAP.md` のみに整理
+- 作業用スクリプト `.py` を全削除（`scripts/archive/patch_*.py`, `scan_emoji.py`, `ssh_run.py`, `test_ssh_fail.py`）
+
 ### Changed
 - `install.sh` 一本で初期セットアップが完結（systemd 登録まで自動）。agent は専用ユーザー `kizuna-eye` で起動
 - `update.sh` / `safe_update.sh` の systemd 検出を `kizuna-eye-agent` / `kizuna-dashboard` 対応にし、再起動・ロールバックを検出 unit で実施
