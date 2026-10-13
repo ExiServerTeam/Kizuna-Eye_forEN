@@ -108,6 +108,10 @@ func (s *Store) Load() error {
 		return err
 	}
 
+	// users.json holds bcrypt password hashes; tighten the mode on load so a
+	// file created world-readable is not left exposed. Best-effort.
+	_ = os.Chmod(s.path, 0600)
+
 	var file struct {
 		Users []*User `json:"users"`
 	}

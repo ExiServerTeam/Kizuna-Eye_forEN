@@ -149,6 +149,11 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 
 	fmt.Printf("[CONFIG] 設定ファイル %s を読み込みました\n", path)
 
+	// The agent config holds the shared agent token; tighten the mode on
+	// load so a file created world-readable is not left exposed.
+	// Best-effort: ignore failure on filesystems that do not honour chmod.
+	_ = os.Chmod(path, 0600)
+
 	if err := validateAgentConfig(cfg); err != nil {
 		return nil, err
 	}
@@ -192,6 +197,10 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 	}
 
 	fmt.Printf("[CONFIG] 設定ファイル %s を読み込みました\n", path)
+
+	// The dashboard config holds secrets (agent_token, webhook URLs, SMTP
+	// password); tighten the mode on load. Best-effort.
+	_ = os.Chmod(path, 0600)
 
 	applyNotificationDefaults(&cfg.Notifications)
 

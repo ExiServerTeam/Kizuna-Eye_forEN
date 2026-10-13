@@ -47,6 +47,10 @@ func (s *ModulesStorage) Load() error {
 		return err
 	}
 
+	// Tighten the mode: modules.json can embed plugin paths and settings.
+	// Best-effort; ignore failure on filesystems without chmod support.
+	_ = os.Chmod(s.path, 0600)
+
 	// Treat an empty file as an empty list.
 	if len(data) == 0 {
 		s.modules = []ModuleConfig{}
