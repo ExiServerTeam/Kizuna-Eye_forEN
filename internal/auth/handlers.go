@@ -63,6 +63,17 @@ func NewHandler(store *Store, manager *SessionManager, logger Logger, secure, au
 // SetAvatarsDir sets the directory used for avatar images.
 func (h *Handler) SetAvatarsDir(dir string) { h.avatarsDir = dir }
 
+// Stop terminates background goroutines owned by the handler (login/guest
+// rate-limiter reapers). Call on shutdown.
+func (h *Handler) Stop() {
+	if h.limiter != nil {
+		h.limiter.Stop()
+	}
+	if h.guestLimiter != nil {
+		h.guestLimiter.Stop()
+	}
+}
+
 // SetAllowGuest enables the guest login endpoint (viewer role, no password).
 func (h *Handler) SetAllowGuest(enabled bool) { h.allowGuest = enabled }
 

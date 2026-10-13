@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"time"
 )
@@ -61,14 +62,22 @@ func (s *SystemStatus) Validate() error {
 	if s.Timestamp < 0 {
 		return fmt.Errorf("timestamp が不正です: %d", s.Timestamp)
 	}
-	if s.CPUUsage < 0 || s.CPUUsage > 100 {
-		return fmt.Errorf("CPUUsage が範囲外です: %.2f", s.CPUUsage)
-	}
-	if s.MemPercent < 0 || s.MemPercent > 100 {
-		return fmt.Errorf("MemPercent が範囲外です: %.2f", s.MemPercent)
-	}
-	if s.DiskPercent < 0 || s.DiskPercent > 100 {
-		return fmt.Errorf("DiskPercent が範囲外です: %.2f", s.DiskPercent)
+	// NaN/Inf would pass a naive range check (all comparisons are false).
+	// Reject them explicitly so a buggy/hostile agent cannot poison metrics.
+	for _, f := range []struct {
+		name string
+		val  float64
+	}{
+		{"CPUUsage", s.CPUUsage},
+		{"MemPercent", s.MemPercent},
+		{"DiskPercent", s.DiskPercent},
+	} {
+		if math.IsNaN(f.val) || math.IsInf(f.val, 0) {
+			return fmt.Errorf("%s が NaN/Inf です", f.name)
+		}
+		if f.val < 0 || f.val > 100 {
+			return fmt.Errorf("%s が範囲外です: %.2f", f.name, f.val)
+		}
 	}
 	return nil
 }

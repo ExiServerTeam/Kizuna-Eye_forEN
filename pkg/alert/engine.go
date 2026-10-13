@@ -111,6 +111,9 @@ func (e *Engine) EnableHistoryPersistence(path string) {
 	if e.history == nil {
 		return
 	}
+	if e.log != nil {
+		e.history.SetLogger(e.log.Warn)
+	}
 	if err := e.history.Load(path); err != nil && e.log != nil {
 		e.log.Warn("アラート履歴の読み込み失敗: %v", err)
 	}

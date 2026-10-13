@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -126,7 +127,22 @@ func csrfOriginOK(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return u.Host == r.Host
+	originHost := strings.ToLower(u.Host)
+	// r.Host is the Host the browser sent, which the reverse proxy forwards.
+	if originHost == strings.ToLower(r.Host) {
+		return true
+	}
+	// Behind a reverse proxy the Host may be rewritten, so the request can
+	// instead carry X-Forwarded-Host. Honor it ONLY when the peer is a local
+	// (loopback) proxy: an arbitrary remote client must not be able to spoof
+	// X-Forwarded-Host and bypass the check. The request is accepted if Origin
+	// matches either value, so a correct r.Host is never broken by a stray XFH.
+	if peer, _, err := net.SplitHostPort(r.RemoteAddr); err == nil && isLoopback(peer) {
+		if xfh := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))); xfh != "" && originHost == xfh {
+			return true
+		}
+	}
+	return false
 }
 
 // isPluginUploadPath reports whether p is the plugin upload endpoint, which is

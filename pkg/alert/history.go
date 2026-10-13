@@ -33,6 +33,16 @@ type History struct {
 	entries []HistoryEntry
 	max     int
 	path    string // persistence file (empty = memory only)
+	// logf, when set, receives persistence-failure messages so a full disk or
+	// permission error does not silently stop recording alerts to disk.
+	logf func(format string, args ...interface{})
+}
+
+// SetLogger installs a logging function used to report persistence errors.
+func (h *History) SetLogger(logf func(format string, args ...interface{})) {
+	h.mu.Lock()
+	h.logf = logf
+	h.mu.Unlock()
 }
 
 // NewHistory creates a History with the given capacity.
@@ -64,6 +74,17 @@ func (h *History) Add(a *notify.Alert) {
 	if a == nil {
 		return
 	}
+	// Capture the logger before taking the write lock: log() takes a read
+	// lock, and RLock while holding Lock on the same RWMutex would deadlock.
+	h.mu.RLock()
+	fn := h.logf
+	h.mu.RUnlock()
+	logf := func(format string, args ...interface{}) {
+		if fn != nil {
+			fn(format, args...)
+		}
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -83,9 +104,16 @@ func (h *History) Add(a *notify.Alert) {
 
 	if h.path != "" {
 		// Alert history can contain usernames and IPs; keep it owner-only.
-		if f, err := os.OpenFile(h.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
-			b, _ := json.Marshal(e)
-			_, _ = f.Write(append(b, '\n'))
+		f, err := os.OpenFile(h.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err != nil {
+			logf("アラート履歴の永続化: open に失敗 (%s): %v", h.path, err)
+		} else {
+			b, merr := json.Marshal(e)
+			if merr != nil {
+				logf("アラート履歴の永続化: JSON化に失敗: %v", merr)
+			} else if _, werr := f.Write(append(b, '\n')); werr != nil {
+				logf("アラート履歴の永続化: 書き込みに失敗: %v", werr)
+			}
 			_ = f.Close()
 		}
 		// Keep the file bounded: rewrite it with just the in-memory entries

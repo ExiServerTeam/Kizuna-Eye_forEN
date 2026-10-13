@@ -16,6 +16,9 @@ type loginLimiter struct {
 	max      int
 	window   time.Duration
 	lockout  time.Duration
+
+	stopCh chan struct{}
+	stopOn sync.Once
 }
 
 type attemptInfo struct {
@@ -39,9 +42,15 @@ func newLoginLimiter(max int, window, lockout time.Duration) *loginLimiter {
 		max:      max,
 		window:   window,
 		lockout:  lockout,
+		stopCh:   make(chan struct{}),
 	}
 	go l.reaper()
 	return l
+}
+
+// Stop terminates the reaper goroutine. It is idempotent.
+func (l *loginLimiter) Stop() {
+	l.stopOn.Do(func() { close(l.stopCh) })
 }
 
 // clientIP extracts the client IP for rate limiting.
@@ -148,18 +157,23 @@ func (l *loginLimiter) Reset(ip string) {
 	l.mu.Unlock()
 }
 
-// reaper periodically removes stale entries.
+// reaper periodically removes stale entries until Stop is called.
 func (l *loginLimiter) reaper() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		now := time.Now()
-		l.mu.Lock()
-		for ip, info := range l.attempts {
-			if now.After(info.lockedTill) && now.Sub(info.firstAt) > l.window {
-				delete(l.attempts, ip)
+	for {
+		select {
+		case <-l.stopCh:
+			return
+		case <-ticker.C:
+			now := time.Now()
+			l.mu.Lock()
+			for ip, info := range l.attempts {
+				if now.After(info.lockedTill) && now.Sub(info.firstAt) > l.window {
+					delete(l.attempts, ip)
+				}
 			}
+			l.mu.Unlock()
 		}
-		l.mu.Unlock()
 	}
 }
