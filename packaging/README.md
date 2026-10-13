@@ -168,7 +168,7 @@ apt リポジトリは「フラットな Release アセット」を直接リポ�
 
 ## 注意
 
-- プラグインは同梱しない（UI から追加）。`require_signature` は初期 `false`。
+- プラグインは同梱しない（UI から追加）。deb 導入では `plugins.require_signature` を postinst が `false` にする（鍵が無い環境で初回から署名必須にしないため）。UI で鍵を設定したら有効化する。
 - agent と dashboard は専用ユーザー `kizuna-eye` で動く（権限分離）。
 - アップグレード（`apt upgrade`）は既存の設定ファイルを書き換えない。
   設定の調整は**新規作成時のみ**行うため、Web UI での変更は保持される。

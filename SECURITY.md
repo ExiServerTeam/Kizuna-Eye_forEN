@@ -9,9 +9,9 @@ Kizuna-Eye のセキュリティポリシーです。脆弱性の報告方法・
 
 | Version | Supported |
 |---------|-----------|
-| 0.7.x   | Yes       |
-| 0.6.x   | No        |
-| < 0.6   | No        |
+| 0.8.x   | Yes       |
+| 0.7.x   | No        |
+| < 0.7   | No        |
 
 セキュリティ修正は原則として最新系列に対してのみ提供します。
 
@@ -76,7 +76,9 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
 
 - Go の `.so` プラグインはホストと同一権限で動作します。信頼できる
   プラグインのみを配置してください。
-- 署名検証（Ed25519）は実装済みですが、既定では**任意**（`plugins.require_signature`）。
+- 署名検証（Ed25519）は実装済みですが、`plugins.require_signature` の既定は**導入経路で異なります**。
+  - **ソース導入（`install.sh`）**: 同梱 example の `require_signature: true` をそのまま使う（有効）。
+  - **deb 導入（`apt install`）**: postinst が `false` に書き換える（初回から署名必須にすると、鍵が無い環境でプラグインを一切追加できなくなるため）。
   本番では有効化を強く推奨します。
 - `plugin-inspect` は `.so` を `plugin.Open` でロードしてメタデータを
   読みます。悪意ある `.so` はこの検査プロセスでコード実行に至り得ます。
@@ -86,8 +88,10 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
 
 - **新規インストール（`config_version >= 2`、install.sh / deb が導入）**:
   `public_viewer=false`（未ログイン閲覧は無効）、`auth.enabled=true`、
-  `agent_token` は install.sh がランダム生成、`plugins.require_signature=true`
-  （配布 example 既定）。安全側で開始します。
+  `agent_token` は install.sh がランダム生成。`plugins.require_signature` は
+  ソース導入では example 既定の `true`、deb 導入では postinst が `false` に
+  する（鍵が無い環境でプラグインを追加できなくなるのを避けるため）。
+  `public_viewer` / `auth.enabled` / `agent_token` は両経路とも安全側で開始します。
 - **既存インストール（`config_version` 無し）**: アップグレードで挙動が
   変わらないよう、従来の既定（`public_viewer` 既定 true など）を維持します。
   明示的に設定された値は常に尊重されます。
@@ -99,9 +103,11 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
 
 ### 4. ログのローカル性
 
-- ログはローカルに保存されます。同一ユーザー権限を奪われた場合、
-  ローカルの証跡は改ざんされ得ます。リモート転送は未実装です
-  （`docs/ROADMAP.md` のログ層）。
+- ログは既定でローカルに保存されます。同一ユーザー権限を奪われた場合、
+  ローカルの証跡は改ざんされ得ます。
+- ログの**リモート転送は実装済み**です（opt-in の `log_forward.url`）。
+  有効にすると各行を HTTP(S) エンドポイントへミラーするため、ローカル改ざんに
+  対する外部証跡として使えます（既定は無効。`pkg/logger/forward.go`）。
 
 ## 運用上の推奨
 
