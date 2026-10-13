@@ -116,7 +116,7 @@
         const sep = document.createElement('div');
         sep.className = 'account-sep';
         dropdown.appendChild(sep);
-        dropdown.appendChild(menuItem('↪ ログアウト', function () {
+        dropdown.appendChild(menuItem('ログアウト', function () {
             fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
                 .finally(function () { location.replace('/login.html'); });
         }));

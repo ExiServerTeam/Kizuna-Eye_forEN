@@ -275,6 +275,7 @@
         width: 100%;
         padding: 12px;
         min-height: 44px;
+        text-align: center;
     }
 
     /* スマホでは編集領域を広く確保 */
