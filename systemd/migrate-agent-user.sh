@@ -70,7 +70,12 @@ REPO_LOGS="$DIR/logs"
 # UI のログ一覧に残したい場合のみ repo の logs を指定する。
 A4_SECURITY_LOG_DIR="${A4_SECURITY_LOG_DIR:-$NEW_HOME/logs}"
 TS="$(date +%Y%m%d_%H%M%S)"
-BACKUP="/tmp/kizuna-a4-backup-$TS.tar.gz"
+# バックアップ先は予測可能な名前を /tmp に直接置かない。world-writable な
+# /tmp では、同名の symlink を先に置かれると root の tar がそのリンク先へ
+# 書き込みうる（CWE-59）。mktemp で O_EXCL 作成された一意なディレクトリを
+# 確保し、その中に作る。
+BACKUP_DIR="$(mktemp -d /tmp/kizuna-a4-backup-XXXXXXXX)"
+BACKUP="$BACKUP_DIR/kizuna-a4-backup-$TS.tar.gz"
 
 # 表示言語。install.sh が UI_LANG を export する（未設定なら日本語）。
 UI_LANG="${UI_LANG:-ja}"
@@ -130,9 +135,19 @@ msg() {
 }
 
 echo "$(msg "▶ 0. バックアップ")"
+# バックアップ tar には agent_token / webhook_url / users.json (bcrypt) /
+# 署名鍵メタ等の秘密情報が入る。root の既定 umask (0022) だと /tmp に
+# 0644 (全ユーザー読取可) で作られてしまうため、作成前に umask 077 を
+# 設定して 0600 にする（作成後に chmod でも可だが、一時ファイルを作る
+# 他の処理にも一括で効かせるため umask を使う）。
+_OLD_UMASK="$(umask)"
+umask 077
 tar czf "$BACKUP" -C / \
     "${SRC_DATA#/}" \
     "${BIN_DIR#/}"/*.meta.json 2>/dev/null || true
+umask "$_OLD_UMASK"
+chmod 0600 "$BACKUP" 2>/dev/null || true
+chmod 0700 "$BACKUP_DIR" 2>/dev/null || true
 # 状態ファイルは repo logs にもあるため併せて退避
 tar rzf "$BACKUP" -C "$DIR" logs 2>/dev/null || true
 echo "   $BACKUP"
@@ -448,8 +463,14 @@ SRC_UNIT="$DIR/systemd/kizuna-eye-agent.service"
 DST_UNIT="/etc/systemd/system/kizuna-eye-agent.service"
 [ -f "$SRC_UNIT" ] || { echo "$(msg "❌ $SRC_UNIT が見つかりません")"; exit 1; }
 if [ -f "$DST_UNIT" ]; then
-    cp -a "$DST_UNIT" "/tmp/kizuna-eye-agent.service.bak-$TS"
-    echo "$(msg "   既存を退避: /tmp/kizuna-eye-agent.service.bak-$TS")"
+    # 退避先は予測可能な名前を /tmp に直接置かない。world-writable な /tmp で
+    # 同名の symlink を先に置かれると、root の cp -a がそのリンク先を上書き
+    # しうる（CWE-59）。mktemp で O_EXCL 作成した一意なファイルへ退避する。
+    UNIT_BAK="$(mktemp /tmp/kizuna-eye-agent.service.bak-XXXXXXXX)" || UNIT_BAK=""
+    if [ -n "$UNIT_BAK" ]; then
+        cp -a "$DST_UNIT" "$UNIT_BAK"
+        echo "$(msg "   既存を退避: $UNIT_BAK")"
+    fi
 fi
 sed -e "s|__DIR__|$DIR|g" -e "s|__BIN__|$BIN_DIR|g" -e "s|__DATA__|$SRC_DATA|g" "$SRC_UNIT" > "$DST_UNIT"
 chmod 0644 "$DST_UNIT"
