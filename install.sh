@@ -691,9 +691,15 @@ ACTION_HELPER_DST="/usr/local/bin/kizuna-action.sh"
 if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log ""
     log "▶ ワンクリック対処ヘルパーの導入"
+    # The ACTION helper is run by the DASHBOARD, not the agent. install.sh
+    # runs the dashboard as the operating user (see the systemd section:
+    # "dashboard: 実行ユーザーのまま kizuna-dashboard.service で管理する"),
+    # so the NOPASSWD grant must go to that user. Forcing it to kizuna-eye
+    # (the agent user) left the dashboard unable to sudo, so every
+    # one-click action (kill / firewall / cron delete / restore) silently
+    # failed. The .deb instead installs the dashboard AS kizuna-eye, so
+    # postinst grants kizuna-eye — the two install paths legitimately differ.
     ACTION_USER="${SUDO_USER:-$(id -un)}"
-    # The dashboard runs the action helper; after H-1 that is kizuna-eye.
-    if id kizuna-eye >/dev/null 2>&1; then ACTION_USER="kizuna-eye"; fi
     ACTION_SUDOERS="/etc/sudoers.d/kizuna-security-action"
     if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:"
