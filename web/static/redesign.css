@@ -306,37 +306,48 @@ body {
 }
 
 /* ============================================================
-   グラデーション全廃（他 CSS の残存分を打ち消す）
+   グラデーション全廃
    ============================================================
-   logs.css / config-editor.css / auth.css に linear-gradient が残っており、
-   redesign.css を先に読み込むページではそちらが勝つ。ここで確実に単色へ
-   上書きする（!important は「残存グラデに勝つ」ため）。
-   対象: 見出しバー / ボタン / バッジ / アクティブタブ / 認証カード等。 */
-.logs-header,
-.config-editor-header,
-.auth-card,
-.auth-header,
-.page-header,
-.section-header,
-.btn-primary,
-.primary-btn,
-.save-btn,
-.auth-submit,
-.tab-btn.active,
-.log-tab.active,
-.badge-accent,
-.config-tab.active {
+   style.css / modules.css / logs.css / auth.css / config-editor.css に
+   linear-gradient が残っている。redesign.css は最後に読み込まれるので、
+   ここで同じセレクタを単色で上書きすれば確実に勝つ。
+
+   grep で実際に確認した全グラデーション対象:
+     style.css:  .logo / .theme-thumb / .theme-thumb(light) / (1834行) /
+                 .dashboard-toast.{error,warning,info,success} /
+                 .process-sort-buttons .sort-btn.active / .auth-btn / .btn-primary
+     modules.css: (120行)
+     logs.css:    .log-type-buttons .btn-secondary.active
+     auth.css:    .auth-logo / .auth-btn
+     config-editor.css: .config-file-btn.active / .btn-primary / .mode-btn.active
+   ============================================================ */
+
+/* 1) ブランド/装飾系は単色テキスト・単色塗りに。 */
+.logo,
+.auth-logo {
+    background: none !important;
     background-image: none !important;
-    background: var(--bg-secondary) !important;
+    -webkit-background-clip: border-box !important;
+    background-clip: border-box !important;
+    -webkit-text-fill-color: currentColor !important;
+    color: var(--text-primary) !important;
 }
-/* 実際に使われているクラス名に合わせて単色化する（config-editor.css の
-   .config-file-btn.active / .mode-btn.active / .btn-primary がグラデ）。 */
+
+/* 2) トグルつまみ・スイッチ類。 */
+.theme-thumb {
+    background: var(--primary-color) !important;
+    background-image: none !important;
+}
+
+/* 3) アクティブ/選択状態の塗り（タブ・ボタン）は単色アクセントに統一。
+      実クラスを網羅する。 */
+.btn-primary,
+.auth-btn,
 .config-file-btn.active,
 .mode-btn.active,
-.btn-primary,
-.primary-btn,
-.save-btn,
-.auth-submit {
+.log-type-buttons .btn-secondary.active,
+.process-sort-buttons .sort-btn.active,
+.sort-btn.active {
     background: var(--primary-color) !important;
     background-image: none !important;
     color: #ffffff !important;
@@ -344,20 +355,42 @@ body {
     box-shadow: none !important;
     transform: none !important;
 }
+.btn-primary:hover,
+.auth-btn:hover,
 .config-file-btn.active:hover,
 .mode-btn.active:hover,
-.btn-primary:hover,
-.primary-btn:hover,
-.save-btn:hover,
-.auth-submit:hover {
+.log-type-buttons .btn-secondary.active:hover,
+.process-sort-buttons .sort-btn.active:hover,
+.sort-btn.active:hover {
     background: var(--primary-hover) !important;
     background-image: none !important;
+    box-shadow: none !important;
+    transform: none !important;
 }
 
-/* 設定エディタの左サイドバー選択は「左の縦棒 + 淡い背景」程度に留め、
-   塗りつぶしの主張を弱める。 */
+/* 4) トースト（通知）も単色に。 */
+.dashboard-toast.error   { background: #b91c1c !important; }
+.dashboard-toast.warning { background: #b45309 !important; }
+.dashboard-toast.info    { background: var(--primary-color) !important; }
+.dashboard-toast.success { background: #15803d !important; }
+
+/* 5) 設定エディタの左サイドバー選択は塗りつぶしを抑え、枠線アクセントに。 */
 .config-file-btn.active {
+    background: var(--accent-soft) !important;
+    color: var(--primary-color) !important;
     border-color: var(--primary-color) !important;
+}
+
+/* 6) 取りこぼし保険: ブランド色グラデを持つ要素の背景を確実に無効化。 */
+[class*="active"][style*="linear-gradient"],
+.logo,
+.auth-logo,
+.theme-thumb,
+.btn-primary,
+.auth-btn,
+.mode-btn.active,
+.config-file-btn.active {
+    background-repeat: no-repeat !important;
 }
 
 /* ============================================================
