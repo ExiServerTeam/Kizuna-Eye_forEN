@@ -11,7 +11,7 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 - **軽量**: ダッシュボード + エージェントで約30〜50MB
 - **リアルタイム更新**: WebSocket経由で1秒以内に反映
 - **ブラウザベース設定**: SSH不要で全設定が完結
-- **認証（任意）**: ロール（admin / operator / viewer）、bcrypt パスワード、セッション Cookie、IP単位のログイン試行制限
+- **認証（インストーラが有効化）**: ロール（admin / operator / viewer）、bcrypt パスワード、セッション Cookie、IP単位のログイン試行制限
 - **プラグイン機構**: Goの `.so` ダイナミックプラグインで機能拡張
 - **通知**: Discord / Slack / Telegram / LINE / Email（SMTP）
 - **ダーク / ライトモード**: OS設定にも追従
@@ -249,7 +249,7 @@ critical だけは集約せず即時送信します。
 
 ブラウザで `http://<server-ip>:8080` を開いてください。
 
-## 認証（任意）
+## 認証
 
 Kizuna-Eye は認証あり・なしの両方で動作します。認証は**インストーラが自動で有効化**します。`install.sh` も `.deb`（`apt install`）経路も、新規作成した設定で `auth.enabled: true` / `public_viewer: false` にします。**無効のままになるのは、`dashboard_config.example.json`（簡易ローカル検証用に `auth.enabled: false` を同梱）から手動で設定を置いた場合だけ**です。変更するには `dashboard_config.json` の `auth` ブロックを編集します（`secure_cookies` / `session_ttl_hours` / `agent_token` も指定可能）。
 

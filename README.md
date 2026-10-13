@@ -11,7 +11,7 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 - **Lightweight**: Combined footprint of ~30–50 MB (Dashboard + Agent)
 - **Real-time updates**: Metric changes are reflected within ~1 second over WebSockets
 - **Browser-based configuration**: Full setup and management from the UI, no SSH required
-- **Authentication (optional)**: Roles (admin / operator / viewer), bcrypt passwords, session cookies, per-IP login rate limiting
+- **Authentication (enabled by the installer)**: Roles (admin / operator / viewer), bcrypt passwords, session cookies, per-IP login rate limiting
 - **Plugin system**: Extend functionality with Go `.so` dynamic plugins
 - **Notifications**: Discord, Slack, Telegram, LINE, and Email (SMTP)
 - **Dark / light mode** with OS preference detection
@@ -232,7 +232,7 @@ alerts immediately.
 
 Open `http://<server-ip>:8080` in your browser.
 
-## Authentication (optional)
+## Authentication
 
 Kizuna-Eye works with or without authentication. Authentication is **enabled automatically by the installer**: both `install.sh` and the `.deb` (`apt install`) path set `auth.enabled: true` and `public_viewer: false` on a brand-new config. It stays **disabled only when you place a config manually** from `dashboard_config.example.json` (which ships `auth.enabled: false` for quick local testing). To change it, edit the `auth` block of `dashboard_config.json` (`secure_cookies` / `session_ttl_hours` / `agent_token` are also available).
 
