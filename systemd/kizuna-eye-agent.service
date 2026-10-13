@@ -85,7 +85,13 @@ NoNewPrivileges=yes
 # ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
 ProtectSystem=strict
 ProtectHome=read-only
-PrivateTmp=yes
+# PrivateTmp=yes は agent 専用の隔離 /tmp を与えるが、その副作用で
+# 共有の /tmp を対象とする SUID / FIM 監視が原理的に無効化される
+# （agent が見る /tmp は systemd-private-.../tmp で、攻撃者が置く実
+# /tmp のファイルが見えない）。攻撃検知を優先し PrivateTmp は無効にする。
+# 書き込みは ProtectSystem=strict + ReadWritePaths で制限されるため、
+# 実 /tmp を見えても書き込み権限は増えない（読み取り・inotify のみ）。
+PrivateTmp=no
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes

@@ -208,25 +208,35 @@
         requestAnimationFrame(function () {
             const margin = 8;
             const vw = window.innerWidth || document.documentElement.clientWidth;
-            const rect = dropdown.getBoundingClientRect();
-            // Cap the width to the viewport regardless of anchor.
-            const maxW = Math.max(180, vw - margin * 2);
-            if (rect.width > maxW) {
-                dropdown.style.maxWidth = maxW + 'px';
-            }
-            // If the default right-anchored box overflows the left edge, flip
-            // to left-anchored (and clamp so it cannot overflow the right).
-            if (rect.left < margin) {
-                dropdown.style.right = 'auto';
-                dropdown.style.left = '0';
-            }
-            // Re-measure after any flip/width change and, if it still spills
-            // past the right edge, pin it to the right edge.
-            const r2 = dropdown.getBoundingClientRect();
-            if (r2.right > vw - margin) {
-                dropdown.style.left = 'auto';
-                dropdown.style.right = '0';
-            }
+            // The dropdown is positioned relative to .account-menu (the
+            // nearest positioned ancestor = the avatar button). Rather than
+            // flipping left/right (which fails when the avatar sits in the
+            // MIDDLE of a narrow screen, because neither edge fits a wide
+            // menu), compute the menu width to fit the viewport and place it
+            // with an explicit left offset relative to the avatar so it
+            // always lands inside [margin, vw-margin].
+            const anchor = dropdown.parentElement &&
+                dropdown.parentElement.querySelector('.account-avatar');
+            if (!anchor) return;
+            const b = anchor.getBoundingClientRect();
+            // Desired width: prefer the natural min-width (260px) but never
+            // wider than the viewport.
+            let width = 260;
+            if (dropdown.scrollWidth > width) width = dropdown.scrollWidth;
+            const maxW = vw - margin * 2;
+            if (width > maxW) width = maxW;
+            dropdown.style.width = width + 'px';
+            dropdown.style.maxWidth = maxW + 'px';
+            // Right-align under the avatar by default, then clamp the LEFT
+            // edge into the viewport; if that pushes the right edge out,
+            // shift back so the whole box stays on screen.
+            let desiredLeft = b.right - width;
+            if (desiredLeft < margin) desiredLeft = margin;
+            if (desiredLeft + width > vw - margin) desiredLeft = vw - margin - width;
+            // Convert to an offset relative to the positioned ancestor.
+            const offset = desiredLeft - b.left;
+            dropdown.style.right = 'auto';
+            dropdown.style.left = offset + 'px';
         });
     }
 
