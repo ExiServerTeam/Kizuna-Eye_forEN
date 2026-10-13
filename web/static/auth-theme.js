@@ -34,9 +34,8 @@
         requestAnimationFrame(function () {
             requestAnimationFrame(function () { root.classList.remove('theme-switching'); });
         });
-        // アイコン（絵文字）は使わない。CSS でも非表示にしている。
-        var icon = document.getElementById('authThemeIcon') || document.getElementById('themeIcon');
-        if (icon) icon.textContent = '';
+        // アイコンは HTML 内の SVG（月/太陽）で、CSS が data-theme に応じて
+        // 出し分ける。ここで textContent を触ると SVG が消えるので何もしない。
         var label = theme === 'dark'
             ? t('theme.toggle_to_light', 'Switch to light mode')
             : t('theme.toggle_to_dark', 'Switch to dark mode');

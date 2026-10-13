@@ -153,10 +153,8 @@
         // 初期化 IIFE 全体（イベント登録・データ取得）を止めないよう握りつぶす。
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
-        // テーマアイコンの絵文字は使わない（CSS で非表示）。
-        if (elements.themeIcon) {
-            elements.themeIcon.textContent = '';
-        }
+        // アイコンは HTML 内の SVG（月/太陽）で、CSS が data-theme に応じて
+        // 出し分ける。JS は何もしない（textContent を触ると SVG を壊す）。
         if (elements.themeLabel) {
             elements.themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
         }

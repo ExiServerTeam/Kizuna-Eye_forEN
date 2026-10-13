@@ -228,7 +228,7 @@
         // 初期化 IIFE 全体を止めないよう握りつぶす。
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
-        if (themeIcon) themeIcon.textContent = '';
+        // アイコンは CSS が data-theme に応じて出し分ける（SVG）。触らない。
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 

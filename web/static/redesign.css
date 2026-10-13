@@ -149,13 +149,47 @@ body {
     transition: none !important;
 }
 
-/* 絵文字アイコン（言語/テーマ）は使わない。
-   HTML の span に絵文字が入っているが、テキストラベルで用は足りる。
-   JS が textContent を入れ直しても見えないよう CSS で潰す。 */
+/* ============================================================
+   アイコン（言語 / テーマ）
+   ============================================================
+   絵文字は使わず、テーマ色（currentColor）に追従する SVG を使う。
+   HTML の span 内に <svg> が入っている。
+   - 言語アイコン: 地球（stroke は現在色）
+   - テーマアイコン: 月 と 太陽 の両方を入れ、data-theme で出し分ける */
 .theme-icon,
-.auth-theme-icon,
-.lang-icon {
-    display: none !important;
+.auth-theme-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: currentColor;
+    flex: 0 0 auto;
+}
+.theme-icon svg,
+.auth-theme-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+    color: inherit;
+}
+
+/* 月と太陽の出し分け。ダークでは月、ライトでは太陽を表示する。 */
+.theme-icon .icon-sun,
+.auth-theme-icon .icon-sun {
+    display: none;
+}
+.theme-icon .icon-moon,
+.auth-theme-icon .icon-moon {
+    display: block;
+}
+[data-theme="light"] .theme-icon .icon-sun,
+[data-theme="light"] .auth-theme-icon .icon-sun {
+    display: block;
+}
+[data-theme="light"] .theme-icon .icon-moon,
+[data-theme="light"] .auth-theme-icon .icon-moon {
+    display: none;
 }
 
 /* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。
