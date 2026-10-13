@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"Kizuna-Eye/pkg/fsutil"
 	kelog "Kizuna-Eye/pkg/logger"
 )
 
@@ -105,7 +106,11 @@ func (h *Handler) handleAvatarUpload(w http.ResponseWriter, r *http.Request) {
 
 	name := avatarFileName(sess.Username, ext)
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	// fsutil.WriteFileAtomic rejects a symlink target and fsyncs before the
+	// rename. The random 16-hex-char suffix already makes a pre-planted
+	// symlink infeasible, but this keeps avatar writes on the same atomic,
+	// symlink-safe path as every other state write (L-12).
+	if err := fsutil.WriteFileAtomic(path, data, 0o600); err != nil {
 		writeError(w, http.StatusInternalServerError, "保存に失敗しました")
 		return
 	}
