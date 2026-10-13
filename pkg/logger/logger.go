@@ -106,8 +106,15 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 
 	if w.maxSize > 0 && w.size+int64(len(p)) > w.maxSize {
 		if err := w.rotate(); err != nil {
-			// Rotation failure must not drop the log line.
+			// Rotation failed. Make sure we still have a writable handle,
+			// otherwise the log line (and every line after it) would be
+			// written to a closed file and lost.
 			fmt.Fprintf(os.Stderr, "ログローテーション失敗: %v\n", err)
+			if w.file == nil {
+				if err := w.open(); err != nil {
+					return 0, err
+				}
+			}
 		}
 	}
 
@@ -117,9 +124,12 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 }
 
 func (w *rotatingWriter) rotate() error {
+	// Mark the handle unusable so Write reopens on a rotation failure.
 	if err := w.file.Close(); err != nil {
+		w.file = nil
 		return err
 	}
+	w.file = nil
 
 	// path -> path.1, path.1 -> path.2, ...
 	for i := w.maxBackups - 1; i >= 1; i-- {
