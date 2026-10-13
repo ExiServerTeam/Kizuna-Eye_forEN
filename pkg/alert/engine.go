@@ -2,6 +2,7 @@ package alert
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // ============================================================
-// Config はアラートエンジンの設定
+// Config is the alert engine configuration.
 // ============================================================
 type Config struct {
 	MemoryWarn       float64
@@ -21,15 +22,15 @@ type Config struct {
 	CPUTempWarn      float64
 	CPUTempCritical  float64
 
-	HoldDuration time.Duration // 異常が持続すべき時間
-	RecoveryHold time.Duration // 復旧判定に必要な正常継続時間（ヒステリシス）
-	Cooldown     time.Duration // 同一アラートの再送禁止時間
-	AgentTimeout time.Duration // Agent 応答なしの閾値
+	HoldDuration time.Duration // how long an anomaly must persist
+	RecoveryHold time.Duration // normal duration required to recover (hysteresis)
+	Cooldown     time.Duration // cooldown before re-notifying the same alert
+	AgentTimeout time.Duration // agent timeout
 
 	NotifyRecovery bool
 }
 
-// metricState は指標ごとの状態
+// metricState is the per-metric state.
 type metricState struct {
 	startedAt    time.Time
 	normalSince  time.Time
@@ -38,7 +39,7 @@ type metricState struct {
 }
 
 // ============================================================
-// Engine はアラートを検知して通知する
+// Engine detects alerts and sends notifications.
 // ============================================================
 type Engine struct {
 	cfg      Config
@@ -51,6 +52,12 @@ type Engine struct {
 	agentOnline        bool
 	agentOfflineReason string
 	agentLastSeen      time.Time
+	// agentOfflineNotified is the last time an agent-offline notification was
+	// sent. It throttles a flapping connection so 切断/復帰 pairs do not spam
+	// the notification channels.
+	agentOfflineNotified time.Time
+
+	history *History
 }
 
 func NewEngine(cfg Config, notifier *notify.Manager, log *logger.Logger) *Engine {
@@ -59,25 +66,105 @@ func NewEngine(cfg Config, notifier *notify.Manager, log *logger.Logger) *Engine
 		log:      log,
 		notifier: notifier,
 		states:   make(map[string]*metricState),
+		history:  NewHistory(200),
+	}
+}
+
+// Alerts returns the alert history, newest first.
+func (e *Engine) Alerts() []HistoryEntry {
+	if e.history == nil {
+		return nil
+	}
+	return e.history.List()
+}
+
+// Snapshot returns the current thresholds (thread-safe).
+func (e *Engine) Snapshot() Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.cfg
+}
+
+// UpdateConfig replaces runtime-adjustable thresholds (thread-safe).
+func (e *Engine) UpdateConfig(c Config) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Preserve durations that are not editable via the API.
+	old := e.cfg
+	if c.HoldDuration == 0 {
+		c.HoldDuration = old.HoldDuration
+	}
+	if c.Cooldown == 0 {
+		c.Cooldown = old.Cooldown
+	}
+	if c.RecoveryHold == 0 {
+		c.RecoveryHold = old.RecoveryHold
+	}
+	if c.AgentTimeout == 0 {
+		c.AgentTimeout = old.AgentTimeout
+	}
+	e.cfg = c
+}
+
+// EnableHistoryPersistence loads prior history and persists new entries.
+func (e *Engine) EnableHistoryPersistence(path string) {
+	if e.history == nil {
+		return
+	}
+	if err := e.history.Load(path); err != nil && e.log != nil {
+		e.log.Warn("アラート履歴の読み込み失敗: %v", err)
+	}
+	e.history.SetPersistence(path)
+}
+
+// ClearAlerts removes every alert history record (memory and file).
+// It does not reset the per-metric fired state, so clearing the history
+// never triggers a duplicate notification.
+func (e *Engine) ClearAlerts() error {
+	if e.history == nil {
+		return nil
+	}
+	return e.history.Clear()
+}
+
+// ReportAlert records an externally supplied alert to history and notifies.
+// Used by plugins (e.g. security) that detect their own events.
+func (e *Engine) ReportAlert(a *notify.Alert) {
+	e.dispatch(a)
+}
+
+// dispatch records to history and then notifies.
+func (e *Engine) dispatch(a *notify.Alert) {
+	if a == nil {
+		return
+	}
+	if e.history != nil {
+		e.history.Add(a)
+	}
+	if e.notifier != nil {
+		e.notifier.Notify(a)
 	}
 }
 
 // ============================================================
-// OnStatus は Agent から新しいデータが届いた時に呼ばれる
+// OnStatus is called when new data arrives from the agent.
 // ============================================================
 func (e *Engine) OnStatus(s *status.SystemStatus) {
+	if s == nil {
+		return
+	}
 	var pending []*notify.Alert
 	now := time.Now()
 
 	e.mu.Lock()
 
-	// ---------- Agent 復帰 ----------
+	// ---------- Agent recovery ----------
 	if !e.agentOnline {
 		if e.agentOfflineReason != "" && e.cfg.NotifyRecovery {
 			pending = append(pending, &notify.Alert{
 				Type:      "agent_recovery",
 				Level:     notify.LevelSuccess,
-				Icon:      "✅",
+				Icon:      iconForLevel(notify.LevelSuccess),
 				Title:     "Agent 復帰",
 				Message:   "Agentからの応答が復帰しました。",
 				Timestamp: now,
@@ -88,27 +175,33 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 	}
 	e.agentLastSeen = now
 
-	// ---------- メモリ ----------
+	// ---------- Memory ----------
 	if a := e.evalMemory(s.MemPercent, now); a != nil {
 		pending = append(pending, a)
 	}
 
-	// ---------- ストレージ ----------
+	// ---------- Storage ----------
 	freeBytes := uint64(0)
 	if s.DiskTotal > s.DiskUsed {
 		freeBytes = s.DiskTotal - s.DiskUsed
 	}
 	diskFreePct := 100.0 - s.DiskPercent
+	// Clamp against slightly out-of-range DiskPercent (rounding, odd drivers).
+	if diskFreePct < 0 {
+		diskFreePct = 0
+	} else if diskFreePct > 100 {
+		diskFreePct = 100
+	}
 	if a := e.evalDiskFree(diskFreePct, freeBytes, now); a != nil {
 		pending = append(pending, a)
 	}
 
-	// ---------- CPU温度 ----------
+	// ---------- CPU temperature ----------
 	if a := e.evalCPUTemp(s.CPUTemp, now); a != nil {
 		pending = append(pending, a)
 	}
 
-	// ---------- ディスクS.M.A.R.T ----------
+	// ---------- Disk S.M.A.R.T ----------
 	if a := e.evalDiskHealth(s.Disks, now); a != nil {
 		pending = append(pending, a)
 	}
@@ -116,12 +209,12 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 	e.mu.Unlock()
 
 	for _, a := range pending {
-		e.notifier.Notify(a)
+		e.dispatch(a)
 	}
 }
 
 // ============================================================
-// CheckAgentTimeout は定期的に呼び出される
+// CheckAgentTimeout is called periodically.
 // ============================================================
 func (e *Engine) CheckAgentTimeout() {
 	e.mu.Lock()
@@ -134,21 +227,27 @@ func (e *Engine) CheckAgentTimeout() {
 		return
 	}
 	e.agentOnline = false
-	e.agentOfflineReason = "timeout"
-	e.mu.Unlock()
+	if e.allowAgentOfflineNotifyLocked(time.Now()) {
+		e.agentOfflineReason = "timeout"
+		e.mu.Unlock()
 
-	e.notifier.Notify(&notify.Alert{
-		Type:      "agent_timeout",
-		Level:     notify.LevelWarning,
-		Icon:      "⚠️",
-		Title:     "Agent 応答なし",
-		Message:   "Agentから応答がありません。至急確認してください。",
-		Timestamp: time.Now(),
-	})
+		e.dispatch(&notify.Alert{
+			Type:      "agent_timeout",
+			Level:     notify.LevelWarning,
+			Icon:      iconForLevel(notify.LevelWarning),
+			Title:     "Agent 応答なし",
+			Message:   "Agentから応答がありません。至急確認してください。",
+			Timestamp: time.Now(),
+		})
+		return
+	}
+	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。
+	e.agentOfflineReason = ""
+	e.mu.Unlock()
 }
 
 // ============================================================
-// OnAgentDisconnect は Agent の WebSocket が切れた時に呼ばれる
+// OnAgentDisconnect is called when the agent's WebSocket drops.
 // ============================================================
 func (e *Engine) OnAgentDisconnect() {
 	e.mu.Lock()
@@ -157,21 +256,39 @@ func (e *Engine) OnAgentDisconnect() {
 		return
 	}
 	e.agentOnline = false
-	e.agentOfflineReason = "disconnect"
-	e.mu.Unlock()
+	if e.allowAgentOfflineNotifyLocked(time.Now()) {
+		e.agentOfflineReason = "disconnect"
+		e.mu.Unlock()
 
-	e.notifier.Notify(&notify.Alert{
-		Type:      "agent_disconnect",
-		Level:     notify.LevelWarning,
-		Icon:      "⚠️",
-		Title:     "Agent 切断",
-		Message:   "Agentが切断されました。",
-		Timestamp: time.Now(),
-	})
+		e.dispatch(&notify.Alert{
+			Type:      "agent_disconnect",
+			Level:     notify.LevelWarning,
+			Icon:      iconForLevel(notify.LevelWarning),
+			Title:     "Agent 切断",
+			Message:   "Agentが切断されました。",
+			Timestamp: time.Now(),
+		})
+		return
+	}
+	// クールダウン中は通知しない。復帰通知も抑止するため reason を空にする。
+	e.agentOfflineReason = ""
+	e.mu.Unlock()
+}
+
+// allowAgentOfflineNotifyLocked reports whether an agent-offline notification
+// may be sent now. It throttles a flapping connection using the configured
+// cooldown so channels are not spammed with 切断/復帰 pairs.
+// Caller must hold e.mu.
+func (e *Engine) allowAgentOfflineNotifyLocked(now time.Time) bool {
+	if e.cfg.Cooldown > 0 && !e.agentOfflineNotified.IsZero() && now.Sub(e.agentOfflineNotified) < e.cfg.Cooldown {
+		return false
+	}
+	e.agentOfflineNotified = now
+	return true
 }
 
 // ============================================================
-// 共通ヘルパー
+// Common helpers
 // ============================================================
 func levelRank(l notify.Level) int {
 	switch l {
@@ -212,8 +329,23 @@ func shouldRecover(st *metricState, recoveryHold time.Duration, now time.Time) b
 	return now.Sub(st.normalSince) >= recoveryHold
 }
 
+// iconForLevel returns a representative emoji for a notification level.
+// Discord / Slack / Telegram などの通知で使う。
+func iconForLevel(level notify.Level) string {
+	switch level {
+	case notify.LevelCritical:
+		return "🚨"
+	case notify.LevelWarning:
+		return "⚠️"
+	case notify.LevelSuccess:
+		return "✅"
+	default:
+		return "ℹ️"
+	}
+}
+
 // ============================================================
-// メモリ
+// Memory
 // ============================================================
 func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 	isCritical := pct >= e.cfg.MemoryCritical
@@ -229,11 +361,9 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 		st.normalSince = time.Time{}
 
 		level := notify.LevelWarning
-		icon := "⚠️"
 		title := "メモリ警告"
 		if isCritical {
 			level = notify.LevelCritical
-			icon = "🚨"
 			title = "メモリ異常"
 		}
 
@@ -248,7 +378,7 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 			msg = fmt.Sprintf("メモリ使用率が%.1f%%に達しました。", pct)
 		}
 		return &notify.Alert{
-			Type: "memory", Level: level, Icon: icon, Title: title,
+			Type: "memory", Level: level, Icon: iconForLevel(level), Title: title,
 			Message: msg, Timestamp: now,
 		}
 	}
@@ -274,15 +404,15 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 	st.normalSince = time.Time{}
 	st.lastNotified = now
 	return &notify.Alert{
-		Type: "memory_recovery", Level: notify.LevelSuccess,
-		Icon: "✅", Title: "メモリ復旧",
+		Type: "memory_recovery", Level: notify.LevelSuccess, Icon: iconForLevel(notify.LevelSuccess),
+		Title:     "メモリ復旧",
 		Message:   fmt.Sprintf("メモリ使用率が正常に戻りました。（現在: %.1f%%）", pct),
 		Timestamp: now,
 	}
 }
 
 // ============================================================
-// ストレージ空き
+// Free storage
 // ============================================================
 func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) *notify.Alert {
 	isCritical := freePct <= e.cfg.DiskFreeCritical
@@ -298,11 +428,9 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 		st.normalSince = time.Time{}
 
 		level := notify.LevelWarning
-		icon := "⚠️"
 		title := "ストレージ警告"
 		if isCritical {
 			level = notify.LevelCritical
-			icon = "🚨"
 			title = "ストレージ異常"
 		}
 
@@ -322,7 +450,7 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 			msg = fmt.Sprintf("ストレージの空き容量が%.1f%%になりました。", freePct)
 		}
 		return &notify.Alert{
-			Type: "disk", Level: level, Icon: icon, Title: title,
+			Type: "disk", Level: level, Icon: iconForLevel(level), Title: title,
 			Message: msg, Timestamp: now,
 		}
 	}
@@ -348,8 +476,8 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 	st.normalSince = time.Time{}
 	st.lastNotified = now
 	return &notify.Alert{
-		Type: "disk_recovery", Level: notify.LevelSuccess,
-		Icon: "✅", Title: "ストレージ復旧",
+		Type: "disk_recovery", Level: notify.LevelSuccess, Icon: iconForLevel(notify.LevelSuccess),
+		Title: "ストレージ復旧",
 		Message: fmt.Sprintf(
 			"ストレージの空き容量が回復しました。（現在: 空き %s / %.1f%%）",
 			formatStorage(freeBytes), freePct,
@@ -359,10 +487,20 @@ func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) 
 }
 
 // ============================================================
-// CPU温度
+// CPU temperature
 // ============================================================
+// minValidCPUTemp distinguishes a missing sensor (0) from a real low value.
+// Values at or below this are treated as unavailable.
+const minValidCPUTemp = 25.0
+
 func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
-	if tempC <= 25 {
+	if tempC <= minValidCPUTemp {
+		// The sensor is unavailable (0) or reports an implausible low value.
+		// Clear any fired state so a later recovery does not get stuck.
+		st := e.getState("cpu_temp")
+		st.startedAt = time.Time{}
+		st.normalSince = time.Time{}
+		st.firedLevel = ""
 		return nil
 	}
 
@@ -379,11 +517,9 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 		st.normalSince = time.Time{}
 
 		level := notify.LevelWarning
-		icon := "⚠️"
 		title := "CPU温度警告"
 		if isCritical {
 			level = notify.LevelCritical
-			icon = "🌡️"
 			title = "CPU温度異常"
 		}
 
@@ -395,12 +531,12 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 
 		var msg string
 		if isCritical {
-			msg = fmt.Sprintf("CPU温度が%.1f度になっています！（現在: %.1f°C）至急確認してください。", tempC, tempC)
+			msg = fmt.Sprintf("CPU温度が%.1f°Cになっています！至急確認してください。", tempC)
 		} else {
-			msg = fmt.Sprintf("CPU温度が%.1f度に達しました。（現在: %.1f°C）", tempC, tempC)
+			msg = fmt.Sprintf("CPU温度が%.1f°Cに達しました。", tempC)
 		}
 		return &notify.Alert{
-			Type: "cpu_temp", Level: level, Icon: icon, Title: title,
+			Type: "cpu_temp", Level: level, Icon: iconForLevel(level), Title: title,
 			Message: msg, Timestamp: now,
 		}
 	}
@@ -426,15 +562,15 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 	st.normalSince = time.Time{}
 	st.lastNotified = now
 	return &notify.Alert{
-		Type: "cpu_temp_recovery", Level: notify.LevelSuccess,
-		Icon: "✅", Title: "CPU温度復旧",
+		Type: "cpu_temp_recovery", Level: notify.LevelSuccess, Icon: iconForLevel(notify.LevelSuccess),
+		Title:     "CPU温度復旧",
 		Message:   fmt.Sprintf("CPU温度が正常範囲に戻りました。（現在: %.1f°C）", tempC),
 		Timestamp: now,
 	}
 }
 
 // ============================================================
-// ディスクS.M.A.R.T 健康状態
+// Disk S.M.A.R.T health
 // ============================================================
 func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.Alert {
 	var badDisks []string
@@ -462,11 +598,11 @@ func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.
 		if len(badDisks) == 1 {
 			msg = fmt.Sprintf("ディスク（%s）に異常が発生しています。至急確認してください。", badDisks[0])
 		} else {
-			msg = fmt.Sprintf("複数のディスク（%s）に異常が発生しています。至急確認してください。", joinStrings(badDisks, ", "))
+			msg = fmt.Sprintf("複数のディスク（%s）に異常が発生しています。至急確認してください。", strings.Join(badDisks, ", "))
 		}
 		return &notify.Alert{
-			Type: "disk_health", Level: notify.LevelCritical,
-			Icon: "💀", Title: "ディスク異常",
+			Type: "disk_health", Level: notify.LevelCritical, Icon: "💀",
+			Title:   "ディスク異常",
 			Message: msg, Timestamp: now,
 		}
 	}
@@ -492,15 +628,15 @@ func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.
 	st.normalSince = time.Time{}
 	st.lastNotified = now
 	return &notify.Alert{
-		Type: "disk_health_recovery", Level: notify.LevelSuccess,
-		Icon: "✅", Title: "ディスク復旧",
+		Type: "disk_health_recovery", Level: notify.LevelSuccess, Icon: iconForLevel(notify.LevelSuccess),
+		Title:     "ディスク復旧",
 		Message:   "ディスクの異常が解消されました。",
 		Timestamp: now,
 	}
 }
 
 // ============================================================
-// ヘルパー
+// Helpers
 // ============================================================
 func (e *Engine) getState(key string) *metricState {
 	st, ok := e.states[key]
@@ -512,21 +648,17 @@ func (e *Engine) getState(key string) *metricState {
 }
 
 func formatStorage(b uint64) string {
-	const GB = uint64(1024 * 1024 * 1024)
+	const MB = uint64(1024 * 1024)
+	const GB = MB * 1024
 	const TB = GB * 1024
-	if b >= TB {
+	switch {
+	case b >= TB:
 		return fmt.Sprintf("%.2f TB", float64(b)/float64(TB))
+	case b >= GB:
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
+	default:
+		// A nearly full disk is exactly when the alert matters, so show MB
+		// instead of a rounded-to-zero GB value (e.g. "0.4 GB").
+		return fmt.Sprintf("%.0f MB", float64(b)/float64(MB))
 	}
-	return fmt.Sprintf("%.1f GB", float64(b)/float64(GB))
-}
-
-func joinStrings(list []string, sep string) string {
-	if len(list) == 0 {
-		return ""
-	}
-	out := list[0]
-	for _, s := range list[1:] {
-		out += sep + s
-	}
-	return out
 }

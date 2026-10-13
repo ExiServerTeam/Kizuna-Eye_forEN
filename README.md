@@ -18,11 +18,16 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 - **Disk S.M.A.R.T**: Monitor disk health status and temperature
 - **Network Bandwidth**: Real-time throughput metrics
 - **Cron-style Scheduler**: Flexible execution scheduling for plugins
+- **Metrics History**: In-memory trend chart for CPU / memory / disk (last ~1 hour)
+- **Persistent Alert History**: Alert records are saved to disk and survive restarts
+- **Runtime Alert Thresholds**: Change alert thresholds from the UI without restarting
+- **Lightweight & self-contained**: No external dependencies; intended for use within a trusted network / VPN
+- **Log Rotation**: Size-based rotation keeps log files bounded
 
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/dashboard_dark.png.png" alt="Kizuna-Eye Dashboard Dark Mode" width="600">
+  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye Dashboard Dark Mode" width="600">
   <br>
   <em>Real-time System Monitoring Dashboard (Dark Mode)</em>
 </p>
@@ -31,13 +36,13 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 
 | Dashboard (Dark) | Dashboard (Light) |
 | :---: | :---: |
-| <img src="docs/images/dashboard_dark.png.png" width="350" alt="Dashboard Dark Mode"> | <img src="docs/images/dashboard_light.png.png" width="350" alt="Dashboard Light Mode"> |
+| <img src="docs/images/dashboard_dark.png" width="350" alt="Dashboard Dark Mode"> | <img src="docs/images/dashboard_light.png" width="350" alt="Dashboard Light Mode"> |
 
 ### Module Management
 
 | Module Management (Dark) | Module Management (Light) |
 | :---: | :---: |
-| <img src="docs/images/module_management_dark.png.png" width="350" alt="Module Management Dark Mode"> | <img src="docs/images/module_management.png.png" width="350" alt="Module Management Light Mode"> |
+| <img src="docs/images/module_management_dark.png" width="350" alt="Module Management Dark Mode"> | <img src="docs/images/module_management.png" width="350" alt="Module Management Light Mode"> |
 
 ## Architecture
 
@@ -63,29 +68,39 @@ The Agent and Dashboard communicate over WebSocket. Plugins are loaded as `.so` 
 ```bash
 git clone https://github.com/sy815twty-spec/Kizuna-Eye.git
 cd Kizuna-Eye
-2. Download dependencies
-bash
+```
+
+### 2. Download dependencies
+
+```bash
 go mod download
-3. Build
-bash
+```
+
+### 3. Build
+
+```bash
 ./build.sh
+```
+
 Executing build.sh builds and outputs the following binaries to /opt/kizuna-eye/bin/:
 
-agent_linux
+- agent_linux
+- dashboard_linux
+- plugin-inspect
 
-dashboard_linux
+### 4. Prepare Configuration Files
 
-plugin-inspect
-
-4. Prepare Configuration Files
-bash
+```bash
 cp dashboard_config.example.json dashboard_config.json
 cp agent_config.example.json agent_config.json
 cp modules.json.example modules.json
+```
+
 Edit each file as needed to fit your environment settings.
 
-5. Launch
-bash
+### 5. Launch
+
+```bash
 ./start.sh
 Open your browser and navigate to http://<server-ip>:8080.
 
@@ -97,11 +112,14 @@ json
     "log_file": "dashboard.log",
     "static_dir": "./web/static",
     "plugins_dir": "/opt/kizuna-eye/bin/plugins",
+    "plugins_upload_enabled": false,
+    "alert_history_file": "logs/alert_history.jsonl",
     "notifications": {
         "enabled": true,
         "agent_timeout_sec": 30,
         "hold_sec": 5,
         "cooldown_sec": 300,
+        "recovery_hold_sec": 30,
         "memory_warn_pct": 70,
         "memory_critical_pct": 85,
         "disk_free_warn_pct": 20,

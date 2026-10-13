@@ -2,31 +2,38 @@ package notify
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/logger"
 )
 
+// maxConcurrentSends bounds the number of in-flight notification goroutines
+// so an alert storm cannot spawn an unbounded number of them.
+const maxConcurrentSends = 32
+
 // ============================================================
-// Manager は複数チャンネルへの通知を束ねる
+// Manager fans out notifications to multiple channels.
 // ============================================================
 type Manager struct {
 	notifiers []Notifier
 	log       *logger.Logger
 	enabled   bool
+	sem       chan struct{}
 }
 
-// NewManager は Manager を生成する
+// NewManager creates a Manager.
 func NewManager(log *logger.Logger) *Manager {
 	return &Manager{
 		notifiers: make([]Notifier, 0),
 		log:       log,
 		enabled:   true,
+		sem:       make(chan struct{}, maxConcurrentSends),
 	}
 }
 
-// FromConfig は config.NotificationsConfig から Manager を構築する
+// FromConfig builds a Manager from a config.NotificationsConfig.
 func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 	m := NewManager(log)
 
@@ -42,7 +49,9 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 		if !ch.Enabled {
 			continue
 		}
-		switch ch.Type {
+		// Accept "Discord" / " discord " as well as "discord" so a stray
+		// space or capital does not silently drop the channel.
+		switch strings.ToLower(strings.TrimSpace(ch.Type)) {
 		case "discord":
 			m.notifiers = append(m.notifiers, NewDiscordNotifier(ch.WebhookURL))
 			if log != nil {
@@ -58,6 +67,18 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 			if log != nil {
 				log.Info("通知チャンネル登録: line")
 			}
+		case "slack":
+			m.notifiers = append(m.notifiers, NewSlackNotifier(ch.WebhookURL))
+			if log != nil {
+				log.Info("通知チャンネル登録: slack")
+			}
+		case "email":
+			m.notifiers = append(m.notifiers, NewEmailNotifier(
+				ch.SMTPHost, ch.SMTPPort, ch.SMTPUsername, ch.SMTPPassword, ch.EmailFrom, ch.EmailTo,
+			))
+			if log != nil {
+				log.Info("通知チャンネル登録: email")
+			}
 		}
 	}
 
@@ -67,8 +88,11 @@ func FromConfig(cfg config.NotificationsConfig, log *logger.Logger) *Manager {
 	return m
 }
 
-// Notify は全チャンネルに非同期で通知を送る
+// Notify sends the alert to all channels asynchronously.
 func (m *Manager) Notify(a *Alert) {
+	if a == nil {
+		return
+	}
 	if !m.enabled || len(m.notifiers) == 0 {
 		return
 	}
@@ -78,23 +102,33 @@ func (m *Manager) Notify(a *Alert) {
 	}
 
 	for _, n := range m.notifiers {
-		go func(notifier Notifier) {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			if err := notifier.Send(ctx, a); err != nil {
-				if m.log != nil {
-					m.log.Warn("通知失敗 [%s]: %v", notifier.Name(), err)
+		select {
+		case m.sem <- struct{}{}:
+			go func(notifier Notifier) {
+				defer func() { <-m.sem }()
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				if err := notifier.Send(ctx, a); err != nil {
+					if m.log != nil {
+						m.log.Warn("通知失敗 [%s]: %v", notifier.Name(), err)
+					}
+					return
 				}
-				return
-			}
+				if m.log != nil {
+					m.log.Debug("通知成功 [%s]", notifier.Name())
+				}
+			}(n)
+		default:
+			// Saturated: skip this send rather than block the caller or
+			// spawn unbounded goroutines.
 			if m.log != nil {
-				m.log.Debug("通知成功 [%s]", notifier.Name())
+				m.log.Warn("通知の同時実行が上限(%d)のため [%s] への送信をスキップしました", maxConcurrentSends, n.Name())
 			}
-		}(n)
+		}
 	}
 }
 
-// HasChannels は有効なチャンネルが1つ以上あるかを返す
+// HasChannels reports whether at least one channel is enabled.
 func (m *Manager) HasChannels() bool {
 	return m.enabled && len(m.notifiers) > 0
 }
