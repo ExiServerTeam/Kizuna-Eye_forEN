@@ -1,6 +1,8 @@
 // ============================================================
 // Kizuna-Eye - 接続ステータス表示（ダッシュボード以外のページ用）
 // WebSocket の接続状態を #connectionStatus バッジに反映する。
+// Kizuna-Eye - connection status display (for pages other than the dashboard)
+// Reflects the WebSocket connection state onto the #connectionStatus badge.
 // ============================================================
 (function () {
     'use strict';
@@ -56,6 +58,7 @@
 
         socket.addEventListener('error', () => {
             // close イベントで処理するためここでは何もしない
+            // Handled by the close event, so nothing to do here.
         });
     }
 
@@ -73,6 +76,7 @@
         setState('connecting');
         connect();
         // 言語切替時に現在の状態を再描画
+        // Re-render the current state when the language changes.
         window.addEventListener('kizuna-lang-change', () => setState(currentState));
     }
 
