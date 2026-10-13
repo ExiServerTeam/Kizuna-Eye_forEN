@@ -839,6 +839,13 @@
                 ? `<button class="btn-label" data-name="${escapeAttr(mod.name)}" title="${escapeAttr(t('modules.btn_label_title'))}">${t('modules.btn_label')}</button>`
                 : '';
 
+            // 操作ボタン列の「つまみ」は出さない。
+            // 並べ替えはカード本体のドラッグで行える（setupReorder が
+            // つまみの無いカードでは余白ドラッグを許可する）。
+            // つまみを戻したい場合は下の空文字を次のボタンに差し替える:
+            //   `<button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>`
+            const dragHandle = '';
+
             html += `
                 <div class="module-card" data-name="${escapeAttr(mod.name)}">
                     <div class="module-card-header">
@@ -858,7 +865,7 @@
                             ${labelButton}
                             ${editButton}
                             ${deleteButton}
-                            <button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>
+                            ${dragHandle}
                         </div>
                     </div>
                     <div class="module-card-body">
