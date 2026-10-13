@@ -291,10 +291,24 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 
 	// Plugin web UIs are third-party code and are served outside the main
 	// static handler, so apply the same baseline security headers here.
+	// CSP も本体と同水準に揃える: script は 'self' のみ（インライン禁止）、
+	// frame-ancestors 'none' でクリックジャッキングを防ぐ。プラグイン UI は
+	// 自前のリソース（'self'）だけを使う想定で、外部 CDN やインライン script を
+	// 許すと XSS の温床になる。現状 .web を提供するプラグインは無いため、
+	// 付与しても既存動作を壊さない。
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "same-origin")
+	h.Set("Content-Security-Policy",
+		"default-src 'self'; "+
+			"script-src 'self'; "+
+			"style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data:; "+
+			"connect-src 'self'; "+
+			"frame-ancestors 'none'; "+
+			"base-uri 'self'; "+
+			"form-action 'self'")
 
 	http.ServeFile(w, r, realPath)
 }
