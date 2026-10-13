@@ -389,11 +389,12 @@ input, select, textarea {
     .gauge-grid { grid-template-columns: 1fr; }
 }
 
-/* 一番上のカードの「つまみ」は表示しない。ヘッダー直下で目立つためである。
-   並べ替え機能自体は残っており、カード本体をドラッグすれば入れ替えられる。
-   app.js の onDown は、つまみ非表示時にはカード余白からのドラッグを許可する。 */
+/* ゲージカード（CPU/メモリ/ストレージ/稼働時間）もつまみで並べ替えられるよう、
+   つまみを表示する。以前はヘッダー直下で目立つため非表示にしていたが、
+   「カード本体の余白をドラッグ」は気づきにくいため、明示的なつまみを出す。
+   つまみは各カード内の右上（position:absolute）に収まる。 */
 .gauge-grid > .gauge-card > .drag-handle {
-    display: none !important;
+    display: flex;
 }
 
 /* ===== カード ===== */
@@ -420,6 +421,13 @@ input, select, textarea {
     text-transform: none;
     letter-spacing: 0;
     color: var(--text-secondary);
+}
+
+/* ゲージカードのヘッダー右上には並べ替えのつまみ(.drag-handle)が絶対配置される。
+   ヘッダー右端に余白を確保し、タイトルや型番がつまみの下に潜り込まないようにする。
+   （つまみは 28px 幅 + 右上 10px。余白はそれより少し広く取る。） */
+.gauge-card > .gauge-header {
+    padding-right: 36px;
 }
 
 .cpu-model { font-size: 0.66rem; letter-spacing: 0; }

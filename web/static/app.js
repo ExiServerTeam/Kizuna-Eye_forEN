@@ -2187,10 +2187,19 @@
         } catch (e) { order = []; }
         if (!Array.isArray(order) || order.length === 0) return;
 
+        const children = Array.from(container.children);
+        const saved = new Set(order);
+        // If the saved order does not cover every current child (e.g. an
+        // update added a section such as セキュリティ状況), do NOT apply it.
+        // appendChild moves only the matched children to the end, so an
+        // unmatched new child would be left at the FRONT — the new section
+        // would jump above the cards. Falling back to the DOM order keeps the
+        // intended default placement until the user reorders (which then
+        // saves a complete order again).
+        if (!children.every(c => saved.has(cardKey(c)))) return;
+
         const byKey = new Map();
-        Array.from(container.children).forEach(card => byKey.set(cardKey(card), card));
-        // Append in the saved order; anything not in the saved order keeps
-        // its relative position at the end.
+        children.forEach(card => byKey.set(cardKey(card), card));
         order.forEach(key => {
             const card = byKey.get(key);
             if (card) container.appendChild(card);
