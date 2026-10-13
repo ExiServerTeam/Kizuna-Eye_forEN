@@ -2227,7 +2227,15 @@
             handle.className = 'drag-handle';
             handle.textContent = '⣿';
             handle.setAttribute('aria-label', t('card.reorder'));
+            // Stop the click AND the keydown from reaching the card. The card
+            // itself is role="button" with a keydown handler that opens the
+            // process/storage modal on Enter/Space. Only the click was stopped
+            // before, so pressing Enter while the handle was focused bubbled
+            // to the card and opened the modal (the handle is a focusable
+            // <button>). Reordering by keyboard is not supported, so the
+            // handle should simply swallow its key events.
             handle.addEventListener('click', (e) => e.stopPropagation());
+            handle.addEventListener('keydown', (e) => e.stopPropagation());
             item.appendChild(handle);
         });
 
