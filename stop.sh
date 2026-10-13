@@ -108,15 +108,15 @@ case "$WANT" in
     all|dashboard|agent) ;;
     -h|--help)
         echo "usage: $0 [all|dashboard|agent]"
-        echo "  agent が systemd (kizuna-agent) 管理下のときは agent を停止しません。"
-        echo "  agent の停止: sudo systemctl stop kizuna-agent"
+        echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を停止しません。"
+        echo "  agent の停止: sudo systemctl stop kizuna-eye-agent"
         exit 0 ;;
     *)
         echo "usage: $0 [all|dashboard|agent]" >&2
         exit 2 ;;
 esac
 
-# agent が systemd (kizuna-agent.service) の管理下か。
+# agent が systemd (kizuna-eye-agent.service / 旧 kizuna-agent.service) の管理下か。
 #   active : 今まさに systemd が動かしている
 #   enabled: systemd が起動時に立ち上げる（= 手動管理から外れている）
 # どちらの場合もこのスクリプトでは触らない（kill は EPERM、かつ systemd が
@@ -157,8 +157,8 @@ if [ "$WANT" != "dashboard" ]; then
 fi
 
 if [ "$skipped_systemd" -eq 1 ]; then
-    echo "ℹ️  agent は systemd (kizuna-agent) が管理中です。ここからは停止しません:"
-    echo "    sudo systemctl stop kizuna-agent"
+    echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。ここからは停止しません:"
+    echo "    sudo systemctl stop kizuna-eye-agent"
 fi
 if [ "$any_failed" -eq 1 ]; then
     echo "⚠️  Kizuna-Eyeを完全に停止できませんでした（別ユーザー所有のプロセスは kill できません）。"

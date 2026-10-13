@@ -21,6 +21,43 @@ PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-$BIN_DIR/plugins}"
 BACKUP_ROOT="${KIZUNA_BACKUP_DIR:-/var/backups/kizuna-eye}"
 HEALTH_URL="${KIZUNA_HEALTH_URL:-http://127.0.0.1:8080/health}"
 
+# root なら素で、そうでなければ sudo で systemctl を叩く。
+SUDO=""
+if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then SUDO="sudo"; fi
+
+# 再起動に使う systemd unit を検出する（update.sh と同じ優先順）。
+# 見つかれば systemctl restart、無ければ従来どおり stop.sh → start.sh。
+# dashboard と agent は別 unit。両方を検出して再起動する。
+SYSTEMD_UNITS=""
+detect_systemd_units() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    local u found=""
+    for u in kizuna-dashboard kizuna-eye kizuna-eye-agent kizuna-agent; do
+        if $SUDO systemctl is-active --quiet "$u" 2>/dev/null \
+           || $SUDO systemctl is-enabled --quiet "$u" 2>/dev/null; then
+            found="$found $u"
+        fi
+    done
+    [ -n "$found" ] || return 1
+    SYSTEMD_UNITS="$found"
+    return 0
+}
+
+# restart_services: systemd 管理なら restart、手動管理なら stop.sh/start.sh。
+restart_services() {
+    if detect_systemd_units; then
+        echo "▶ systemd 管理下 ($SYSTEMD_UNITS) を再起動..."
+        local u
+        for u in $SYSTEMD_UNITS; do
+            $SUDO systemctl restart "$u"
+        done
+    else
+        echo "▶ 手動管理モード。stop.sh → start.sh で再起動..."
+        ./stop.sh || true
+        ./start.sh || true
+    fi
+}
+
 # update.sh と同じ規則でバックアップ先を解決する（/opt が sudo 所有のときは
 # HOME 配下へ退避）。ここがずれるとロールバック先を見失う。
 if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
@@ -42,10 +79,8 @@ fi
 # 指してしまい、失敗時にさらに古いバイナリへ戻す事故になる。
 LATEST_BACKUP="$(ls -1dt "$BACKUP_ROOT"/*/ 2>/dev/null | head -n1 || true)"
 
-# 再起動
-echo "▶ 再起動..."
-./stop.sh || true
-./start.sh || true
+# 再起動（systemd / 手動を自動判別）
+restart_services || true
 
 # ヘルスチェック（最大30秒待つ）
 echo "▶ ヘルスチェック: $HEALTH_URL"
@@ -84,8 +119,7 @@ if [ -n "$LATEST_BACKUP" ]; then
         mkdir -p "$PLUGIN_OUT_DIR" 2>/dev/null || true
         cp -a "$LATEST_BACKUP/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
     fi
-    ./stop.sh || true
-    ./start.sh || true
+    restart_services || true
     echo "⚠️  前のバージョンへ戻しました。"
 fi
 exit 1

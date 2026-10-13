@@ -46,8 +46,8 @@ case "$WANT" in
     all|dashboard|agent) ;;
     -h|--help)
         echo "usage: $0 [all|dashboard|agent]"
-        echo "  agent が systemd (kizuna-agent) 管理下のときは agent を起動しません。"
-        echo "  agent の再起動: sudo systemctl restart kizuna-agent"
+        echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を起動しません。"
+        echo "  agent の再起動: sudo systemctl restart kizuna-eye-agent"
         exit 0 ;;
     *)
         echo "usage: $0 [all|dashboard|agent]" >&2
@@ -114,7 +114,7 @@ start_one() {
     return 0
 }
 
-# agent が systemd (kizuna-agent.service) の管理下か。
+# agent が systemd (kizuna-eye-agent.service / 旧 kizuna-agent.service) の管理下か。
 #   active : 今まさに systemd が動かしている
 #   enabled: systemd が起動時に立ち上げる（= 手動管理から外れている）
 # どちらの場合も手動起動は二重管理になるため避ける。
@@ -147,8 +147,8 @@ fi
 
 echo ""
 if [ "$skipped_systemd" -eq 1 ]; then
-    echo "ℹ️  agent は systemd (kizuna-agent) が管理中です。手動起動はしません。"
-    echo "    状態: systemctl status kizuna-agent / 再起動: sudo systemctl restart kizuna-agent"
+    echo "ℹ️  agent は systemd (kizuna-eye-agent) が管理中です。手動起動はしません。"
+    echo "    状態: systemctl status kizuna-eye-agent / 再起動: sudo systemctl restart kizuna-eye-agent"
 fi
 if [ "$new_started" -eq 1 ]; then
     echo "✅ Kizuna-Eyeを起動しました。"

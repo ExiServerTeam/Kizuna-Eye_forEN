@@ -17,6 +17,15 @@ cd "$(dirname "${BASH_SOURCE[0]}")" || exit 1
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-/opt/kizuna-eye/bin/plugins}"
+SIGN_BIN="$BIN_DIR/plugin-sign"
+# 署名鍵は「実行ユーザー（SUDO_USER）」のホーム基準で探す。sudo 実行時に
+# $HOME をそのまま使うと /root 配下になり、install.sh が作った鍵を見つけられない。
+RUN_HOME="$HOME"
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
+    RH="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+    [ -n "$RH" ] && RUN_HOME="$RH"
+fi
+SIGNING_KEY="${KIZUNA_SIGNING_KEY:-$RUN_HOME/.kizuna-eye/keys/plugin_signing/plugin_signing.key}"
 LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-/samba/share/Kizuna-Backup/Kizuna-Backup-LITE/plugin}"
 SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-/samba/share/Kizuna-Security/plugin}"
 
@@ -47,10 +56,27 @@ fi
 # systemd 管理下で動いているか。動いていれば stop.sh/start.sh ではなく
 # systemctl restart を使う。そうしないと systemd の管理外でプロセスが
 # 入れ替わり、「status は active なのに実体は別プロセス」という状態になる。
-systemd_active() {
+#
+# H-1 以降は agent 専用ユーザー版の kizuna-eye-agent.service が正。旧
+# kizuna-agent.service / 旧 system service kizuna-eye.service も後方互換で見る。
+# 再起動に使うユニット名は SYSTEMD_UNIT に格納する。
+# dashboard と agent は別 unit。両方を検出して再起動しないと、新バイナリを
+# 配置しても片方が古いまま動き続ける。検出した unit 名は SYSTEMD_UNITS に入れる。
+SYSTEMD_UNITS=""
+detect_systemd_units() {
     command -v systemctl >/dev/null 2>&1 || return 1
-    $SUDO systemctl is-active --quiet kizuna-eye 2>/dev/null
+    local u found=""
+    for u in kizuna-dashboard kizuna-eye-agent kizuna-agent kizuna-eye; do
+        if $SUDO systemctl is-active --quiet "$u" 2>/dev/null \
+           || $SUDO systemctl is-enabled --quiet "$u" 2>/dev/null; then
+            found="$found $u"
+        fi
+    done
+    [ -n "$found" ] || return 1
+    SYSTEMD_UNITS="$found"
+    return 0
 }
+systemd_active() { detect_systemd_units; }
 
 # ---- 0. --install 指定時は不足パッケージを install.sh に委譲して導入 ----
 # （以前は --install を解析するだけで何もしていなかった＝無効なフラグだった）
@@ -151,13 +177,15 @@ fi
 
 # ---- 5. 再ビルド ----
 # Prefer the repo VERSION file (single source of truth), then the git tag.
-VERSION="${VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+# 変数名は KVERSION にする。環境によっては VERSION が別用途で設定されており
+# （例: . /etc/os-release）、その値を拾うと ldflags が壊れてビルドに失敗する。
+KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
+LDFLAGS="-X Kizuna-Eye/internal/api.Version=${KVERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
 
 log ""
-log "▶ 本体（Eye）を再ビルド中... (version=${VERSION})"
+log "▶ 本体（Eye）を再ビルド中... (version=${KVERSION})"
 build_one() { CGO_ENABLED=1 go build -buildvcs=false -ldflags "$LDFLAGS" -o "$BIN_DIR/$1" "$2"; }
 if ! build_one plugin-inspect ./cmd/plugin-inspect \
    || ! build_one dashboard_linux ./cmd/dashboard \
@@ -188,11 +216,27 @@ if [ "$BUILD_PLUGINS" -eq 1 ]; then
     fi
     if ! build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite"; then rollback; err "LITE プラグインビルド失敗。ロールバックしました。"; exit 1; fi
     if ! build_plugin "$SEC_PLUGIN_DIR" "kizuna_security"; then rollback; err "Security プラグインビルド失敗。ロールバックしました。"; exit 1; fi
+
+    # 再ビルドした .so は内容が変わるため、既存の .sig は無効になる。
+    # require_signature=true の環境では署名不一致でプラグインがロードされず
+    # fail-closed で静かに止まるので、ここで必ず再署名する。
+    if [ -x "$SIGN_BIN" ] && [ -r "$SIGNING_KEY" ]; then
+        log "▶ プラグインに再署名中..."
+        if ! "$SIGN_BIN" -sign-all "$PLUGIN_OUT_DIR" -private-key "$SIGNING_KEY" -force; then
+            rollback; err "プラグイン署名失敗。ロールバックしました。"; exit 1
+        fi
+        ok "プラグイン再署名完了"
+    else
+        warn "plugin-sign または署名鍵が見つからないため、プラグイン署名をスキップしました。"
+        warn "  plugin-sign: $SIGN_BIN"
+        warn "  署名鍵:      $SIGNING_KEY (KIZUNA_SIGNING_KEY で上書き可)"
+        warn "  require_signature=true の場合、agent がプラグインをロードできない可能性があります。"
+    fi
 fi
 
 # ---- 6. 再起動 & 生存確認 ----
 # 運用モードに応じて再起動方法を切り替える:
-#   - systemd 管理下 → systemctl restart kizuna-eye
+#   - systemd 管理下 → systemctl restart <検出した unit> (kizuna-eye-agent 等)
 #   - 手動管理       → stop.sh → start.sh
 if [ "$DO_RESTART" -eq 1 ]; then
     log ""
@@ -200,14 +244,19 @@ if [ "$DO_RESTART" -eq 1 ]; then
     if systemd_active; then USE_SYSTEMD=1; fi
 
     restart_manual() { ./stop.sh || true; sleep 1; ./start.sh; }
-    restart_systemd() { $SUDO systemctl restart kizuna-eye; }
+    restart_systemd() {
+        local u
+        for u in $SYSTEMD_UNITS; do
+            $SUDO systemctl restart "$u"
+        done
+    }
     rollback_restart() {
         rollback
-        if [ "$USE_SYSTEMD" -eq 1 ]; then $SUDO systemctl restart kizuna-eye || true; else ./stop.sh || true; ./start.sh || true; fi
+        if [ "$USE_SYSTEMD" -eq 1 ]; then restart_systemd || true; else ./stop.sh || true; ./start.sh || true; fi
     }
 
     if [ "$USE_SYSTEMD" -eq 1 ]; then
-        log "▶ systemd 管理下を検知。systemctl restart で再起動します..."
+        log "▶ systemd 管理下 ($SYSTEMD_UNITS) を検知。systemctl restart で再起動します..."
         if ! restart_systemd; then
             rollback_restart
             err "systemd 再起動に失敗。ロールバックして再起動しました。"; exit 1
@@ -215,7 +264,7 @@ if [ "$DO_RESTART" -eq 1 ]; then
         sleep 3
         if ! systemd_active; then
             rollback_restart
-            err "再起動後 kizuna-eye が active ではありません。ロールバックしました。"; exit 1
+            err "再起動後 $SYSTEMD_UNITS が active ではありません。ロールバックしました。"; exit 1
         fi
     else
         log "▶ 手動管理モード。stop.sh → start.sh で再起動します..."
@@ -233,7 +282,7 @@ if [ "$DO_RESTART" -eq 1 ]; then
 fi
 
 # ---- 7. 完了 ----
-NEW_VERSION="$(git describe --tags --always 2>/dev/null || echo "$VERSION")"
+NEW_VERSION="$(git describe --tags --always 2>/dev/null || echo "$KVERSION")"
 log ""
 log "============================================================"
 ok "アップデート成功"

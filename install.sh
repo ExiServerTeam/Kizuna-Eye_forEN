@@ -8,15 +8,19 @@
 #      (smartmontools rsync git curl build-essential ca-certificates bubblewrap)
 #   3. Go 1.27.1 を確認（無ければ公式導入を案内）
 #   4. ディレクトリ準備（/opt/kizuna-eye/bin{,/plugins}, logs, plugins）
-#   5. 本体をビルド（plugin-inspect → dashboard → agent）
-#   6. プラグイン(.so)をビルド（ソースがあれば）
-#   7. 初回のみ start.sh を自動実行
+#   5. 本体をビルド（plugin-inspect → dashboard → agent → plugin-sign）
+#   6. プラグイン(.so)をビルド＋署名（ソースがあれば / 純正のみ）
+#   7. smartctl / cron / ワンクリック対処の sudoers を導入
+#   8. dashboard と agent を systemd unit として登録（--no-systemd でスキップ）
+#      agent は専用ユーザー kizuna-eye で動かす（H-1 権限分離）
+#   9. systemd 未使用時のみ start.sh を自動実行
 #
 # 使い方:
-#   ./install.sh              # 全部やる
+#   ./install.sh              # 全部やる（systemd 登録込み）
 #   ./install.sh --no-install # パッケージ導入をスキップ
 #   ./install.sh --no-build   # ビルドをスキップ
 #   ./install.sh --no-start   # 起動をスキップ
+#   ./install.sh --no-systemd # systemd 登録をスキップ（start.sh で手動管理）
 #   ./install.sh --force-start # 2回目以降でも起動する
 # ============================================================
 set -u
@@ -33,7 +37,9 @@ DO_BUILD=1
 DO_START=1
 FORCE_START=0
 SETUP_SUDOERS=1
-INSTALL_SYSTEMD=0
+# systemd 登録は既定で行う（install.sh だけで初期セットアップを完結させる）。
+# 手動管理（start.sh / stop.sh）にしたい場合のみ --no-systemd を付ける。
+INSTALL_SYSTEMD=1
 for arg in "$@"; do
     case "$arg" in
         --no-install) DO_INSTALL=0 ;;
@@ -42,7 +48,8 @@ for arg in "$@"; do
         --force-start) FORCE_START=1 ;;
         --no-sudoers) SETUP_SUDOERS=0 ;;
         --systemd)    INSTALL_SYSTEMD=1 ;;
-        -h|--help) echo "使い方: $0 [--no-install] [--no-build] [--no-start] [--force-start] [--no-sudoers] [--systemd]"; exit 0 ;;
+        --no-systemd) INSTALL_SYSTEMD=0 ;;
+        -h|--help) echo "使い方: $0 [--no-install] [--no-build] [--no-start] [--force-start] [--no-sudoers] [--no-systemd]"; exit 0 ;;
         *) echo "不明な引数: $arg"; exit 1 ;;
     esac
 done
@@ -57,12 +64,16 @@ log " Kizuna-Eye セットアップ"
 log "============================================================"
 
 # ---- 1. 前提チェック ----
+# os-release は「必要な値だけ」サブシェルで取り出す。`. /etc/os-release` を
+# 親シェルで実行すると VERSION 等が上書きされ、後段の ldflags が壊れる
+# （Ubuntu では VERSION="26.04.1 LTS ..." のような空白入りの値になる）。
 if [ -r /etc/os-release ]; then
-    . /etc/os-release
-    log "OS: ${PRETTY_NAME:-unknown}"
-    case "${ID:-}" in
+    OS_PRETTY="$( . /etc/os-release 2>/dev/null; printf '%s' "${PRETTY_NAME:-unknown}" )"
+    OS_ID="$( . /etc/os-release 2>/dev/null; printf '%s' "${ID:-}" )"
+    log "OS: ${OS_PRETTY}"
+    case "$OS_ID" in
         ubuntu|debian) : ;;
-        *) warn "Ubuntu/Debian 以外です（${ID:-unknown}）。続行します。" ;;
+        *) warn "Ubuntu/Debian 以外です（${OS_ID:-unknown}）。続行します。" ;;
     esac
 else
     warn "/etc/os-release が読めません。続行します。"
@@ -180,12 +191,13 @@ ok "$BIN_DIR / $PLUGIN_OUT_DIR / logs / plugins"
 
 # ---- 5. 本体ビルド ----
 if [ "$DO_BUILD" -eq 1 ]; then
-    log ""
-    log "▶ 本体をビルド中..."
     # Prefer the repo VERSION file (single source of truth), then the git tag.
-    VERSION="${VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
+    # 変数名は KVERSION にして、環境変数 VERSION（os-release 等）との衝突を避ける。
+    KVERSION="${KIZUNA_VERSION:-$(cat VERSION 2>/dev/null || git describe --tags --always 2>/dev/null || echo v0.7.1)}"
     BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
+    log ""
+    log "▶ 本体をビルド中... (version=${KVERSION})"
+    LDFLAGS="-X Kizuna-Eye/internal/api.Version=${KVERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
     export GOTOOLCHAIN="${GOTOOLCHAIN:-auto}"
     build_one() {
         local out="$1" pkg="$2"
@@ -222,6 +234,42 @@ if [ "$DO_BUILD" -eq 1 ]; then
     log "▶ プラグインをビルド中..."
     build_plugin "$LITE_PLUGIN_DIR" "kizuna_backup_lite" || true
     build_plugin "$SEC_PLUGIN_DIR"  "kizuna_security"    || true
+fi
+
+# ---- 6b. プラグイン署名（純正プラグインのみ） ----
+# require_signature=true の環境では、署名の無い .so はロードされない
+# （fail-closed）。初回追加時に純正プラグインへ署名しておくことで、
+# 「ビルドしたのに .sig を忘れてプラグインが動かない」事故を防ぐ。
+# 再ビルド時の再署名は update.sh が担当する（install.sh では初回に鍵生成 + 既存 .so へ署名。
+# Ed25519 署名は決定的なので -force で再署名しても同じ .so なら同一の .sig になる）。
+# 署名鍵は「実行ユーザー（SUDO_USER）」のホームに置く。sudo 実行時に
+# $HOME をそのまま使うと /root 配下になり、後段の migrate-agent-user.sh が
+# 公開鍵を見つけられない。
+RUN_HOME="$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)"
+[ -n "$RUN_HOME" ] || RUN_HOME="$HOME"
+SIGN_BIN="$BIN_DIR/plugin-sign"
+SIGN_KEY_DIR="$RUN_HOME/.kizuna-eye/keys/plugin_signing"
+SIGN_KEY="$SIGN_KEY_DIR/plugin_signing.key"
+if [ "$DO_BUILD" -eq 1 ] && [ -x "$SIGN_BIN" ]; then
+    log ""
+    log "▶ プラグイン署名（純正）"
+    if [ ! -f "$SIGN_KEY" ]; then
+        log "   署名鍵が無いため生成します: $SIGN_KEY_DIR"
+        if "$SIGN_BIN" -gen-key -key-dir "$SIGN_KEY_DIR"; then
+            ok "署名鍵を生成しました（秘密鍵はオフホスト保管を推奨）"
+        else
+            warn "署名鍵の生成に失敗しました。署名をスキップします。"
+        fi
+    else
+        log "   署名鍵: $SIGN_KEY"
+    fi
+    if [ -f "$SIGN_KEY" ]; then
+        if "$SIGN_BIN" -sign-all "$PLUGIN_OUT_DIR" -private-key "$SIGN_KEY" -force; then
+            ok "純正プラグインに署名しました: $PLUGIN_OUT_DIR"
+        else
+            warn "プラグイン署名に失敗しました（.so が無い場合は無視して構いません）。"
+        fi
+    fi
 fi
 
 # ---- 7. smartctl 用 sudoers（最小権限） ----
@@ -273,7 +321,7 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log "▶ cron 読み取りヘルパーの導入"
     CRON_USER="${SUDO_USER:-$(id -un)}"
     CRON_SUDOERS="/etc/sudoers.d/kizuna-security-cron"
-    if [ -z "$SUDO" ]; then
+    if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため cron ヘルパーの導入をスキップします。手動で:"
         warn "  sudo install -m 0755 -o root -g root $CRON_HELPER_SRC $CRON_HELPER_DST"
         warn "  echo '$CRON_USER ALL=(root) NOPASSWD: $CRON_HELPER_DST \"\"' | sudo tee $CRON_SUDOERS"
@@ -314,7 +362,7 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log "▶ ワンクリック対処ヘルパーの導入"
     ACTION_USER="${SUDO_USER:-$(id -un)}"
     ACTION_SUDOERS="/etc/sudoers.d/kizuna-security-action"
-    if [ -z "$SUDO" ]; then
+    if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため対処ヘルパーの導入をスキップします。手動で:"
         warn "  sudo install -m 0755 -o root -g root $ACTION_HELPER_SRC $ACTION_HELPER_DST"
         warn "  echo '$ACTION_USER ALL=(root) NOPASSWD: $ACTION_HELPER_DST' | sudo tee $ACTION_SUDOERS"
@@ -344,29 +392,77 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     fi
 fi
 
-# ---- 8. systemd 組み込み（任意） ----
-# start.sh/stop.sh は PID ファイルでプロセスを管理する自己完結型なので、
-# systemd を使わなくても動作する。--systemd を付けたときだけ unit を導入。
+# ---- 8. systemd 登録（dashboard + agent / 既定で実施） ----
+# install.sh だけで初期セットアップが完了するよう、dashboard と agent を
+# それぞれ systemd unit として登録する。systemd を使わず手動管理
+# （start.sh / stop.sh）にしたい場合は --no-systemd を付ける。
+#
+#   - agent    : 専用ユーザー kizuna-eye で動かす（H-1 権限分離）。
+#                systemd/migrate-agent-user.sh がユーザー作成・鍵/状態の
+#                引っ越し・権限調整・unit 導入・起動までを一括で行う。
+#   - dashboard: 実行ユーザーのまま kizuna-dashboard.service で管理する。
+#
+# 旧 kizuna-eye.service（start.sh を呼ぶ system service）や旧
+# kizuna-agent.service は二重起動防止のため disable する。
 if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
     log ""
-    log "▶ systemd unit を導入"
+    log "▶ systemd 登録（dashboard + agent）"
     RUN_USER="${SUDO_USER:-$(id -un)}"
-    UNIT_SRC="systemd/kizuna-eye.service"
-    if [ -f "$UNIT_SRC" ] && [ -n "$SUDO" ]; then
-        # Replace BOTH placeholders: __USER__ (run user) and __DIR__ (the
-        # actual repo location). The unit previously hardcoded /samba/share/
-        # Kizuna-Eye, so installing from any other path produced a unit that
-        # pointed at a non-existent directory and the service failed to start.
-        sed -e "s|__USER__|$RUN_USER|g" -e "s|__DIR__|$PWD|g" "$UNIT_SRC" | $SUDO tee /etc/systemd/system/kizuna-eye.service >/dev/null
-        if $SUDO systemctl daemon-reload && $SUDO systemctl enable kizuna-eye; then
-            ok "systemd unit 有効化: kizuna-eye.service (User=$RUN_USER)"
-            DO_START=0   # systemd で起動するため、ここでの start.sh は行わない
-            $SUDO systemctl restart kizuna-eye && ok "systemd で起動しました"
-        else
-            warn "systemd 有効化に失敗しました。手動で: sudo systemctl enable --now kizuna-eye"
-        fi
+    RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+    [ -n "$RUN_HOME" ] || RUN_HOME="$HOME"
+    # dashboard の設定・ログの基準ディレクトリ（H-1 後は ~/.kizuna-eye/data）。
+    if [ -f "$RUN_HOME/.kizuna-eye/data/dashboard_config.json" ]; then
+        DATA_DIR="$RUN_HOME/.kizuna-eye/data"
     else
-        warn "$UNIT_SRC が無い、または sudo 不可のため systemd 導入をスキップします。"
+        DATA_DIR="$PWD"
+    fi
+
+    if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
+        warn "sudo が使えないため systemd 登録をスキップします。手動で: sudo systemd/migrate-agent-user.sh $RUN_USER の後、dashboard unit を導入してください。"
+    else
+        # 1) 旧 unit を disable（二重起動防止）
+        for old in kizuna-eye kizuna-agent; do
+            if $SUDO systemctl is-enabled --quiet "$old" 2>/dev/null; then
+                warn "旧 unit $old を disable（二重起動防止）"
+                $SUDO systemctl disable --now "$old" || true
+            fi
+        done
+
+        # 2) agent を H-1（専用ユーザー）で移行。migrate-agent-user.sh は
+        #    手動プロセス（dashboard 含む）を停止するため、dashboard unit の
+        #    登録・起動より先に実行する。
+        MIGRATE_SCRIPT="systemd/migrate-agent-user.sh"
+        if [ ! -f "$MIGRATE_SCRIPT" ]; then
+            warn "$MIGRATE_SCRIPT が無いため agent の H-1 移行をスキップします。"
+        elif $SUDO "$MIGRATE_SCRIPT" "$RUN_USER"; then
+            ok "agent を専用ユーザー (kizuna-eye) で systemd 管理下に移行しました"
+        else
+            warn "H-1 移行に失敗しました。手動で再実行してください: sudo $MIGRATE_SCRIPT $RUN_USER"
+        fi
+
+        # 3) dashboard unit を導入（__USER__/__DIR__/__BIN__/__DATA__ を置換）
+        DASH_SRC="systemd/kizuna-dashboard.service"
+        DASH_DST="/etc/systemd/system/kizuna-dashboard.service"
+        if [ -f "$DASH_SRC" ]; then
+            sed -e "s|__USER__|$RUN_USER|g" \
+                -e "s|__DIR__|$PWD|g" \
+                -e "s|__BIN__|$BIN_DIR|g" \
+                -e "s|__DATA__|$DATA_DIR|g" \
+                "$DASH_SRC" | $SUDO tee "$DASH_DST" >/dev/null
+            chmod 0644 "$DASH_DST" 2>/dev/null || true
+            ok "dashboard unit 導入: $DASH_DST"
+        else
+            warn "$DASH_SRC が無いため dashboard unit をスキップします。"
+        fi
+
+        # 4) dashboard を systemd で起動（agent は H-1 で起動済み）
+        $SUDO systemctl daemon-reload
+        if $SUDO systemctl enable --now kizuna-dashboard; then
+            ok "dashboard を systemd で起動しました"
+            DO_START=0   # systemd 管理になったため start.sh は使わない
+        else
+            warn "dashboard の systemd 起動に失敗しました。手動で: sudo systemctl enable --now kizuna-dashboard"
+        fi
     fi
 fi
 
@@ -402,5 +498,5 @@ ok "セットアップ完了"
 log "  アクセス: http://${LAN_IP:-<server-ip>}:8080"
 log "  ログ    : logs/dashboard.log, logs/agent.log"
 log "  更新    : ./update.sh  （GitHub から取得→再ビルド→再起動）"
-log "  停止    : ./stop.sh  （systemd 導入時は systemctl stop kizuna-eye）"
+log "  停止    : ./stop.sh  （H-1 導入時: dashboard は ./stop.sh、agent は sudo systemctl stop kizuna-eye-agent）"
 log "============================================================"
