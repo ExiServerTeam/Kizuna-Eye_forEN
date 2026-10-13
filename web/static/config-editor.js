@@ -1,4 +1,5 @@
 // Phase 9-3 / GUI 設定エディタ
+// Phase 9-3 / GUI config editor
 document.addEventListener('DOMContentLoaded', function () {
     'use strict';
 
@@ -26,8 +27,12 @@ document.addEventListener('DOMContentLoaded', function () {
     const guiBody = document.getElementById('guiBody');
     // 保存ボタンはヘッダー上部の #saveBtn（GUI/JSON 用）と、アラートパネル
     // 内の #alertConfigSaveBtn（アラートはヘッダー操作群を隠すため）の2つ。
+    // There are two save buttons: #saveBtn in the header (for GUI/JSON) and
+    // #alertConfigSaveBtn inside the alert panel (the alert panel hides the
+    // header control group).
 
     // アラート閾値エディタ
+    // Alert threshold editor
     const alertConfigPanel = document.getElementById('alertConfigPanel');
     const alertConfigSaveBtn = document.getElementById('alertConfigSaveBtn');
 
@@ -49,6 +54,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
     // 設定タイプ → 画面に出すやさしい名前
+    // Config type -> the friendly name shown on screen.
     const CONFIG_TITLE_KEYS = {
         agent: 'config.file_agent',
         dashboard: 'config.file_dashboard',
@@ -60,9 +66,12 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // スキーマ定義
+    // Schema definition
     // ============================================================
     // ラベル・ヒント・凡例は i18n キーで保持し、描画時に t() で翻訳する。
     // これにより英語 UI でも設定エディタが英語になる。
+    // Labels, hints and legends are kept as i18n keys and translated with t()
+    // at render time, so the config editor is English in an English UI too.
     const AGENT_GROUPS = [
         {
             legendKey: 'config.g.agent.conn',
@@ -107,6 +116,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 // ここを固定 ON にすると、セキュア既定の環境で他の設定を保存した
                 // だけで public_viewer=true が明示書き込みされ、匿名閲覧が
                 // 静かに再有効化される（セキュア既定の後退）。
+                // The unset default depends on config_version (same rule as the
+                // backend).
+                //  - legacy config (no config_version): default ON (as before)
+                //  - new/secure default (config_version>=2): default OFF
+                // Forcing ON here would explicitly write public_viewer=true just
+                // because another setting was saved on a secure-default install,
+                // silently re-enabling anonymous viewing (a regression of the
+                // secure default).
                 { key: 'public_viewer', labelKey: 'config.c.public_viewer', defaultChecked: true, secureDefault: false },
             ],
         },
@@ -140,6 +157,14 @@ document.addEventListener('DOMContentLoaded', function () {
                 { key: 'recovery_hold_sec', labelKey: 'config.f.recovery_hold_sec', type: 'number', min: 0 },
             ],
         },
+        // 注: アラート閾値（memory/disk/cpu_temp）と notify_recovery は、ここでは
+        // 意図的に編集できない。以前はこの GUI と専用アラートパネル
+        // ("/api/alert-config") の両方に現れ、同じ notifications.* キーを書いて
+        // いた。1 つの値に 2 つのエディタ、しかも必要ロールが異なる（このページは
+        // admin、アラートパネルは operator）ため、両者が黙って食い違い得た。
+        // 現在はアラートパネルが唯一のエディタだ。collectGui() は loadedConfig を
+        // コピーし、フォームが実際に描画するキーだけを上書きするため、ここに
+        // 入力欄が無くても保存時に値は保たれる。
         // NOTE: the alert thresholds (memory/disk/cpu_temp) and
         // notify_recovery are deliberately NOT editable here. They used to
         // appear in this GUI *and* in the dedicated alert panel
@@ -153,12 +178,14 @@ document.addEventListener('DOMContentLoaded', function () {
     ];
 
     // 通知チャンネルは Discord のみ対応
+    // Only Discord is supported as a notification channel.
     const CHANNEL_TYPES = {
         discord: { label: 'Discord', fields: [{ key: 'webhook_url', labelKey: 'config.f.webhook_url', type: 'text', placeholder: 'https://discord.com/api/webhooks/...', hintKey: 'config.h.webhook_url' }] },
     };
 
     // ============================================================
     // GUI フォーム生成
+    // GUI form generation
     // ============================================================
     function getByPath(obj, path) {
         return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -236,6 +263,9 @@ document.addEventListener('DOMContentLoaded', function () {
     function buildChannelCard(ch, origIndex) {
         const card = document.createElement('div');
         card.className = 'channel-card';
+        // このカードを元のチャンネルへ戻せるよう、元の位置を覚えておく。
+        // 他のカードが削除された後でも collectGui が対応付けられる。
+        // ユーザーが追加したカードには元の index が無い。
         // Remember the original position so collectGui can map this card back
         // to its source channel even after other cards are removed. A card
         // added by the user has no original index.
@@ -254,6 +284,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // GUI が編集できるのは Discord のみ。既存の他種別
         // (slack/telegram/line/email) は書き換えず、そのまま保持する。
+        // The GUI can edit only Discord. Existing other types
+        // (slack/telegram/line/email) are kept as-is, not rewritten.
         const channelType = ch.type || 'discord';
         const typeLabel = document.createElement('span');
         typeLabel.className = 'channel-type-label';
@@ -262,6 +294,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
         // 編集対象外の種別はフィールドを表示せず、値も保持する。
         // ただし head（有効/無効と種別ラベル）は表示する。
+        // For a non-editable type, do not show fields but keep the values.
+        // The head (enabled toggle and type label) is still shown.
         if (channelType !== 'discord') {
             card.appendChild(head);
             const note = document.createElement('div');
@@ -300,6 +334,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const list = document.createElement('div');
         list.id = 'channelList';
+        // notifications.channels が配列でない不正な設定に備える
+        // （そうでないと throw して GUI 全体が壊れる）。
         // Guard against a malformed config where notifications.channels is not
         // an array (would otherwise throw and break the whole GUI).
         const arr = Array.isArray(channels) ? channels : [];
@@ -351,6 +387,11 @@ document.addEventListener('DOMContentLoaded', function () {
                 // （旧設定）は defaultChecked。バックエンドの LoadDashboardConfig
                 // と同じ規則にして、保存時に明示値として書き戻しても挙動が
                 // 変わらないようにする。
+                // When the key is unset, use the default. The default depends on
+                // config_version: for a secure default (config_version>=2) use
+                // secureDefault, otherwise (legacy) use defaultChecked. This
+                // matches the backend's LoadDashboardConfig so writing the value
+                // back explicitly on save does not change behaviour.
                 let val = getByPath(loadedConfig, path);
                 if (val === undefined || val === null) {
                     const secureCfg = Number(getByPath(loadedConfig, 'config_version') || 0) >= 2;
@@ -370,6 +411,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // パスを辿るときに決して代入してはならないキー。__proto__ / constructor /
+    // prototype への代入は Object.prototype を汚染し得る（プロトタイプ汚染）。
     // Keys that must never be assigned while walking a path. Assigning to
     // __proto__ / constructor / prototype could pollute Object.prototype
     // (prototype pollution).
@@ -394,6 +437,9 @@ document.addEventListener('DOMContentLoaded', function () {
         guiBody.querySelectorAll('input, select').forEach(el => {
             // 通知チャンネル内の入力欄は下の専用処理で収集する。
             // ここで拾うと webhook_url 等が設定直下に漏れてしまう。
+            // Inputs inside notification channels are collected by the
+            // dedicated block below. Picking them up here would leak
+            // webhook_url etc. to the config root.
             if (el.closest('#channelList')) return;
             const key = el.dataset.key;
             if (!key) return;
@@ -411,9 +457,13 @@ document.addEventListener('DOMContentLoaded', function () {
             document.querySelectorAll('#channelList .channel-card').forEach((card) => {
                 // 元の位置は data-orig-index で参照する（カード削除で
                 // 位置がずれても別チャンネルのデータを混同しないため）。
+                // Reference the original position via data-orig-index (so a
+                // card deletion that shifts positions does not mix up another
+                // channel's data).
                 const origIdxRaw = card.dataset.origIndex;
                 const orig = (origIdxRaw !== undefined) ? originalArr[Number(origIdxRaw)] : undefined;
                 // 非 Discord チャンネルは編集対象外。元の値をそのまま残す。
+                // Non-Discord channels are not editable; keep the original value.
                 if (orig && orig.type && orig.type !== 'discord') {
                     channels.push(orig);
                     return;
@@ -425,6 +475,9 @@ document.addEventListener('DOMContentLoaded', function () {
                 });
                 // 種別は Discord 固定（UI 上も選択式ではない）。
                 // 保存時に type を落とすと通知チャンネルが復元されなくなる。
+                // The type is fixed to Discord (not a selector in the UI).
+                // Dropping the type on save would make the channel
+                // unrestorable.
                 ch.type = 'discord';
                 card.querySelectorAll('[data-key]').forEach(el => {
                     const f = el.dataset.key;
@@ -439,6 +492,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function saveGui() {
+        // collectGui() は（予期しない DOM 状態で）throw し得る。try 内に保ち、
+        // 失敗しても黙って終わらずエラートーストが出るようにする。
         // collectGui() can throw (unexpected DOM state). Keep it inside try so
         // a failure still produces an error toast instead of a silent failure.
         try {
@@ -461,6 +516,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // GUI フォームの変更は「離脱時保存」の対象として記録するだけ。
+    // GUI form changes are only recorded as candidates for the save-on-leave.
     if (guiBody) {
         guiBody.addEventListener('input', markDirty);
         guiBody.addEventListener('change', markDirty);
@@ -468,6 +524,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // モード切替
+    // Mode switching
     // ============================================================
     function updateModeButtons() {
         modeGuiBtn.classList.toggle('active', currentMode === 'gui');
@@ -479,6 +536,11 @@ document.addEventListener('DOMContentLoaded', function () {
     //   - ひな形挿入 : JSON モード専用（JSON テキストを置き換えるため）
     //   - フォーマット / 検証 : JSON モード専用（JSON テキストへの操作）
     // GUI モードでは JSON 専用ボタンを隠し、操作を分かりやすくする。
+    // Show/hide the toolbar buttons per mode.
+    //   - Save            : all modes (always visible)
+    //   - Insert template : JSON mode only (replaces the JSON text)
+    //   - Format / Validate: JSON mode only (operate on the JSON text)
+    // In GUI mode the JSON-only buttons are hidden to keep the actions clear.
     function applyActionVisibility() {
         const isAlerts = currentConfigType === 'alerts';
         const showJsonActions = !isAlerts && currentMode === 'json';
@@ -489,15 +551,21 @@ document.addEventListener('DOMContentLoaded', function () {
         set(formatBtn, showJsonActions);
         set(validateBtn, showJsonActions);
         // 履歴はエージェント/ダッシュボード設定でのみ表示（アラートは対象外）。
+        // History is shown only for agent/dashboard configs (not for alerts).
         set(historyBtn, !isAlerts);
         // 保存ボタンは常に表示する（GUI/JSON どちらの保存手段。アラート時は
         // editorActions 全体が隠れるため、ここで個別に触る必要はない）。
+        // The save button is always visible (a save path for both GUI and
+        // JSON; in alert mode the whole editorActions is hidden, so no need
+        // to touch it individually here).
     }
 
     function applyMode() {
         const isAlerts = currentConfigType === 'alerts';
         // アラートは専用パネルなので GUI/JSON 切替を隠す。操作ボタン群は
         // applyActionVisibility が出し分けを担当する。
+        // Alerts use a dedicated panel, so hide the GUI/JSON switcher. The
+        // action buttons are shown/hidden by applyActionVisibility.
         if (editorMode) editorMode.style.display = isAlerts ? 'none' : 'inline-flex';
         if (editorActions) editorActions.style.display = isAlerts ? 'none' : 'flex';
 
@@ -520,6 +588,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // パネル表示切替
+    // Panel visibility switching
     // ============================================================
     function setPanels(opts) {
         const editorBody = document.querySelector('.editor-body');
@@ -534,6 +603,7 @@ document.addEventListener('DOMContentLoaded', function () {
         setPanels({ alerts: true });
         editorTitle.textContent = t('config.alerts_title');
         // アラートは専用パネルなので JSON 専用ボタンを隠す。
+        // The alert panel is dedicated, so hide the JSON-only buttons.
         applyActionVisibility();
         loadAlertConfig();
     }
@@ -552,6 +622,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // テーマ
+    // Theme
     // ============================================================
     function getTheme() {
         return document.documentElement.getAttribute('data-theme') || 'dark';
@@ -560,10 +631,13 @@ document.addEventListener('DOMContentLoaded', function () {
         document.documentElement.setAttribute('data-theme', theme);
         // localStorage はプライベートモード等で例外を投げる。失敗しても
         // DOMContentLoaded ハンドラ全体を止めないよう握りつぶす。
+        // localStorage can throw (private mode, etc.). Swallow the failure so
+        // it does not stop the whole DOMContentLoaded handler.
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
         const themeIcon = document.getElementById('themeIcon');
         const themeLabel = document.getElementById('themeLabel');
         // アイコンは CSS が data-theme に応じて出し分ける（SVG）。触らない。
+        // The icon is toggled by CSS based on data-theme (SVG). Do not touch it.
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
@@ -583,6 +657,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // 設定ファイル切替
+    // Config file switching
     // ============================================================
     fileBtns.forEach(btn => {
         btn.addEventListener('click', () => {
@@ -591,6 +666,7 @@ document.addEventListener('DOMContentLoaded', function () {
             currentConfigType = btn.dataset.type;
             if (currentConfigType === 'alerts') {
                 // 専用パネル（アラート）は applyMode 経由で表示する。
+                // The dedicated alert panel is shown via applyMode.
                 applyMode();
             } else {
                 loadConfig(currentConfigType);
@@ -600,6 +676,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // アラート設定
+    // Alert settings
     // ============================================================
     async function loadAlertConfig() {
         try {
@@ -618,6 +695,8 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
+    // numVal はキーで数値入力を読み、要素が無ければ 0 を返す
+    // （防御的: 変わった DOM がここで throw しないように）。
     // numVal reads a numeric input by key, returning 0 when the element is
     // missing (defensive: a changed DOM must not throw here).
     function numVal(key) {
@@ -626,6 +705,8 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // アラート閾値の入力値を集める。保存と離脱時保存の両方で使う。
+    // Collect the alert threshold inputs. Used by both the save and the
+    // save-on-leave.
     function collectAlertPayload() {
         return {
             memory_warn_pct: numVal('acMemWarn'),
@@ -660,6 +741,7 @@ document.addEventListener('DOMContentLoaded', function () {
         alertConfigSaveBtn.addEventListener('click', () => guardedSave(saveAlertConfig));
     }
     // アラートの入力変更は「離脱時保存」の対象として記録するだけ。
+    // Alert input changes are only recorded as candidates for save-on-leave.
     if (alertConfigPanel) {
         alertConfigPanel.addEventListener('input', markDirty);
         alertConfigPanel.addEventListener('change', markDirty);
@@ -668,6 +750,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // JSON エディタ
+    // JSON editor
     // ============================================================
     async function loadConfig(type) {
         try {
@@ -724,6 +807,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 body: configEditor.value,
             });
             if (!response.ok) {
+                // サーバーの検証メッセージ（例: プレースホルダ webhook）を
+                // 素のステータステキストではなく表に出す。
                 // Surface the server's validation message (e.g. a placeholder
                 // webhook) instead of the bare status text.
                 const err = await response.json().catch(() => ({}));
@@ -757,19 +842,27 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // ============================================================
     // 保存（手動 + 離脱時）
+    // Save (manual + on leave)
     // ============================================================
     // 入力のたびに自動保存すると、編集中の途中状態が何度も保存されて
     // 意図しない値が確定してしまう。そこで自動保存は「ページを離れる
     // 瞬間」にだけ行い、通常は保存ボタン / Ctrl+S で明示的に保存する。
     // 離脱時は fetch の keepalive でページ遷移後も送信を継続させる。
+    // Auto-saving on every keystroke would persist half-finished edits many
+    // times and lock in unintended values. So the auto-save runs only "at the
+    // moment of leaving the page"; normally the user saves explicitly with
+    // the save button / Ctrl+S. On leave, fetch keepalive continues the send
+    // after navigation.
     let saving = false;
     let saveQueued = false;
     // dirty は「保存していない変更があるか」。離脱時に保存するかの判断に使う。
+    // dirty means "there are unsaved changes", used to decide the save-on-leave.
     let dirty = false;
     function markDirty() { dirty = true; }
 
     function setSavingLabel(on) {
         // フッターの文字数表示の隣に「保存中… / 自動保存済み」を出す（任意）。
+        // Show "saving... / auto-saved" next to the footer char count (optional).
         if (!validationStatus) return;
         const st = validationStatus.querySelector('.status-text');
         if (!st) return;
@@ -786,6 +879,11 @@ document.addEventListener('DOMContentLoaded', function () {
     // async にしてはいけない: 呼び出し側は `guardedSave(currentSaveFn())` と
     // 書いており、async だと Promise が fn に渡って `fn is not a function`
     // になる（ここは関数を「返す」だけで、実行は guardedSave が行う）。
+    // Choose the save function for the current config type.
+    // It must NOT be async: callers write `guardedSave(currentSaveFn())`, and
+    // an async version would pass a Promise as fn and fail with
+    // `fn is not a function` (this only *returns* the function; guardedSave
+    // runs it).
     function currentSaveFn() {
         if (currentConfigType === 'alerts') return saveAlertConfig;
         if (currentMode === 'gui') return saveGui;
@@ -793,6 +891,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // 離脱時に保存すべき内容（URL と本文）を組み立てる。保存不可なら null。
+    // Build what to save on leave (URL and body). null when unsavable.
     function buildLeaveSave() {
         const type = currentConfigType;
         if (type === 'alerts') {
@@ -802,6 +901,7 @@ document.addEventListener('DOMContentLoaded', function () {
             return { url: `/api/config/${type}`, body: JSON.stringify(collectGui()) };
         }
         // JSON モード: 構文が壊れているときは送らない。
+        // JSON mode: do not send when the syntax is broken.
         try { JSON.parse(configEditor.value); } catch (e) { return null; }
         return { url: `/api/config/${type}`, body: configEditor.value };
     }
@@ -809,6 +909,10 @@ document.addEventListener('DOMContentLoaded', function () {
     // saveOnLeave はページ離脱の瞬間にだけ保存する。fetch の keepalive を
     // 使うと、ページがアンロードされた後もリクエストが送信される。
     // （sendBeacon は POST のみで PUT の API に使えないため fetch を使う。）
+    // saveOnLeave saves only at the moment of leaving the page. fetch
+    // keepalive keeps the request going even after the page is unloaded.
+    // (sendBeacon is POST-only and cannot be used for the PUT API, so fetch
+    // is used.)
     function saveOnLeave() {
         if (!dirty || saving) return;
         const req = buildLeaveSave();
@@ -821,13 +925,18 @@ document.addEventListener('DOMContentLoaded', function () {
                 keepalive: true,
             });
             dirty = false;
-        } catch (e) { /* 離脱時は失敗しても通知できない */ }
+        } catch (e) { /* 離脱時は失敗しても通知できない / cannot notify on failure while leaving */ }
     }
 
     // pagehide はアンロード/バックフォワードキャッシュ退避の両方で発火し、
     // beforeunload より確実（モバイル Safari では beforeunload が来ない）。
     // visibilitychange(hidden) はタブ切替・アプリ切替でも保存でき、離脱前に
     // 確実に走る最後の砦。両方から呼ぶが dirty フラグで二重送信を防ぐ。
+    // pagehide fires on both unload and bfcache eviction and is more reliable
+    // than beforeunload (mobile Safari does not fire beforeunload).
+    // visibilitychange(hidden) also saves on tab/app switch, the last line of
+    // defense that reliably runs before leaving. Both call it, but the dirty
+    // flag prevents a double send.
     window.addEventListener('pagehide', saveOnLeave);
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') saveOnLeave();
@@ -835,6 +944,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
     // guardedSave は保存の多重実行を防ぐ。手動保存は saving 中でも予約して
     // 最後に1回実行される（入力の取りこぼしを防ぐ）。
+    // guardedSave prevents concurrent saves. A manual save during saving is
+    // queued and runs once at the end (to avoid losing input).
     async function guardedSave(fn, silent) {
         if (saving) { saveQueued = true; return; }
         saving = true;
@@ -842,6 +953,9 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             await fn();
         } catch (err) {
+            // 安全網: 保存関数が黙って失敗してはならない。各保存関数は自前の
+            // トーストを出すが、ここでの予期しない throw（例: DOM 問題）も
+            // 可視化する必要がある。
             // Safety net: a save function must not fail silently. Each save
             // function already shows its own toast, but an unexpected throw
             // here (e.g. a DOM issue) still needs to be visible.
@@ -853,17 +967,23 @@ document.addEventListener('DOMContentLoaded', function () {
             if (saveQueued) {
                 saveQueued = false;
                 // 予約分を1回だけ実行（無限ループ防止のため直接呼ぶ）。
-                try { await fn(); } catch (e) { /* 各 save 関数は内部で通知する */ }
+                // Run the queued call once (called directly to avoid an
+                // infinite loop).
+                try { await fn(); } catch (e) { /* 各 save 関数は内部で通知する / each save fn notifies internally */ }
             }
         }
     }
 
     // ============================================================
     // 設定の履歴（スナップショット / タイムトラベル）
+    // Config history (snapshots / time travel)
     // ============================================================
     // サーバーは保存のたびに直前の内容を snapshots/ に退避している。
     // 履歴ボタンで一覧を出し、任意の時点に復元できる。
     // アラート（alerts）は /api/config の対象外なので履歴は出さない。
+    // The server stashes the previous content into snapshots/ on every save.
+    // The history button lists them and allows restoring any point in time.
+    // Alerts are outside /api/config, so no history is shown for them.
     function historyAvailable() {
         return currentConfigType === 'agent' || currentConfigType === 'dashboard';
     }
@@ -963,6 +1083,7 @@ document.addEventListener('DOMContentLoaded', function () {
             showToast(t('config.restored'), 'success');
             closeHistoryModal();
             // 復元後の内容を読み直す。
+            // Re-read the content after the restore.
             if (currentConfigType !== 'alerts') loadConfig(currentConfigType);
         } catch (err) {
             showToast(t('config.restore_failed') + ': ' + (err && err.message ? err.message : err), 'error');
@@ -982,11 +1103,14 @@ document.addEventListener('DOMContentLoaded', function () {
         if (!container) return;
         // 連打などで同じ内容のトーストが積み上がらないよう、既存の同一トーストは
         // 先に消してから出し直す。
+        // So rapid repeats do not stack identical toasts, remove an existing
+        // toast with the same content before showing it again.
         const key = type + '\u0000' + message;
         Array.from(container.children).forEach((c) => {
             if (c.dataset.toastKey === key) c.remove();
         });
         // 表示は最大 MAX_TOASTS 件まで。あふれた分は古い順に消す。
+        // At most MAX_TOASTS shown; overflow removes the oldest first.
         const MAX_TOASTS = 4;
         while (container.children.length >= MAX_TOASTS) {
             container.removeChild(container.firstChild);
@@ -1000,6 +1124,7 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ひな形挿入（JSON モード用）
+    // Insert template (for JSON mode)
     async function insertTemplate() {
         if (configEditor.value.trim() !== '' && !window.confirm(t('config.confirm_replace'))) return;
         let template = null;
@@ -1022,6 +1147,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (validateBtn) validateBtn.addEventListener('click', validateJSON);
     if (saveBtn) saveBtn.addEventListener('click', () => guardedSave(currentSaveFn()));
     // 履歴ボタンはアラート以外でのみ有効。
+    // The history button is enabled only outside alerts.
     if (historyBtn) {
         historyBtn.addEventListener('click', () => {
             if (!historyAvailable()) {
@@ -1036,10 +1162,13 @@ document.addEventListener('DOMContentLoaded', function () {
         try { JSON.parse(configEditor.value); updateValidationStatus(true); }
         catch (error) { updateValidationStatus(false); }
         // 変更を記録するだけ（実際の保存は保存ボタン / Ctrl+S / 離脱時）。
+        // Only record the change (the actual save is via the save button /
+        // Ctrl+S / on leave).
         markDirty();
     });
 
     // Ctrl/Cmd+S はグローバルに効かせる（エディタ外にフォーカスがあっても保存）。
+    // Ctrl/Cmd+S works globally (saves even when focus is outside the editor).
     document.addEventListener('keydown', (e) => {
         if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
             e.preventDefault();
@@ -1060,6 +1189,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
 
     // 初期読み込み
+    // Initial load
     updateModeButtons();
     loadConfig(currentConfigType);
 });
