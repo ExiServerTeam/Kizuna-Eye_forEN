@@ -4,7 +4,7 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 
 **English** | [日本語](README.ja.md)
 
-**Kizuna-Eye** is a lightweight server monitoring tool written in Go, specifically designed for low-spec servers. With a total memory footprint of only **~30–50 MB** for the dashboard and agent combined, it runs smoothly on single-board computers like a Raspberry Pi or older PC hardware.
+**Kizuna-Eye** is a lightweight server monitoring tool written in Go, specifically designed for low-spec servers. With a total memory footprint of only **~30–50 MB** for the dashboard and agent combined, it runs smoothly on single-board computers and other small machines.
 
 ## Features
 
@@ -314,7 +314,9 @@ Optionally implement `DisplayName()` to show a friendly name in the UI badge; ot
 
 ### Example plugin
 
-Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project). It lives in its own repository, so `install.sh` / `update.sh` skip it by default; set `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` when running them to build and deploy it together with the bundled Security plugin.
+Kizuna-Backup LITE: archive / sync modes, rsync-over-SSH transfer, SHA-256 verification (separate project). It lives in its own repository, so `install.sh` / `update.sh` skip it by default; set `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` when running them to build and deploy it.
+
+Kizuna-Security: the security-monitoring plugin (FIM, cron, SSH, firewall enforcement, ...). **It is not bundled with Kizuna-Eye either** — it lives in its own repository (`Kizuna-Security/plugin`). Pass `KIZUNA_SEC_PLUGIN_DIR=/path/to/Kizuna-Security/plugin` to `install.sh` / `update.sh` / `build-all.sh` to build and deploy it. When the env var is unset, the plugin is simply skipped (no Security plugin is installed).
 
 ## Documentation
 

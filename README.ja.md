@@ -4,7 +4,7 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 
 [English](README.md) | **日本語**
 
-**Kizuna-Eye** は、低スペックサーバー向けに設計された、Go製の軽量サーバー監視ツールです。ダッシュボードとエージェントの合計メモリ使用量は **約30〜50MB** で、Raspberry Pi や古いPCでも快適に動作します。
+**Kizuna-Eye** は、低スペックサーバー向けに設計された、Go製の軽量サーバー監視ツールです。ダッシュボードとエージェントの合計メモリ使用量は **約30〜50MB** で、シングルボードコンピュータや小型マシン、古いPCでも快適に動作します。
 
 ## 特徴
 
@@ -331,7 +331,9 @@ Webダッシュボードの「モジュール管理」タブから `.so` をア�
 
 ### プラグインの例
 
-Kizuna-Backup LITE: アーカイブ / 同期モード、SSH経由のrsync転送、SHA-256検証を備えたバックアッププラグイン（別プロジェクト）。独立したリポジトリにあるため `install.sh` / `update.sh` は既定では対象にしません。一緒にビルド・配置する場合は `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` を付けて実行してください（同梱の Security プラグインは常にビルド対象です）。
+Kizuna-Backup LITE: アーカイブ / 同期モード、SSH経由のrsync転送、SHA-256検証を備えたバックアッププラグイン（別プロジェクト）。独立したリポジトリにあるため `install.sh` / `update.sh` は既定では対象にしません。一緒にビルド・配置する場合は `KIZUNA_LITE_PLUGIN_DIR=/path/to/Kizuna-Backup-LITE/plugin` を付けて実行してください。
+
+Kizuna-Security: セキュリティ監視プラグイン（FIM / cron / SSH / ファイアウォール enforcement など）。**これも Kizuna-Eye には同梱されません**（独立リポジトリ `Kizuna-Security/plugin`）。ビルド・配置するには `KIZUNA_SEC_PLUGIN_DIR=/path/to/Kizuna-Security/plugin` を `install.sh` / `update.sh` / `build-all.sh` に渡してください。環境変数を指定しない場合、このプラグインは単にスキップされます（Security プラグインは導入されません）。
 
 ## ドキュメント
 
