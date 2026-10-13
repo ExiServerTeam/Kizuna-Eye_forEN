@@ -204,6 +204,25 @@ grep -E 'ベースライン署名の検証に失敗' logs/agent.log | tail -2   
 注: 鍵ID を行に持たせる改修（監査 F-4 の推奨）は未実装のため、**旧鍵で署名した区間は新鍵では
 検証できない**。退避した `.legacy-<ts>` と retired 鍵をセットで保管し、必要時に旧鍵で検証する。
 
+### 3-4 実施記録（2026-10-03 17:52 実施済み／sudo 不要で完結）
+
+`/opt/kizuna-eye/data` は未作成だったため、retired 鍵の退避先を**共有外のホーム**にして実施:
+
+| 項目 | 値 |
+|---|---|
+| 旧鍵 sha256 | `308a341888227bebccbb1fabf283c65e509ec0203797b1408b1c5a949c527e10` |
+| 新鍵 sha256 | `21def4e5230c901f02b8c458b24dbaf3acecbe84526b1439d9bb8bfed3ecf8f7` |
+| 旧鍵の退避先 | `~/.kizuna-eye/keys/chain.key.20261003_175242`（600） |
+| 記録 | `~/.kizuna-eye/keys/OLD-key.sha256` / `NEW-key.sha256`（600） |
+| 旧チェーン | `logs/kizuna-security.log.legacy-20261003_175243`（2.49MB、自動退避） |
+| FIM | `logs/kizuna-security-fim.json` を 17:52 に再作成（想定どおり critical 1 件） |
+| 事後 | 両プロセス稼働・再認証 OK（`Agent 認証済み接続` 110→111）・`log_chain_broken` 0 件 |
+
+**注意**: この時点で新鍵はまだ**共有上の `keys/chain.key`（ゲスト書込可）**にある。攻撃者が読める限り
+ローテーションの効果は限定的なので、§1（SMB 是正）＋ §2（秘密移行）で鍵を共有外へ移した後に
+**もう一度 §3 を実施**するのが望ましい（移行後は `/opt/kizuna-eye/data/keys/chain.key` を対象に、
+retired は §3-1 の `/opt/.../keys/retired` へ）。
+
 ---
 
 ## 4. 実施順序と注意
