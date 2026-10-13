@@ -94,6 +94,31 @@ func TestWebUIThirdPartyAssetCSP(t *testing.T) {
 	}
 }
 
+// fail-closed: a .web dir with NO readable meta.json must be treated as
+// third-party (sandboxed), so a dropped meta.json cannot serve an
+// unsandboxed UI that can call the dashboard API.
+func TestWebUINoMetaIsSandboxed(t *testing.T) {
+	dir := t.TempDir()
+	webDir := filepath.Join(dir, "kizuna_nometa.web")
+	if err := os.MkdirAll(webDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(webDir, "index.html"), []byte("<html>x</html>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Intentionally no <name>.meta.json.
+	p := &PluginManager{pluginsDir: dir}
+
+	rec := httptest.NewRecorder()
+	p.handleWebUI(rec, webUIRequest("kizuna_nometa", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "<iframe") {
+		t.Fatalf("missing meta must fall back to the sandbox wrapper: %s", rec.Body.String())
+	}
+}
+
 // An official plugin's web UI is served directly (no sandbox wrapper) and its
 // CSP allows scripts from 'self' only.
 func TestWebUIOfficialDirect(t *testing.T) {

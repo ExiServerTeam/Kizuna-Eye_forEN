@@ -251,7 +251,8 @@ func (p *PluginManager) handleWebUI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	thirdParty := p.isThirdPartyPlugin(name)
+	// 純正と証明できたときだけ直接配信する。それ以外はサンドボックス。
+	thirdParty := !p.isOfficialPlugin(name)
 
 	// Resolve the path after /plugins/{name}/.
 	rel := strings.TrimPrefix(r.URL.Path, "/plugins/"+name+"/")
@@ -369,12 +370,14 @@ func (p *PluginManager) serveSandboxWrapper(w http.ResponseWriter, name string) 
 	_, _ = io.WriteString(w, page)
 }
 
-// isThirdPartyPlugin reports whether a plugin's meta.json records
-// origin=third_party (an operator-confirmed unsigned plugin). A missing or
-// unreadable meta is treated as NOT third-party: the authoritative signature
-// decision is made by the agent at load time, and this is only used to decide
-// the sandbox wrapper.
-func (p *PluginManager) isThirdPartyPlugin(name string) bool {
+// isOfficialPlugin reports whether a plugin's meta.json proves origin=official.
+//
+// fail-closed: 純正であると「証明できた」ときだけ true を返す。meta.json が
+// 無い・読めない・origin が空/third_party のいずれの場合も false とし、
+// サンドボックス（third-party 扱い）で配信する。逆にすると、meta を欠落
+// させただけでサードパーティ UI がサンドボックス無しで直接配信され、
+// 本体 API を叩けてしまう（設計書 5.4 違反）。
+func (p *PluginManager) isOfficialPlugin(name string) bool {
 	data, err := os.ReadFile(filepath.Join(p.pluginsDir, name+".meta.json"))
 	if err != nil {
 		return false
@@ -383,7 +386,7 @@ func (p *PluginManager) isThirdPartyPlugin(name string) bool {
 	if json.Unmarshal(data, &m) != nil {
 		return false
 	}
-	return m.Origin == "third_party"
+	return m.Origin == "official"
 }
 
 // fileExists reports whether path exists (any type).
