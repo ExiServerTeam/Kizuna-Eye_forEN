@@ -102,12 +102,23 @@ stop_one() {
     return 1
 }
 
+# --purge / --uninstall: 完全削除は uninstall.sh に委譲する。
+# 「stop.sh で一式を撤去したい」ための入口。残りの引数（--yes / --dry-run）は
+# そのまま uninstall.sh に渡す。
+case "${1:-}" in
+    --purge|--uninstall)
+        shift
+        exec ./uninstall.sh --purge "$@"
+        ;;
+esac
+
 # 停止対象（all | dashboard | agent）。既定は all（従来どおり）。
 WANT="${1:-all}"
 case "$WANT" in
     all|dashboard|agent) ;;
     -h|--help)
         echo "usage: $0 [all|dashboard|agent]"
+        echo "       $0 --purge [--yes|--dry-run]   # 完全削除 (uninstall.sh --purge)"
         echo "  agent が systemd (kizuna-eye-agent) 管理下のときは agent を停止しません。"
         echo "  agent の停止: sudo systemctl stop kizuna-eye-agent"
         exit 0 ;;

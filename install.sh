@@ -37,11 +37,21 @@ DO_BUILD=1
 DO_START=1
 FORCE_START=0
 SETUP_SUDOERS=1
+# UI の既定言語（ja | en）。--lang / KIZUNA_LANG で指定、未指定は en。
+# 新規作成した dashboard_config.json の "language" に書き込む。
+# LANG_SET=1 は「明示指定あり」。対話プロンプトを出すかどうかの判定に使う。
+UI_LANG="${KIZUNA_LANG:-en}"
+LANG_SET=0
+[ -n "${KIZUNA_LANG:-}" ] && LANG_SET=1
 # systemd 登録は既定で行う（install.sh だけで初期セットアップを完結させる）。
 # 手動管理（start.sh / stop.sh）にしたい場合のみ --no-systemd を付ける。
 INSTALL_SYSTEMD=1
-for arg in "$@"; do
-    case "$arg" in
+# 起動をスキップした理由（ログ表示用）。--no-start と systemd 起動済みを区別する。
+SKIP_START_REASON=""
+# while ループで解析する（for ループだと --lang ja のように値を別引数で
+# 取るオプションで shift が効かず、'ja' が不明な引数になって失敗する）。
+while [ $# -gt 0 ]; do
+    case "$1" in
         --no-install) DO_INSTALL=0 ;;
         --no-build)   DO_BUILD=0 ;;
         --no-start)   DO_START=0 ;;
@@ -49,19 +59,59 @@ for arg in "$@"; do
         --no-sudoers) SETUP_SUDOERS=0 ;;
         --systemd)    INSTALL_SYSTEMD=1 ;;
         --no-systemd) INSTALL_SYSTEMD=0 ;;
-        -h|--help) echo "使い方: $0 [--no-install] [--no-build] [--no-start] [--force-start] [--no-sudoers] [--no-systemd]"; exit 0 ;;
-        *) echo "不明な引数: $arg"; exit 1 ;;
+        --lang) shift; UI_LANG="${1:-en}"; LANG_SET=1 ;;
+        --lang=*) UI_LANG="${1#--lang=}"; LANG_SET=1 ;;
+        -h|--help) echo "使い方: $0 [--no-install] [--no-build] [--no-start] [--force-start] [--no-sudoers] [--no-systemd] [--lang ja|en]"; exit 0 ;;
+        *) echo "不明な引数: $1"; exit 1 ;;
     esac
+    shift
 done
+# 未知の言語は en にフォールバック（入力が無い/不正なら規定 EN）。
+case "$UI_LANG" in
+    ja|en) ;;
+    *) warn "言語 '$UI_LANG' は未対応のため en を使用します（対応: ja / en）"; UI_LANG="en" ;;
+esac
 
-log()  { echo "$*"; }
+# ログ表示。"▶ 見出し" の行は手順として自動採番し、区切り線で囲む。
+# 誰が見ても「今どの手順をやっているか」が分かるようにする。
+STEP_NO=0
+log() {
+    case "${1:-}" in
+        "▶ "*)
+            STEP_NO=$((STEP_NO+1))
+            echo "──────────────────────────────────────────────────"
+            echo " 【手順 ${STEP_NO}】${1#▶ }"
+            echo "──────────────────────────────────────────────────"
+            ;;
+        *) echo "$*" ;;
+    esac
+}
 warn() { echo "⚠️  $*"; }
 err()  { echo "❌ $*"; }
 ok()   { echo "✅ $*"; }
 
-log "============================================================"
-log " Kizuna-Eye セットアップ"
-log "============================================================"
+echo ""
+echo "╔══════════════════════════════════════════════════╗"
+echo "║          Kizuna-Eye セットアップ                  ║"
+echo "╚══════════════════════════════════════════════════╝"
+
+# ---- 0. 言語の選択（対話時のみ） ----
+# --lang / KIZUNA_LANG で明示されていればそれを尊重する。未指定で対話端末
+# （TTY）なら EN / JA を尋ねる。パイプ・自動化（非対話）では尋ねず既定 EN。
+if [ "$LANG_SET" -eq 0 ] && [ -t 0 ]; then
+    echo ""
+    echo "Select UI language / UI 言語を選択してください:"
+    echo "  1) English (default)"
+    echo "  2) 日本語"
+    printf "Choice [1/2] (default: 1): "
+    read -r lang_choice || lang_choice=""
+    case "$lang_choice" in
+        2|ja|JA|japanese|Japanese|日本語) UI_LANG="ja" ;;
+        1|en|EN|english|English|"") UI_LANG="en" ;;
+        *) warn "不明な選択 '$lang_choice' のため English (en) を使用します"; UI_LANG="en" ;;
+    esac
+    log "   言語: $UI_LANG"
+fi
 
 # ---- 1. 前提チェック ----
 # os-release は「必要な値だけ」サブシェルで取り出す。`. /etc/os-release` を
@@ -105,15 +155,17 @@ if [ "$PM" = "apt" ]; then
     # to inspect an uploaded .so. Without it inspection fails closed
     # (plugins.inspect_isolation="bwrap"), so it is a real dependency rather
     # than an optional nicety.
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:build-essential" "bwrap:bubblewrap" )
+    # python3 は H-1 移行 (migrate-agent-user.sh) が agent_config.json /
+    # modules.json を JSON として安全に書き換えるのに使う必須ツール。
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:build-essential" "bwrap:bubblewrap" "python3:python3" )
     EXTRA_PKGS=( "ca-certificates" )
 elif [ "$PM" = "pacman" ]; then
     # A-3: bubblewrap (bwrap) は .so 検査の隔離に必須（詳細は apt 側のコメント参照）。
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:base-devel" "bwrap:bubblewrap" )
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:base-devel" "bwrap:bubblewrap" "python3:python" )
     EXTRA_PKGS=()
 else
     # A-3: bubblewrap (bwrap) は .so 検査の隔離に必須（詳細は apt 側のコメント参照）。
-    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:gcc" "bwrap:bubblewrap" )
+    REQUIRED=( "smartctl:smartmontools" "rsync:rsync" "git:git" "curl:curl" "gcc:gcc" "bwrap:bubblewrap" "python3:python3" )
     EXTRA_PKGS=( "ca-certificates" )
 fi
 
@@ -272,6 +324,82 @@ if [ "$DO_BUILD" -eq 1 ] && [ -x "$SIGN_BIN" ]; then
     fi
 fi
 
+# ---- 6c. 設定ファイルの初期化（example から実設定を作る） ----
+# install.sh 一本で初期セットアップを完結させるため、初回は example をコピーして
+# 実設定を作る。purge 後の再インストールでは設定が無く、これが無いと H-1 移行
+# (migrate-agent-user.sh) が $HOME/.kizuna-eye/data 不在で失敗し、agent が
+# systemd に登録されず dashboard だけが動く（メモリ等が 0% のまま）。
+RUN_USER="${SUDO_USER:-$(id -un)}"
+RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+[ -n "$RUN_HOME" ] || RUN_HOME="$HOME"
+KIZUNA_DATA="$RUN_HOME/.kizuna-eye/data"
+log ""
+log "▶ 設定ファイルの初期化"
+mkdir -p "$KIZUNA_DATA"
+# example のファイル名は一定でない（dashboard_config.example.json /
+# agent_config.example.json）。base:example の組で明示する。
+#
+# modules.json は作らない: モジュールは UI（モジュール管理）から追加するもので、
+# 初回インストールでは存在しないのが正しい状態（無ければ「モジュール無し」と
+# して扱われる）。example をコピーすると未設定のバックアップ等が有効になり、
+# 空ファイルを作っても初回からモジュールの話が出てしまう。
+CREATED_DASHBOARD=0
+for pair in \
+    "dashboard_config:dashboard_config.example.json" \
+    "agent_config:agent_config.example.json"; do
+    base="${pair%%:*}"
+    ex="${pair##*:}"
+    src="$PWD/$ex"
+    dst="$KIZUNA_DATA/${base}.json"
+    if [ ! -f "$src" ]; then
+        warn "example が見つかりません: $src"
+    elif [ -f "$dst" ]; then
+        log "   既存: $dst"
+    else
+        cp "$src" "$dst"
+        ok "作成: $dst"
+        [ "$base" = "dashboard_config" ] && CREATED_DASHBOARD=1
+    fi
+done
+
+# 新規作成時のみ認証を有効化する（セキュア既定）。example は「簡単優先」で
+# auth.enabled=false のため、そのままだと初回にログイン画面が出ず、管理者
+# アカウントを作る導線（/setup）に到達できない。既存設定は尊重して触らない。
+# secure_cookies は HTTP 直アクセスでログインできなくなるため false のまま
+# （HTTPS/リバースプロキシ運用時のみ true にする）。
+if [ "$CREATED_DASHBOARD" -eq 1 ]; then
+    DCFG="$KIZUNA_DATA/dashboard_config.json"
+    sed -i '/"auth": {/,/}/ { s/"enabled": false/"enabled": true/; s/"public_viewer": true/"public_viewer": false/; }' "$DCFG"
+    ok "認証を有効化: auth.enabled=true / public_viewer=false"
+    log "   初回アクセス時に /setup で管理者アカウントを作成してください"
+    # UI の既定言語を書き込む（--lang / KIZUNA_LANG、未指定は en）。
+    if grep -q '"language"' "$DCFG" 2>/dev/null; then
+        sed -i -E "s/\"language\"[[:space:]]*:[[:space:]]*\"[^\"]*\"/\"language\": \"$UI_LANG\"/" "$DCFG"
+    elif grep -q '"listen_addr"' "$DCFG" 2>/dev/null; then
+        # language キーが無ければ listen_addr の行の後に挿入する。
+        sed -i -E "s|(\"listen_addr\"[[:space:]]*:[[:space:]]*\"[^\"]*\",)|\1\n    \"language\": \"$UI_LANG\",|" "$DCFG"
+    fi
+    if grep -q "\"language\": \"$UI_LANG\"" "$DCFG" 2>/dev/null; then
+        ok "既定言語を設定: language=$UI_LANG"
+    else
+        warn "language の書き込みを確認できませんでした（dashboard_config.json を確認してください）"
+    fi
+fi
+# agent_token を両設定に同じランダム値で入れる（CHANGE_ME のままにしない）。
+# auth を有効化したときに agent が弾かれないようにする。
+TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+for f in "$KIZUNA_DATA/dashboard_config.json" "$KIZUNA_DATA/agent_config.json"; do
+    [ -f "$f" ] || continue
+    if grep -q 'CHANGE_ME_TO_A_LONG_RANDOM_STRING' "$f" 2>/dev/null; then
+        sed -i "s/CHANGE_ME_TO_A_LONG_RANDOM_STRING/$TOKEN/" "$f"
+        ok "agent_token を生成: $(basename "$f")"
+    fi
+done
+# .kizuna-eye 全体を実行ユーザー所有にする（sudo 実行で root 所有になり、
+# dashboard/agent が書けなくなるのを防ぐ。署名鍵もここで一緒に直る）。
+chown -R "$RUN_USER:$RUN_USER" "$RUN_HOME/.kizuna-eye" 2>/dev/null || true
+log "   所有者: $(stat -c '%U:%G' "$RUN_HOME/.kizuna-eye") (data: $KIZUNA_DATA)"
+
 # ---- 7. smartctl 用 sudoers（最小権限） ----
 # agent を非 root で動かしつつ S.M.A.R.T を取得するため、smartctl だけに
 # NOPASSWD を与える。agent 側は `sudo -n smartctl` を試し、失敗時は素の
@@ -420,6 +548,26 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
     if [ -z "$SUDO" ] && [ "$(id -u)" -ne 0 ]; then
         warn "sudo が使えないため systemd 登録をスキップします。手動で: sudo systemd/migrate-agent-user.sh $RUN_USER の後、dashboard unit を導入してください。"
     else
+        # 既インストール判定: agent の systemd unit があり、専用ユーザーが
+        # 存在すれば移行済み。この場合は migrate-agent-user.sh を再実行しない。
+        # 再実行すると「バックアップ → 停止 → 権限再調整 → 再起動」が毎回走り、
+        # install.sh を叩くたびにサービスが落ちる（再インストールになってしまう）。
+        ALREADY_INSTALLED=0
+        if [ -f /etc/systemd/system/kizuna-eye-agent.service ] \
+           && id "kizuna-eye" >/dev/null 2>&1; then
+            ALREADY_INSTALLED=1
+        fi
+
+        # agent バイナリを kizuna-eye から実行できるようにする。ビルドのたびに
+        # 所有者/グループが実行ユーザーへ戻るため、ALREADY_INSTALLED で
+        # migrate-agent-user.sh（§3.5）をスキップしても毎回ここで適用する。
+        # 漏れると agent が 203/EXEC (Permission denied) で起動不能になる。
+        AGENT_BIN="$BIN_DIR/agent_linux"
+        if [ -f "$AGENT_BIN" ] && id "kizuna-eye" >/dev/null 2>&1; then
+            $SUDO chgrp kizuna-eye "$AGENT_BIN" 2>/dev/null || true
+            $SUDO chmod 0750 "$AGENT_BIN" 2>/dev/null || true
+        fi
+
         # 1) 旧 unit を disable（二重起動防止）
         for old in kizuna-eye kizuna-agent; do
             if $SUDO systemctl is-enabled --quiet "$old" 2>/dev/null; then
@@ -428,11 +576,12 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
             fi
         done
 
-        # 2) agent を H-1（専用ユーザー）で移行。migrate-agent-user.sh は
-        #    手動プロセス（dashboard 含む）を停止するため、dashboard unit の
-        #    登録・起動より先に実行する。
         MIGRATE_SCRIPT="systemd/migrate-agent-user.sh"
-        if [ ! -f "$MIGRATE_SCRIPT" ]; then
+        if [ "$ALREADY_INSTALLED" -eq 1 ]; then
+            # 2a) 移行済み: 破壊的な再移行はせず、agent を再起動して新バイナリを
+            #     反映するだけにする。
+            log "   ℹ️ agent は移行済み（$MIGRATE_SCRIPT をスキップ、再起動のみ）"
+        elif [ ! -f "$MIGRATE_SCRIPT" ]; then
             warn "$MIGRATE_SCRIPT が無いため agent の H-1 移行をスキップします。"
         elif $SUDO "$MIGRATE_SCRIPT" "$RUN_USER"; then
             ok "agent を専用ユーザー (kizuna-eye) で systemd 管理下に移行しました"
@@ -455,13 +604,24 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
             warn "$DASH_SRC が無いため dashboard unit をスキップします。"
         fi
 
-        # 4) dashboard を systemd で起動（agent は H-1 で起動済み）
+        # 4) systemd で起動/再起動（agent は移行時に起動済み）
         $SUDO systemctl daemon-reload
-        if $SUDO systemctl enable --now kizuna-dashboard; then
-            ok "dashboard を systemd で起動しました"
+        $SUDO systemctl enable kizuna-dashboard >/dev/null 2>&1 || true
+        if $SUDO systemctl restart kizuna-dashboard; then
+            ok "dashboard を systemd で起動/再起動しました"
             DO_START=0   # systemd 管理になったため start.sh は使わない
+            SKIP_START_REASON="systemd で起動済み（dashboard + agent）"
         else
             warn "dashboard の systemd 起動に失敗しました。手動で: sudo systemctl enable --now kizuna-dashboard"
+        fi
+        # 移行済みの場合、agent も再起動して新バイナリを反映する（停止は伴わない）。
+        if [ "$ALREADY_INSTALLED" -eq 1 ]; then
+            # start-limit-hit（再起動の繰り返しで failed）だと restart が弾かれる
+            # ため、先に failed 状態を解除してから再起動する。
+            $SUDO systemctl reset-failed kizuna-eye-agent 2>/dev/null || true
+            $SUDO systemctl restart kizuna-eye-agent 2>/dev/null \
+                && ok "agent を再起動しました" \
+                || warn "agent の再起動に失敗しました: sudo systemctl restart kizuna-eye-agent"
         fi
     fi
 fi
@@ -487,16 +647,28 @@ if [ "$DO_START" -eq 1 ]; then
         fi
     fi
 else
-    log "ℹ️  起動をスキップしました（--no-start）"
+    if [ -n "$SKIP_START_REASON" ]; then
+        log "ℹ️  起動をスキップしました（$SKIP_START_REASON）"
+    else
+        log "ℹ️  起動をスキップしました（--no-start）"
+    fi
 fi
 
 # ---- 10. 完了 ----
 LAN_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
 log ""
-log "============================================================"
-ok "セットアップ完了"
-log "  アクセス: http://${LAN_IP:-<server-ip>}:8080"
-log "  ログ    : logs/dashboard.log, logs/agent.log"
-log "  更新    : ./update.sh  （GitHub から取得→再ビルド→再起動）"
-log "  停止    : ./stop.sh  （H-1 導入時: dashboard は ./stop.sh、agent は sudo systemctl stop kizuna-eye-agent）"
-log "============================================================"
+echo "╔══════════════════════════════════════════════════╗"
+echo "║            ✅ セットアップ完了                    ║"
+echo "╚══════════════════════════════════════════════════╝"
+log ""
+log "  アクセス        : http://${LAN_IP:-<server-ip>}:8080"
+log ""
+log "  ── はじめにお読みください ──────────────────────"
+log "  ブラウザで上記の URL にアクセスし、管理者アカウントを作成してください。"
+log "  （初回は自動でセットアップ画面 /setup が開きます）"
+log "  UI 言語         : ${UI_LANG}（右上のボタンで JA / EN を切り替え可）"
+log "  ログ            : logs/dashboard.log, logs/agent.log"
+log "  更新            : ./update.sh  （GitHub から取得→再ビルド→再起動）"
+log "  停止            : ./stop.sh  （H-1 導入時: agent は sudo systemctl stop kizuna-eye-agent）"
+log "  アンインストール: ./uninstall.sh  （データ温存 / 完全削除は --purge）"
+log ""

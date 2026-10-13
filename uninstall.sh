@@ -55,7 +55,19 @@ for arg in "$@"; do
     esac
 done
 
-log()  { echo "$*"; }
+# ログ表示。"▶ 見出し" の行は手順として自動採番し、区切り線で囲む。
+STEP_NO=0
+log() {
+    case "${1:-}" in
+        "▶ "*)
+            STEP_NO=$((STEP_NO+1))
+            echo "──────────────────────────────────────────────────"
+            echo " 【手順 ${STEP_NO}】${1#▶ }"
+            echo "──────────────────────────────────────────────────"
+            ;;
+        *) echo "$*" ;;
+    esac
+}
 warn() { echo "⚠️  $*"; }
 err()  { echo "❌ $*"; }
 ok()   { echo "✅ $*"; }
@@ -79,11 +91,12 @@ RUN_USER="${SUDO_USER:-$(id -un)}"
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
 [ -n "$RUN_HOME" ] || RUN_HOME="$HOME"
 
-log "============================================================"
-log " Kizuna-Eye アンインストール"
+echo ""
+echo "╔══════════════════════════════════════════════════╗"
+echo "║          Kizuna-Eye アンインストール              ║"
+echo "╚══════════════════════════════════════════════════╝"
 if [ "$PURGE" -eq 1 ]; then log " モード: 完全削除（--purge）"; else log " モード: データ温存"; fi
 [ "$DRY_RUN" -eq 1 ] && log " (dry-run: 変更しません)"
-log "============================================================"
 
 # ---- 確認 ----
 if [ "$ASSUME_YES" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
@@ -100,7 +113,7 @@ fi
 
 # ---- 1. systemd サービス停止 + disable ----
 log ""
-log "▶ 1. systemd サービスを停止・disable"
+log "▶ systemd サービスを停止・disable"
 UNITS="kizuna-eye-agent kizuna-dashboard kizuna-agent kizuna-eye"
 if command -v systemctl >/dev/null 2>&1; then
     for u in $UNITS; do
@@ -116,7 +129,7 @@ fi
 
 # ---- 2. 手動プロセス停止（PID ファイル方式） ----
 log ""
-log "▶ 2. 手動起動プロセスを停止"
+log "▶ 手動起動プロセスを停止"
 if [ -x ./stop.sh ]; then
     if [ "$DRY_RUN" -eq 1 ]; then
         echo "   [dry-run] ./stop.sh"
@@ -127,7 +140,7 @@ fi
 
 # ---- 3. unit ファイル削除 ----
 log ""
-log "▶ 3. unit ファイルを削除"
+log "▶ unit ファイルを削除"
 for u in $UNITS; do
     f="/etc/systemd/system/$u.service"
     if [ -f "$f" ]; then
@@ -141,21 +154,25 @@ fi
 
 # ---- 4. sudoers 削除 ----
 log ""
-log "▶ 4. sudoers 設定を削除"
+log "▶ sudoers 設定を削除"
 for f in /etc/sudoers.d/kizuna-smartctl /etc/sudoers.d/kizuna-security-cron \
          /etc/sudoers.d/kizuna-security-action /etc/sudoers.d/kizuna-cron-verify; do
     if [ -f "$f" ]; then
         log "   削除: $f"
         run rm -f "$f"
-        if [ "$DRY_RUN" -eq 0 ] && command -v visudo >/dev/null 2>&1; then
-            visudo -cf "$f" >/dev/null 2>&1 || true
-        fi
     fi
+done
+# 旧セッションが残した sudoers のバックアップ (*.bak-*) も掃除する。
+# 本体パスだけを消すと、これらの退避ファイルが残り続ける。
+for f in /etc/sudoers.d/kizuna-*.bak-*; do
+    [ -e "$f" ] || continue
+    log "   削除: $f"
+    run rm -f "$f"
 done
 
 # ---- 5. ヘルパー削除 ----
 log ""
-log "▶ 5. ヘルパースクリプトを削除"
+log "▶ ヘルパースクリプトを削除"
 for f in /usr/local/bin/kizuna-cron-read.sh /usr/local/bin/kizuna-action.sh; do
     if [ -f "$f" ]; then
         log "   削除: $f"
@@ -165,7 +182,7 @@ done
 
 # ---- 6. /etc/kizuna-eye（署名公開鍵）削除 ----
 log ""
-log "▶ 6. /etc/kizuna-eye を削除"
+log "▶ /etc/kizuna-eye を削除"
 if [ -d "$ETC_DIR" ]; then
     log "   削除: $ETC_DIR"
     run rm -rf "$ETC_DIR"
@@ -173,7 +190,7 @@ fi
 
 # ---- 7. sysctl 設定削除 ----
 log ""
-log "▶ 7. コアダンプ sysctl 設定を削除"
+log "▶ コアダンプ sysctl 設定を削除"
 if [ -f "$SYSCTL_CONF" ]; then
     log "   削除: $SYSCTL_CONF"
     run rm -f "$SYSCTL_CONF"
@@ -185,7 +202,7 @@ fi
 # ---- 8. --purge: データ・バイナリ・ユーザー削除 ----
 if [ "$PURGE" -eq 1 ]; then
     log ""
-    log "▶ 8. データ・バイナリを削除（--purge）"
+    log "▶ データ・バイナリを削除（--purge）"
 
     if [ -d "$STATE_ROOT" ]; then
         log "   削除: $STATE_ROOT"
@@ -214,7 +231,7 @@ if [ "$PURGE" -eq 1 ]; then
 
     # ユーザー/グループ削除
     log ""
-    log "▶ 9. 専用ユーザー/グループを削除"
+    log "▶ 専用ユーザー/グループを削除"
     if id "$NEW_USER" >/dev/null 2>&1; then
         log "   ユーザー削除: $NEW_USER（ホームごと）"
         run userdel -r "$NEW_USER" 2>/dev/null || run userdel "$NEW_USER" 2>/dev/null || true
@@ -227,14 +244,20 @@ fi
 
 # ---- 完了 ----
 log ""
-log "============================================================"
 if [ "$DRY_RUN" -eq 1 ]; then
-    ok "dry-run 完了（変更していません）"
+    echo "╔══════════════════════════════════════════════════╗"
+    echo "║        ℹ️  dry-run 完了（変更していません）      ║"
+    echo "╚══════════════════════════════════════════════════╝"
 elif [ "$PURGE" -eq 1 ]; then
-    ok "完全アンインストール完了"
+    echo "╔══════════════════════════════════════════════════╗"
+    echo "║        ✅ 完全アンインストール完了               ║"
+    echo "╚══════════════════════════════════════════════════╝"
 else
-    ok "アンインストール完了（データは温存）"
-    log "  再インストール: ./install.sh"
-    log "  データも消す場合: sudo ./uninstall.sh --purge"
+    echo "╔══════════════════════════════════════════════════╗"
+    echo "║        ✅ アンインストール完了（データ温存）     ║"
+    echo "╚══════════════════════════════════════════════════╝"
+    log ""
+    log "  再インストール    : ./install.sh"
+    log "  データも消す場合  : sudo ./uninstall.sh --purge"
 fi
-log "============================================================"
+log ""
