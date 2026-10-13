@@ -17,6 +17,7 @@ import (
 	"Kizuna-Eye/pkg/fsutil"
 )
 
+// Role はユーザーの権限レベルだ。
 // Role is the user permission level.
 type Role string
 
@@ -26,6 +27,7 @@ const (
 	RoleViewer   Role = "viewer"
 )
 
+// rank は比較可能なランクを返す。大きいほど権限が高い。
 // rank returns a comparable rank. Larger means more privilege.
 func (r Role) rank() int {
 	switch r {
@@ -39,27 +41,33 @@ func (r Role) rank() int {
 	return 0
 }
 
+// AtLeast は r が min 以上の権限かを返す。
 // AtLeast reports whether r is at least as privileged as min.
 func (r Role) AtLeast(min Role) bool {
 	return r.rank() >= min.rank()
 }
 
+// Valid は r が既知のロールかを返す。
 // Valid reports whether r is a known role.
 func (r Role) Valid() bool {
 	return r == RoleAdmin || r == RoleOperator || r == RoleViewer
 }
 
+// User は 1 アカウントだ。PasswordHash は API へ決してシリアライズされない。
 // User is one account. PasswordHash is never serialized to the API.
 type User struct {
 	Username     string    `json:"username"`
 	PasswordHash string    `json:"password_hash"`
 	Role         Role      `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Avatar はアバターディレクトリ内のユーザーのアバターのファイル名だ
+	// （アバターが無い場合は空）。
 	// Avatar is the file name of the user's avatar inside the avatar
 	// directory (empty when the user has no avatar).
 	Avatar string `json:"avatar,omitempty"`
 }
 
+// PublicUser はユーザーの API 向けビューだ（ハッシュ無し）。
 // PublicUser is the API-facing view of a user (no hash).
 type PublicUser struct {
 	Username  string    `json:"username"`
@@ -69,18 +77,30 @@ type PublicUser struct {
 }
 
 var (
+	// ErrUserExists は重複ユーザー名の追加時に返される。
 	// ErrUserExists is returned when adding a duplicate username.
 	ErrUserExists = errors.New("username already exists")
+	// ErrLastAdmin は唯一の admin の削除/降格時に返される。
 	// ErrLastAdmin is returned when deleting/demoting the only admin.
 	ErrLastAdmin = errors.New("cannot remove the last admin")
+	// ErrUserNotFound はユーザーが存在しないときに返される。
 	// ErrUserNotFound is returned when a user does not exist.
 	ErrUserNotFound = errors.New("user not found")
+	// ErrStoreCorrupt は users.json が存在するが読めないときに返される。
 	// ErrStoreCorrupt is returned when users.json exists but is unreadable.
 	ErrStoreCorrupt = errors.New("users.json が破損しているため操作できません。管理者が手動で修正してください")
 )
 
 var usernameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
 
+// dummyPasswordHash は、未知ユーザーのログイン試行のタイミングを等しくするために
+// 使う、構文的に「有効な」bcrypt ハッシュだ。きれいにパースされなければならない。
+// bcrypt.CompareHashAndPassword は（高コストな）鍵導出を行う前に不正なハッシュを
+// 拒否するため、"$2a$10$invalid..." のようなプレースホルダはほぼ即座に返り、
+// 攻撃者が応答時間で未知のユーザー名と既知のものを区別できてしまう
+// （ユーザー名列挙）。このハッシュは cost 10 で、ユーザー作成時に使う
+// bcrypt.DefaultCost と同じなので、両経路が同等の仕事をする。それが符号化する値は
+// 無関係だ（結果は破棄される）。
 // dummyPasswordHash is a syntactically VALID bcrypt hash used to equalise the
 // timing of a login attempt for an unknown user. It must parse cleanly:
 // bcrypt.CompareHashAndPassword rejects a malformed hash before doing the
@@ -91,17 +111,22 @@ var usernameRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
 // equivalent work. The value it encodes is irrelevant: the result is discarded.
 const dummyPasswordHash = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 
+// Store はユーザーを保持し、JSON ファイルへ永続化する。
 // Store holds users and persists them to a JSON file.
 type Store struct {
 	mu    sync.RWMutex
 	path  string
 	users map[string]*User
+	// corrupt は users.json が存在するがパースできなかったときに設定される。
+	// その場合 NeedsSetup は true を報告してはならない。そうしないと、
+	// ファイル破損後に誰でも /setup から admin アカウントを再作成できてしまう。
 	// corrupt is set when users.json exists but could not be parsed. In that
 	// case NeedsSetup must NOT report true, otherwise anyone could recreate
 	// an admin account through /setup after the file is damaged.
 	corrupt bool
 }
 
+// NewStore は path に裏打ちされた Store を作る。
 // NewStore creates a Store backed by path.
 func NewStore(path string) *Store {
 	return &Store{
@@ -110,6 +135,7 @@ func NewStore(path string) *Store {
 	}
 }
 
+// Load は users.json を読む。ファイル欠落は空のストアとして扱う。
 // Load reads users.json. A missing file is treated as an empty store.
 func (s *Store) Load() error {
 	s.mu.Lock()
@@ -124,6 +150,8 @@ func (s *Store) Load() error {
 		return err
 	}
 
+	// users.json は bcrypt パスワードハッシュを保持する。読み込み時にモードを
+	// 締め、world-readable で作られたファイルを露出したままにしない。ベストエフォート。
 	// users.json holds bcrypt password hashes; tighten the mode on load so a
 	// file created world-readable is not left exposed. Best-effort.
 	_ = os.Chmod(s.path, 0600)
@@ -136,6 +164,8 @@ func (s *Store) Load() error {
 		return nil
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
+		// ストアを破損としてマークし、セットアップを拒否する。ロードできたもの
+		// （何も無い）は保ち、呼び出し側に警告をログさせる。
 		// Mark the store as corrupt so setup is refused. Keep whatever was
 		// loaded (nothing) and let the caller log a warning.
 		s.corrupt = true
@@ -153,6 +183,7 @@ func (s *Store) Load() error {
 	return nil
 }
 
+// IsCorrupt は users.json のロードが失敗したかを返す。
 // IsCorrupt reports whether users.json failed to load.
 func (s *Store) IsCorrupt() bool {
 	s.mu.RLock()
@@ -160,6 +191,7 @@ func (s *Store) IsCorrupt() bool {
 	return s.corrupt
 }
 
+// saveLocked はユーザーをディスクへアトミックに書く。呼び出し側は s.mu を保持すること。
 // saveLocked writes users to disk atomically. Caller must hold s.mu.
 func (s *Store) saveLocked() error {
 	dir := filepath.Dir(s.path)
@@ -186,9 +218,12 @@ func (s *Store) saveLocked() error {
 
 	// fsutil.WriteFileAtomic: mode を一時ファイルへ適用し、fsync してから
 	// rename する（L-12: 同じ処理が12箇所に重複していた）。
+	// fsutil.WriteFileAtomic: apply the mode to a temp file, fsync, then
+	// rename (L-12: the same logic was duplicated in twelve places).
 	return fsutil.WriteFileAtomic(s.path, data, mode)
 }
 
+// Count はユーザー数を返す。
 // Count returns the number of users.
 func (s *Store) Count() int {
 	s.mu.RLock()
@@ -196,6 +231,10 @@ func (s *Store) Count() int {
 	return len(s.users)
 }
 
+// NeedsSetup は最初の admin を作成すべきかを返す。
+// 破損したストアはセットアップを要さない。破損ファイルの上に admin を再作成すると
+// 権限昇格の経路になる。代わりに運用者が users.json を手で修正または除去する
+// 必要がある。
 // NeedsSetup reports whether the first admin must be created.
 // A corrupt store does NOT need setup: recreating an admin over a damaged
 // file would be a privilege-escalation path. The operator must fix or
@@ -209,6 +248,7 @@ func (s *Store) NeedsSetup() bool {
 	return len(s.users) == 0
 }
 
+// ValidateUsername はユーザー名の形式を検証する。
 // ValidateUsername checks the username format.
 func ValidateUsername(name string) error {
 	if !usernameRe.MatchString(name) {
@@ -217,6 +257,7 @@ func ValidateUsername(name string) error {
 	return nil
 }
 
+// Create は与えられた平文パスワードでユーザーを追加する。
 // Create adds a user with the given plaintext password.
 func (s *Store) Create(username, password string, role Role) (*User, error) {
 	username = strings.TrimSpace(username)
@@ -255,6 +296,8 @@ func (s *Store) Create(username, password string, role Role) (*User, error) {
 		delete(s.users, username)
 		return nil, err
 	}
+	// 生きた *User ではなくコピーを返す。ポインタを保つ呼び出し側は、そうしないと
+	// 書き込みロック下でそれを書く ChangePassword/ChangeRole と競合し得る。
 	// Return a copy, not the live *User: a caller that keeps the pointer
 	// could otherwise race with ChangePassword/ChangeRole writing it under
 	// the write lock.
@@ -262,6 +305,12 @@ func (s *Store) Create(username, password string, role Role) (*User, error) {
 	return &cp, nil
 }
 
+// Authenticate はユーザー名/パスワードの組を検証する。
+//
+// ユーザーの「コピー」を返し、ストアの生きた *User は決して返さない。ハッシュも
+// 読み取りロック保持中に捕捉する。RUnlock 後に u.PasswordHash を読むと、書き込み
+// ロック下で同じフィールドを書く並行の ChangePassword/ChangeRole と競合する
+// （レース検出器が指摘するデータ競合）。
 // Authenticate verifies a username/password pair.
 //
 // It returns a COPY of the user, never the store's live *User. The hash is
@@ -273,6 +322,9 @@ func (s *Store) Authenticate(username, password string) (*User, bool) {
 	u, ok := s.users[username]
 	if !ok {
 		s.mu.RUnlock()
+		// 有効なダミーハッシュと比較し、未知のユーザー名が既知ユーザーの誤った
+		// パスワードと同じコストになるようにする（タイミングベースのユーザー名
+		// 列挙を防ぐ）。
 		// Compare against a valid dummy hash so an unknown username costs the
 		// same as a wrong password for a known user (prevents timing-based
 		// username enumeration).
@@ -289,6 +341,7 @@ func (s *Store) Authenticate(username, password string) (*User, bool) {
 	return &cp, true
 }
 
+// Get は名前でユーザーのコピーを返す。
 // Get returns a copy of a user by name.
 func (s *Store) Get(username string) (*User, bool) {
 	s.mu.RLock()
@@ -301,6 +354,7 @@ func (s *Store) Get(username string) (*User, bool) {
 	return &cp, true
 }
 
+// SetAvatar はユーザーのアバターファイル名を記録する（クリアは空）。
 // SetAvatar records the user's avatar file name (empty to clear).
 func (s *Store) SetAvatar(username, filename string) error {
 	s.mu.Lock()
@@ -318,6 +372,7 @@ func (s *Store) SetAvatar(username, filename string) error {
 	return nil
 }
 
+// AvatarOf はユーザーのアバターファイル名、または "" を返す。
 // AvatarOf returns the avatar file name for a user, or "".
 func (s *Store) AvatarOf(username string) string {
 	s.mu.RLock()
@@ -328,6 +383,7 @@ func (s *Store) AvatarOf(username string) string {
 	return ""
 }
 
+// List は全ユーザーを公開ビューとして返し、名前順にソートする。
 // List returns all users as public views, sorted by name.
 func (s *Store) List() []PublicUser {
 	s.mu.RLock()
@@ -340,6 +396,7 @@ func (s *Store) List() []PublicUser {
 	return out
 }
 
+// adminCountLocked は admin を数える。呼び出し側は s.mu を保持すること。
 // adminCountLocked counts admins. Caller must hold s.mu.
 func (s *Store) adminCountLocked() int {
 	n := 0
@@ -351,6 +408,7 @@ func (s *Store) adminCountLocked() int {
 	return n
 }
 
+// Delete はユーザーを除去し、唯一の admin の除去を拒否する。
 // Delete removes a user, refusing to remove the last admin.
 func (s *Store) Delete(username string) error {
 	s.mu.Lock()
@@ -370,6 +428,7 @@ func (s *Store) Delete(username string) error {
 	return nil
 }
 
+// ChangePassword はユーザーのパスワードを更新する。
 // ChangePassword updates a user's password.
 func (s *Store) ChangePassword(username, password string) error {
 	if len(password) < 8 {
@@ -395,6 +454,7 @@ func (s *Store) ChangePassword(username, password string) error {
 	return nil
 }
 
+// ChangeRole はユーザーのロールを更新し、唯一の admin の降格を拒否する。
 // ChangeRole updates a user's role, refusing to demote the last admin.
 func (s *Store) ChangeRole(username string, role Role) error {
 	if !role.Valid() {
