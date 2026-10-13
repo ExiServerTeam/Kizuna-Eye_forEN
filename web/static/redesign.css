@@ -253,15 +253,16 @@ body {
 
 /* ===== レイアウト ===== */
 .main { gap: 24px; }
+/* カードを大きめに。minmax の下限と gap を上げ、広い画面では 2 列に収まりやすくする。 */
 .gauge-grid {
-    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+    gap: 20px;
 }
 
 /* ===== カード ===== */
 .gauge-card {
     border-radius: var(--radius-lg);
-    padding: 18px 16px 16px;
+    padding: 24px 22px 22px;
     border: 1px solid var(--border-color);
     background: var(--bg-card);
     backdrop-filter: none;
@@ -300,6 +301,79 @@ body {
 .gauge-detail,
 .logo {
     text-shadow: none !important;
+}
+
+/* ============================================================
+   グラデーション全廃（他 CSS の残存分を打ち消す）
+   ============================================================
+   logs.css / config-editor.css / auth.css に linear-gradient が残っており、
+   redesign.css を先に読み込むページではそちらが勝つ。ここで確実に単色へ
+   上書きする（!important は「残存グラデに勝つ」ため）。
+   対象: 見出しバー / ボタン / バッジ / アクティブタブ / 認証カード等。 */
+.logs-header,
+.config-editor-header,
+.auth-card,
+.auth-header,
+.page-header,
+.section-header,
+.btn-primary,
+.primary-btn,
+.save-btn,
+.auth-submit,
+.tab-btn.active,
+.log-tab.active,
+.badge-accent,
+.config-tab.active {
+    background-image: none !important;
+    background: var(--bg-secondary) !important;
+}
+/* アクセントが欲しい要素（主ボタン等）は単色のアクセントに。 */
+.btn-primary,
+.primary-btn,
+.save-btn,
+.auth-submit {
+    background: var(--primary-color) !important;
+    color: #ffffff !important;
+    border-color: var(--primary-color) !important;
+}
+.btn-primary:hover,
+.primary-btn:hover,
+.save-btn:hover,
+.auth-submit:hover {
+    background: var(--primary-hover) !important;
+}
+
+/* ============================================================
+   ロゴ（画像に差し替え可能）
+   ============================================================
+   HTML は <h1 class="logo">Kizuna-Eye</h1> のまま。CSS 変数
+   --logo-image に画像 URL を設定すると、テキストの代わりに画像を表示する。
+
+   使い方（例）: このファイル先頭の :root に
+       --logo-image: url("/logo.svg");
+       --logo-height: 32px;
+   を追加し、画像を web/static に置く。
+   DOM のテキストは残すので alt 代わりになる。 */
+.logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+}
+.logo.has-logo {
+    font-size: 0;
+    color: transparent;
+}
+.logo.has-logo::before {
+    content: "";
+    display: block;
+    height: var(--logo-height, 28px);
+    width: var(--logo-width, auto);
+    aspect-ratio: var(--logo-aspect, 1);
+    background-image: var(--logo-image, none);
+    background-repeat: no-repeat;
+    background-position: left center;
+    background-size: contain;
 }
 
 .temp-badge, .free-badge {
@@ -444,8 +518,8 @@ body {
 
 /* ===== レスポンシブ ===== */
 @media (max-width: 900px) {
-    .gauge-grid { gap: 12px; }
-    .gauge-card { padding: 14px 12px 12px; }
+    .gauge-grid { grid-template-columns: 1fr; gap: 14px; }
+    .gauge-card { padding: 18px 16px 16px; }
     .header { padding: 8px 12px; margin-bottom: 16px; }
 }
 @media (max-width: 600px) {
