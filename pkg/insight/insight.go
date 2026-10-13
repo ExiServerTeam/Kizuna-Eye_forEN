@@ -15,6 +15,7 @@
 //     カテゴリだけで、生のメッセージは返さない。
 //   - pkg/module / pkg/status / pkg/fsutil を変更しない（共有パッケージを
 //     触ると agent と全 .so の同時再ビルドが必要になるため）。
+//
 // Package insight condenses the alert history into a small, stable picture of
 // the recent security situation:
 //
@@ -318,7 +319,8 @@ type CategoryStat struct {
 }
 
 // ---------------------------------------------------------------------------
-// Result
+// Result（解析結果）
+// Result (analysis result)
 // ---------------------------------------------------------------------------
 
 // Result は Analyze が生成するすべてだ。

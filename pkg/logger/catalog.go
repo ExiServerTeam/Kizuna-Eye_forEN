@@ -2,6 +2,12 @@ package logger
 
 import "fmt"
 
+// msg は lang における key のローカライズ文字列を返し、日本語にフォールバックする。
+//
+// *T() ロガーメソッドはこれを ja と en の2回呼び、両方のレンダリングを1つの
+// JSON Lines エントリに格納する。これにより dashboard はログを読み直さずに
+// 言語を切り替えられる。未知のキーはキー自身を返すため、翻訳漏れはログ上で
+// 可視化され、黙って空にはならない。
 // msg returns the localized string for key in lang, falling back to Japanese.
 //
 // The *T() logger methods call this twice (ja and en) and store both
@@ -26,10 +32,14 @@ func msg(lang, key string, args ...interface{}) string {
 	return fmt.Sprintf(s, args...)
 }
 
+// catalog は logger の *T() メソッドが使う ja/en レンダリングを保持する。
+// キーはコンポーネント（agent / dash）ごとにグループ化する。新しいエントリは
+// 両言語で追加する。
 // catalog holds the ja/en renderings used by the logger *T() methods. Keys are
 // grouped by component (agent / dash). Add new entries in both languages.
 var catalog = map[string]map[string]string{
 	"ja": {
+		// --- エージェント ---
 		// --- agent ---
 		"agent.start":                      "エージェント起動 (送信間隔: %.1f秒, 接続先: %s)",
 		"agent.shutdown_signal":            "シャットダウンシグナル受信",
@@ -55,6 +65,7 @@ var catalog = map[string]map[string]string{
 		"agent.dep_missing":                "必要なコマンドが見つかりません: %s（%s で使用）",
 		"agent.dep_missing_list":           "不足ツール: %v — %s",
 
+		// --- ダッシュボード ---
 		// --- dashboard ---
 		"dash.security_alert":            "セキュリティアラート: [%s] %s",
 		"dash.weekly_report_on":          "週次セキュリティレポート: 有効（%d曜 %d時 / 送信先: %s）",
@@ -89,6 +100,7 @@ var catalog = map[string]map[string]string{
 		"dash.server_start":              "サーバー開始: http://%s",
 		"dash.server_stop":               "サーバー停止",
 
+		// --- バッチ1: エージェントの WARN/ERROR/起動 INFO ---
 		// --- batch 1: agent WARN/ERROR/startup INFO ---
 		"agent.autoupdate_on":          "自動更新が有効です。GitHub リポジトリが侵害されると任意コード実行につながります（%s）",
 		"agent.sys_module_cfg_failed":  "システムモジュール設定失敗: %v",
@@ -114,6 +126,7 @@ var catalog = map[string]map[string]string{
 		"agent.backup_json_failed":     "backup_result のJSON化失敗: %v",
 		"agent.backup_send_failed":     "backup_result の送信失敗: %v",
 
+		// --- バッチ1: ダッシュボードの WARN/ERROR/起動 INFO ---
 		// --- batch 1: dashboard WARN/ERROR/startup INFO ---
 		"dash.modules_load_error":       "モジュール設定読み込みエラー: %v",
 		"dash.flood_detected":           "接続フラッド検知: %d 件拒否 (%s)",
@@ -140,6 +153,7 @@ var catalog = map[string]map[string]string{
 		"dash.alert_history_signed":     "アラート履歴のHMAC署名: 有効 (鍵: %s)",
 		"dash.alert_history_key_failed": "アラート履歴の署名鍵を読み込めません（無署名で続行）: %v",
 
+		// --- バッチ2: ダッシュボードの Hub / updater / alert / notify ---
 		// --- batch 2: dashboard Hub / updater / alert / notify ---
 		"dash.broadcast_error":          "Broadcast 送信エラー: %v, クライアントを削除します",
 		"dash.viewer_cap":               "未認証ビューアの上限 (%d) に達したため、接続を拒否しました",
@@ -177,6 +191,7 @@ var catalog = map[string]map[string]string{
 		"notify.failed":                 "通知失敗 [%s]: %v",
 		"notify.success":                "通知成功 [%s]",
 
+		// --- バッチ3a: internal/api / internal/auth ---
 		// --- batch 3a: internal/api / internal/auth ---
 		"api.bwrap_missing":           "プラグイン検査の隔離に必要な bwrap が見つかりません (%s)。アップロードは拒否されます（plugins.inspect_isolation=\"off\" で従来動作）: %v",
 		"api.plugin_run_request":      "手動実行リクエスト送信: plugin=%s request_id=%s",
@@ -200,6 +215,7 @@ var catalog = map[string]map[string]string{
 		"auth.avatar_updated":         "アバター更新: user=%s",
 	},
 	"en": {
+		// --- エージェント ---
 		// --- agent ---
 		"agent.start":                      "Agent started (interval: %.1fs, dashboard: %s)",
 		"agent.shutdown_signal":            "Shutdown signal received",
@@ -225,6 +241,7 @@ var catalog = map[string]map[string]string{
 		"agent.dep_missing":                "Required command not found: %s (used by %s)",
 		"agent.dep_missing_list":           "Missing tools: %v — %s",
 
+		// --- ダッシュボード ---
 		// --- dashboard ---
 		"dash.security_alert":            "Security alert: [%s] %s",
 		"dash.weekly_report_on":          "Weekly security report: enabled (day %d %d:00 / to: %s)",
@@ -259,6 +276,7 @@ var catalog = map[string]map[string]string{
 		"dash.server_start":              "Server started: http://%s",
 		"dash.server_stop":               "Server stopped",
 
+		// --- バッチ1: エージェントの WARN/ERROR/起動 INFO ---
 		// --- batch 1: agent WARN/ERROR/startup INFO ---
 		"agent.autoupdate_on":          "Auto-update is enabled. If the GitHub repository is compromised it leads to arbitrary code execution (%s)",
 		"agent.sys_module_cfg_failed":  "Failed to configure system module: %v",
@@ -284,6 +302,7 @@ var catalog = map[string]map[string]string{
 		"agent.backup_json_failed":     "Failed to marshal backup_result: %v",
 		"agent.backup_send_failed":     "Failed to send backup_result: %v",
 
+		// --- バッチ1: ダッシュボードの WARN/ERROR/起動 INFO ---
 		// --- batch 1: dashboard WARN/ERROR/startup INFO ---
 		"dash.modules_load_error":       "Failed to load module configuration: %v",
 		"dash.flood_detected":           "Connection flood detected: %d rejected (%s)",
@@ -310,6 +329,7 @@ var catalog = map[string]map[string]string{
 		"dash.alert_history_signed":     "Alert history HMAC signing: enabled (key: %s)",
 		"dash.alert_history_key_failed": "Failed to load the alert-history signing key (continuing unsigned): %v",
 
+		// --- バッチ2: ダッシュボードの Hub / updater / alert / notify ---
 		// --- batch 2: dashboard Hub / updater / alert / notify ---
 		"dash.broadcast_error":          "Broadcast send error: %v; removing client",
 		"dash.viewer_cap":               "Rejected connection: unauthenticated viewer cap (%d) reached",
@@ -347,6 +367,7 @@ var catalog = map[string]map[string]string{
 		"notify.failed":                 "Notification failed [%s]: %v",
 		"notify.success":                "Notification succeeded [%s]",
 
+		// --- バッチ3a: internal/api / internal/auth ---
 		// --- batch 3a: internal/api / internal/auth ---
 		"api.bwrap_missing":           "bwrap required to isolate plugin inspection was not found (%s); uploads will be rejected (set plugins.inspect_isolation=\"off\" for the old behavior): %v",
 		"api.plugin_run_request":      "Sent manual run request: plugin=%s request_id=%s",

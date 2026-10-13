@@ -291,6 +291,7 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 
 	e.mu.Lock()
 
+	// ---------- エージェント復旧 ----------
 	// ---------- Agent recovery ----------
 	if !e.agentOnline {
 		if e.agentOfflineReason != "" && e.cfg.NotifyRecovery {
@@ -310,11 +311,13 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 	}
 	e.agentLastSeen = now
 
+	// ---------- メモリ ----------
 	// ---------- Memory ----------
 	if a := e.evalMemory(s.MemPercent, now); a != nil {
 		pending = append(pending, a)
 	}
 
+	// ---------- ストレージ ----------
 	// ---------- Storage ----------
 	freeBytes := uint64(0)
 	if s.DiskTotal > s.DiskUsed {
@@ -332,11 +335,13 @@ func (e *Engine) OnStatus(s *status.SystemStatus) {
 		pending = append(pending, a)
 	}
 
+	// ---------- CPU 温度 ----------
 	// ---------- CPU temperature ----------
 	if a := e.evalCPUTemp(s.CPUTemp, now); a != nil {
 		pending = append(pending, a)
 	}
 
+	// ---------- ディスク S.M.A.R.T ----------
 	// ---------- Disk S.M.A.R.T ----------
 	if a := e.evalDiskHealth(s.Disks, now); a != nil {
 		pending = append(pending, a)
@@ -530,7 +535,8 @@ func iconForLevel(level notify.Level) string {
 }
 
 // ============================================================
-// Memory
+// Memory（メモリ使用率の評価）
+// Memory (memory usage evaluation)
 // ============================================================
 func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 	isCritical := pct >= e.cfg.MemoryCritical
@@ -603,7 +609,8 @@ func (e *Engine) evalMemory(pct float64, now time.Time) *notify.Alert {
 }
 
 // ============================================================
-// Free storage
+// Free storage（空きストレージの評価）
+// Free storage (free storage evaluation)
 // ============================================================
 func (e *Engine) evalDiskFree(freePct float64, freeBytes uint64, now time.Time) *notify.Alert {
 	isCritical := freePct <= e.cfg.DiskFreeCritical
@@ -785,7 +792,8 @@ func (e *Engine) evalCPUTemp(tempC float64, now time.Time) *notify.Alert {
 }
 
 // ============================================================
-// Disk S.M.A.R.T health
+// Disk S.M.A.R.T health（ディスク健全性の評価）
+// Disk S.M.A.R.T health (disk health evaluation)
 // ============================================================
 func (e *Engine) evalDiskHealth(disks []status.DiskInfo, now time.Time) *notify.Alert {
 	var badDisks []string

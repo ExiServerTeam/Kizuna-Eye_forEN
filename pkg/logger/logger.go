@@ -178,6 +178,7 @@ func (w *rotatingWriter) rotate() error {
 	}
 	w.file = nil
 
+	// path -> path.1, path.1 -> path.2, ...（世代を1つずつ繰り下げる）
 	// path -> path.1, path.1 -> path.2, ...
 	for i := w.maxBackups - 1; i >= 1; i-- {
 		old := fmt.Sprintf("%s.%d", w.path, i)
@@ -247,7 +248,8 @@ func (w *rotatingWriter) Close() error {
 }
 
 // ============================================================
-// Logger
+// Logger（構造体とライフサイクル）
+// Logger (struct and lifecycle)
 // ============================================================
 func NewLogger(opts *Options) *Logger {
 	if opts == nil {

@@ -1384,7 +1384,8 @@ func sendModuleRuntime(w *wsWriter, lg *logger.Logger) error {
 }
 
 // ============================================================
-// collectBackupStatus
+// collectBackupStatus（バックアップ状態の収集）
+// collectBackupStatus (collect backup status)
 // ============================================================
 func collectBackupStatus(manager module.ModuleManager) *module.BackupStatus {
 	loadedPlugins.Lock()

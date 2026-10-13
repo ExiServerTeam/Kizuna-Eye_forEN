@@ -1058,7 +1058,8 @@ func (h *Hub) BroadcastToBrowsers(msg []byte) {
 }
 
 // ============================================================
-// main
+// main（エントリポイント）
+// main (entry point)
 // ============================================================
 func main() {
 	configPath := flag.String("config", "dashboard_config.json", "設定ファイルパス")
@@ -1246,6 +1247,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// ---- WebSocket ハンドラ ----
 	// ---- WebSocket handler ----
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
 		// agent トークンが設定されているとき、agent 接続（?role=agent）は一致する
@@ -1440,6 +1442,7 @@ func main() {
 		}()
 	})
 
+	// ---- REST API: 最新ステータス ----
 	// ---- REST API: latest status ----
 	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		s := hub.GetLastStatus()
@@ -1458,6 +1461,7 @@ func main() {
 		writeDashboardJSON(w, http.StatusOK, s)
 	})
 
+	// ---- モジュール管理 API ----
 	// ---- Module management API ----
 	moduleHandler := api.NewModuleHandler(storage, cfg.ResolvePluginsDir())
 	// plugin_path（agent がロードする .so）はコード実行境界なので、その変更には
@@ -1513,6 +1517,7 @@ func main() {
 		return out
 	}
 
+	// ---- プラグイン管理 API（hub を渡す）----
 	// ---- Plugin management API (passes hub) ----
 	pluginManager, err := api.NewPluginManager(storage, cfg, lg, hub)
 	if err != nil {
@@ -1596,6 +1601,7 @@ func main() {
 		handleSecurityEvent(msg, engine, lg)
 	})
 
+	// ---- メトリクス API ----
 	// ---- Metrics API ----
 	metricHandler := api.NewMetricHandler(hub)
 	// /api/metrics を /api/status と一致させる。public-viewer モードでは未認証
@@ -1651,6 +1657,7 @@ func main() {
 	logHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_logs")
 
+	// ---- 設定 API ----
 	// ---- Config API ----
 	configHandler := api.NewConfigHandler(
 		agentConfigPath,
@@ -1660,6 +1667,7 @@ func main() {
 	configHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_config")
 
+	// ---- アラート履歴 API ----
 	// ---- Alert history API ----
 	alertHandler := api.NewAlertHandler(engine)
 	alertHandler.RegisterRoutes(mux)
@@ -1682,21 +1690,25 @@ func main() {
 	insightHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_insight")
 
+	// ---- ワンクリック対処 API（タスク2）----
 	// ---- One-click remediation API (task 2) ----
 	actionHandler := api.NewActionHandler(engine)
 	actionHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_actions")
 
+	// ---- バージョン API ----
 	// ---- Version API ----
 	versionHandler := api.NewVersionHandler()
 	versionHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_version")
 
+	// ---- メトリクス履歴 API ----
 	// ---- Metrics history API ----
 	historyHandler := api.NewHistoryHandler(hub)
 	historyHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_metrics_hist")
 
+	// ---- アラート閾値 API ----
 	// ---- Alert threshold API ----
 	alertCfgHandler := api.NewAlertConfigHandler(engine, cfg, *configPath, lg)
 	alertCfgHandler.RegisterRoutes(mux)
@@ -1740,6 +1752,7 @@ func main() {
 		_, _ = w.Write([]byte(langJS))
 	})
 
+	// ---- 静的ファイル ----
 	// ---- Static files ----
 	staticDir := cfg.StaticDir
 	if staticDir == "" {

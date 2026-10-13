@@ -173,6 +173,7 @@ func resolveSystemBin(name string, candidates ...string) string {
 //     （NoNewPrivileges=yes）では sudo が必ず失敗するため、ここは不活性になる。
 //     その場合 S.M.A.R.T は CAP_SYS_RAWIO + 素のバイナリに依存する。
 //  2. 絶対パスに解決した素のバイナリ。
+//
 // smartctlOnce/smartctlPrefix memoize how to invoke smartctl.
 // Preference order:
 //  1. passwordless sudo for smartctl only (legacy pre-A-4 path). NOTE: under
@@ -203,6 +204,7 @@ func smartctlCommand(args ...string) *exec.Cmd {
 	bin := smartctlBin
 	if bin == "" {
 		bin = "smartctl" // 見つからない。exec に大声で失敗させる。
+		// 見つからない場合は exec に明確に失敗させる
 		// not found; let exec fail loudly
 	}
 	return exec.Command(bin, args...)
@@ -358,7 +360,8 @@ func (c *processCache) collect() []status.ProcessInfo {
 }
 
 // ============================================================
-// SystemModule
+// SystemModule（システム監視モジュール）
+// SystemModule (system monitoring module)
 // ============================================================
 type SystemModule struct {
 	config     *SystemConfig
@@ -370,6 +373,7 @@ type SystemModule struct {
 
 	cpuModel string
 
+	// フェーズ4
 	// Phase 4
 	prevNetUp   uint64
 	prevNetDown uint64
@@ -378,6 +382,7 @@ type SystemModule struct {
 
 	smart *smartCache
 
+	// ★ フェーズ6
 	// ★ Phase 6
 	processes *processCache
 
@@ -386,6 +391,7 @@ type SystemModule struct {
 	wg           sync.WaitGroup
 }
 
+// ---------- CPU コレクタ ----------
 // ---------- CPU collector ----------
 type cpuCollector struct {
 	mu          sync.RWMutex
@@ -454,6 +460,7 @@ func (c *cpuCollector) getErrorCount() int {
 	return c.errCount
 }
 
+// ---------- コンストラクタ ----------
 // ---------- Constructor ----------
 func NewSystemModule(logger Logger) *SystemModule {
 	return &SystemModule{
@@ -471,6 +478,7 @@ func NewSystemModule(logger Logger) *SystemModule {
 	}
 }
 
+// ---------- Module インターフェース ----------
 // ---------- Module interface ----------
 func (m *SystemModule) Name() string { return "system" }
 
@@ -485,6 +493,7 @@ func (m *SystemModule) Interval() time.Duration {
 
 func (m *SystemModule) Description() string { return "システム情報収集モジュール" }
 
+// ---------- Init（初期化）----------
 // ---------- Init ----------
 func (m *SystemModule) Init(ctx context.Context) error {
 	if m.logger != nil {
@@ -563,12 +572,14 @@ func (m *SystemModule) cacheCPUModel() {
 	}
 }
 
+// ---------- Run（実行ループ）----------
 // ---------- Run ----------
 func (m *SystemModule) Run(ctx context.Context) error {
 	m.updateStatus()
 	return nil
 }
 
+// ---------- Configure（設定適用）----------
 // ---------- Configure ----------
 func (m *SystemModule) Configure(config interface{}) error {
 	cfg, ok := config.(*SystemConfig)
@@ -599,6 +610,7 @@ func (m *SystemModule) Configure(config interface{}) error {
 	return nil
 }
 
+// ---------- HealthCheckable（健全性検査）----------
 // ---------- HealthCheckable ----------
 func (m *SystemModule) Health(ctx context.Context) error {
 	m.mu.RLock()
@@ -638,6 +650,7 @@ func (m *SystemModule) HealthInterval() time.Duration {
 	return val
 }
 
+// ---------- Shutdownable（停止処理）----------
 // ---------- Shutdownable ----------
 func (m *SystemModule) Shutdown(ctx context.Context) error {
 	if m.logger != nil {
@@ -670,6 +683,7 @@ func (m *SystemModule) Shutdown(ctx context.Context) error {
 	}
 }
 
+// ---------- 内部メソッド ----------
 // ---------- Internal methods ----------
 func (m *SystemModule) GetStatus() *status.SystemStatus {
 	m.mu.RLock()
@@ -734,6 +748,7 @@ func (m *SystemModule) updateStatus() {
 	cpuPerCore, _ := cpu.Percent(0, true)
 	cpuTemp := collectCPUTemp()
 
+	// ---------- メモリ ----------
 	// ---------- Memory ----------
 	memInfo, memErr := mem.VirtualMemory()
 	if memErr != nil {
@@ -743,6 +758,7 @@ func (m *SystemModule) updateStatus() {
 		memInfo = &mem.VirtualMemoryStat{Total: 0, Used: 0, UsedPercent: 0}
 	}
 
+	// ---------- ディスク ----------
 	// ---------- Disk ----------
 	var disks []status.DiskInfo
 	var totalDiskUsed, totalDiskTotal uint64
@@ -849,6 +865,7 @@ func (m *SystemModule) updateStatus() {
 		}
 	}
 
+	// ---------- ホスト ----------
 	// ---------- Host ----------
 	hostInfo, hostErr := host.Info()
 	if hostErr != nil {
@@ -858,12 +875,14 @@ func (m *SystemModule) updateStatus() {
 		hostInfo = &host.InfoStat{Uptime: 0}
 	}
 
+	// ---------- ロードアベレージ ----------
 	// ---------- Load Average ----------
 	var loadAvg []float64
 	if avg, err := load.Avg(); err == nil && avg != nil {
 		loadAvg = []float64{avg.Load1, avg.Load5, avg.Load15}
 	}
 
+	// ---------- ネットワーク ----------
 	// ---------- Network ----------
 	var netIO *status.NetworkIO
 	var netSpeed *status.NetworkSpeed
@@ -899,9 +918,11 @@ func (m *SystemModule) updateStatus() {
 		m.mu.Unlock()
 	}
 
+	// ---------- プロセス ----------
 	// ---------- Processes ----------
 	processes := m.processes.get()
 
+	// ---------- lastError（直近エラー）----------
 	// ---------- lastError ----------
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -944,7 +965,8 @@ func (m *SystemModule) updateStatus() {
 }
 
 // ============================================================
-// collectCPUTemp
+// collectCPUTemp（CPU 温度の収集）
+// collectCPUTemp (collect CPU temperature)
 // ============================================================
 
 // minPlausibleCPUTemp は実際の CPU 温度として受け入れる最低値だ。
@@ -1017,6 +1039,7 @@ var sdRe = regexp.MustCompile(`^[a-z]+\d+$`)
 //   - /dev/nvme0n1    -> /dev/nvme0n1 (unchanged; whole disk)
 //   - /dev/mmcblk0p1  -> /dev/mmcblk0
 //   - /dev/mapper/... -> unchanged
+//
 // resolveBlockDevice maps a partition device to its parent whole disk so
 // S.M.A.R.T can be queried once per physical disk.
 //   - /dev/sdb1       -> /dev/sdb
@@ -1034,7 +1057,8 @@ func resolveBlockDevice(device string) string {
 	name := strings.TrimPrefix(device, "/dev/")
 	// RAID、device-mapper、loop、光学その他の仮想デバイスは、末尾の数字が
 	// 名前の一部である丸ごとのデバイスだ（例: md0、dm-0、sr0、nbd0）。
-	// 数字を剥がすと存在しないパスに smartctl を問い合わせてしまう。
+	// パーティション番号ではない。数字を剥がすと smartctl が存在しない
+	// パスへ問い合わせることになる。
 	// これらの接頭辞は sd/hd/vd ディスクのパーティションを決して示さないため、
 	// 末尾の数字は丸ごとのデバイス名の一部だ。そのまま返す。
 	// RAID, device-mapper, loop, optical and other virtual devices are whole
@@ -1075,7 +1099,8 @@ func resolveBlockDevice(device string) string {
 }
 
 // ============================================================
-// runSmartctl
+// runSmartctl（smartctl の実行）
+// runSmartctl (run smartctl)
 // ============================================================
 func runSmartctl(device string) smartEntry {
 	cmd := smartctlCommand("-A", "-H", "-i", "-j", device)
@@ -1186,7 +1211,8 @@ func runSmartctl(device string) smartEntry {
 }
 
 // ============================================================
-// asyncCPUCollector
+// asyncCPUCollector（非同期 CPU コレクタ）
+// asyncCPUCollector (asynchronous CPU collector)
 // ============================================================
 func (m *SystemModule) asyncCPUCollector(ctx context.Context) {
 	defer m.wg.Done()

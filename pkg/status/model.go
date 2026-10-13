@@ -72,12 +72,14 @@ type SystemStatus struct {
 	Fallback      bool       `json:"fallback,omitempty"`
 	CPUErrorCount int        `json:"cpu_error_count,omitempty"`
 
+	// フェーズ3
 	// Phase 3
 	CPUModel    string     `json:"cpu_model,omitempty"`
 	CPUTemp     float64    `json:"cpu_temp,omitempty"`
 	LoadAverage []float64  `json:"load_average,omitempty"`
 	Network     *NetworkIO `json:"network,omitempty"`
 
+	// フェーズ4
 	// Phase 4
 	NetworkSpeed *NetworkSpeed `json:"network_speed,omitempty"`
 

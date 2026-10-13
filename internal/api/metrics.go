@@ -86,21 +86,25 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 	ts := time.Now().Unix()
 	var b strings.Builder
 
+	// 生存確認
 	// Liveness
 	gauge(&b, "kizuna_up", "1 if the last status is available", 1, ts)
 
+	// ステータスのタイムスタンプと経過時間
 	// Status timestamp and age
 	gaugeInt(&b, "kizuna_status_timestamp_seconds", "Unix timestamp of the last collected status", float64(s.Timestamp), ts)
 	if s.Timestamp > 0 {
 		gaugeInt(&b, "kizuna_status_age_seconds", "Seconds since the last collected status", float64(ts-s.Timestamp), ts)
 	}
 
+	// メモリ
 	// Memory
 	gaugeInt(&b, "kizuna_memory_used_bytes", "Memory usage in bytes", float64(s.MemUsed), ts)
 	gaugeInt(&b, "kizuna_memory_total_bytes", "Total memory in bytes", float64(s.MemTotal), ts)
 	gaugeInt(&b, "kizuna_memory_free_bytes", "Free memory in bytes", float64(freeBytes(s.MemTotal, s.MemUsed)), ts)
 	gauge(&b, "kizuna_memory_usage_percent", "Memory usage percentage", s.MemPercent, ts)
 
+	// CPU（CPU 使用率）
 	// CPU
 	gauge(&b, "kizuna_cpu_usage_percent", "CPU usage percentage", s.CPUUsage, ts)
 	if len(s.CPUPerCore) > 0 {
@@ -111,6 +115,7 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
+	// ロードアベレージ
 	// Load average
 	if len(s.LoadAverage) >= 3 {
 		gauge(&b, "kizuna_load_average_1m", "1-minute load average", s.LoadAverage[0], ts)
@@ -118,6 +123,7 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		gauge(&b, "kizuna_load_average_15m", "15-minute load average", s.LoadAverage[2], ts)
 	}
 
+	// ディスク（合計）
 	// Disk (totals)
 	gaugeInt(&b, "kizuna_disk_total_bytes", "Total disk space in bytes", float64(s.DiskTotal), ts)
 	gaugeInt(&b, "kizuna_disk_used_bytes", "Used disk space in bytes", float64(s.DiskUsed), ts)
@@ -180,6 +186,7 @@ func (m *MetricHandler) handlePrometheus(w http.ResponseWriter, r *http.Request)
 		gauge(&b, "kizuna_cpu_temp_celsius", "CPU temperature in Celsius", s.CPUTemp, ts)
 	}
 
+	// 稼働時間
 	// Uptime
 	gaugeInt(&b, "kizuna_uptime_seconds", "System uptime in seconds", float64(s.Uptime), ts)
 

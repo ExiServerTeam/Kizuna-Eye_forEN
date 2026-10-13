@@ -238,6 +238,7 @@ type NotificationChannel struct {
 	ChatID     string `json:"chat_id,omitempty"`     // Telegram
 	Token      string `json:"token,omitempty"`       // LINE
 
+	// Email（SMTP）通知
 	// Email (SMTP)
 	SMTPHost     string `json:"smtp_host,omitempty"`
 	SMTPPort     string `json:"smtp_port,omitempty"`

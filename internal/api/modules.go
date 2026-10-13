@@ -314,6 +314,7 @@ func (s *ModulesStorage) Delete(name string) error {
 	return fmt.Errorf("%w: モジュール '%s' が見つかりません", ErrModuleNotFound, name)
 }
 
+// ---------- HTTP ハンドラ ----------
 // ---------- HTTP handlers ----------
 
 // ModuleHandler はモジュール管理 API を提供する。
@@ -700,6 +701,7 @@ func (h *ModuleHandler) handleReload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reloaded"})
 }
 
+// ---------- ヘルパー ----------
 // ---------- Helpers ----------
 
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {

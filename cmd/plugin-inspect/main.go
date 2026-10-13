@@ -1,4 +1,5 @@
-// cmd/plugin-inspect/main.go
+// cmd/plugin-inspect/main.go（プラグイン検査ツール）
+// cmd/plugin-inspect/main.go (plugin inspection tool)
 package main
 
 import (
