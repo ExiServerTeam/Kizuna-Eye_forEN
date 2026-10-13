@@ -333,3 +333,49 @@
         transform: none;
     }
 }
+
+/* ============================================================
+   表示崩れ防止（ログイン / ユーザー管理）
+   ============================================================ */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+/* カードは画面幅を超えない。 */
+.auth-card,
+.modal-backdrop .auth-card {
+    width: 100%;
+    max-width: 100%;
+}
+
+/* 入力欄は iOS の自動ズームを避けるため 16px 以上に。 */
+@media (max-width: 480px) {
+    .auth-input,
+    .auth-form input,
+    .auth-form select {
+        font-size: 16px;
+    }
+
+    .auth-btn,
+    .auth-btn-secondary {
+        width: 100%;
+    }
+
+    /* ユーザー管理テーブルは横スクロールで対応。 */
+    .users-table {
+        display: block;
+        width: 100%;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        white-space: nowrap;
+    }
+}

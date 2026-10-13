@@ -3250,3 +3250,144 @@ html {
     transform: translateY(-1px);
     box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
 }
+
+/* ============================================================
+   表示崩れ防止（画面サイズに依存しない堅牢化）
+   どんな幅でも横スクロール・はみ出し・重なりを起こさない。
+   ============================================================ */
+
+/* すべての要素を border-box にして、padding 込みで幅が決まるようにする。
+   これがないと width:100% + padding で数px はみ出すことがある。 */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    min-width: 0;
+}
+
+/* 横スクロールを根本から防ぐ。 */
+html,
+body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+.app {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
+/* 画像・キャンバスは絶対に親からはみ出さない。 */
+img,
+canvas,
+video,
+svg {
+    max-width: 100%;
+}
+
+/* 長い文字列（パス・型番・ユーザー名・URL 等）はどこでも折り返す。
+   overflow-wrap:anywhere がないと、1つの長いトークンがカードや
+   モーダルを突き破って横スクロールを生む。 */
+.gauge-detail,
+.disk-path,
+.disk-usage,
+.storage-path,
+.storage-item .value,
+.cpu-model,
+.account-name,
+.plugin-card-name,
+.module-name,
+.alert-item-title,
+.alert-item-message,
+.uptime-meta-item .value,
+.modal-body,
+.modal-header h3 {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* ヘッダーは折り返しを許可し、はみ出しを防ぐ。 */
+.header-main {
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.nav-tabs {
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+/* バッジ群は通常 1 行だが、入りきらない幅では折り返す。 */
+.header-badges {
+    flex-wrap: wrap;
+}
+
+/* モーダルはどの幅でも画面内に収める。 */
+.modal {
+    max-width: min(720px, 100%);
+}
+
+.modal-overlay {
+    padding: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right));
+}
+
+/* 横スクロールが必要な要素だけ、明示的に許可する。 */
+.process-table-wrap,
+.config-textarea,
+.log-viewer {
+    -webkit-overflow-scrolling: touch;
+}
+
+/* 極端に狭い画面（〜360px）でも崩れないように。 */
+@media (max-width: 360px) {
+    .app {
+        padding-left: max(8px, env(safe-area-inset-left));
+        padding-right: max(8px, env(safe-area-inset-right));
+    }
+
+    .header {
+        padding: 8px 10px;
+    }
+
+    .logo {
+        font-size: 1.05rem;
+    }
+
+    .gauge-card {
+        padding: 12px 10px;
+    }
+
+    .gauge-container {
+        height: 200px;
+    }
+
+    .gauge-value {
+        font-size: 1.25rem;
+    }
+
+    .temp-badge,
+    .free-badge {
+        font-size: 0.58rem;
+        padding: 2px 5px;
+    }
+
+    .modal-header,
+    .modal-body,
+    .modal-footer {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+}
+
+/* 横向き（ランドスケープ）の低い画面でも重なりを防ぐ。 */
+@media (max-height: 480px) and (orientation: landscape) {
+    .modal {
+        max-height: 96vh;
+    }
+
+    .gauge-container {
+        height: 200px;
+    }
+}

@@ -1186,3 +1186,35 @@ label.btn-secondary:hover {
     background: rgba(59, 130, 246, 0.25);
     transform: translateY(-1px);
 }
+
+/* ============================================================
+   表示崩れ防止（モジュール管理）
+   ============================================================ */
+.module-grid,
+.module-card,
+.module-list-container {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.module-card-row .value,
+.module-info-row .value {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* プラグイン設定フォームの長いラベルも折り返す。 */
+.form-hint,
+.radio-desc {
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 360px) {
+    .module-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .module-card {
+        padding: 12px;
+    }
+}
