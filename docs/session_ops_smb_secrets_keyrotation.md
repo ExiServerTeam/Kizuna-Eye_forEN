@@ -276,14 +276,17 @@ sha256sum "$KEY" > "$HOME/.kizuna-eye/keys/NEW-key.sha256"
 
 ---
 
-## 5. 既知の誤検知（未修正・頻度低）
+## 5. 誤検知の修正記録（2026-10-03 18:14 配備）
 
-| 事象 | 条件 | 影響 | 推奨対応 |
-|---|---|---|---|
-| `アラート履歴 ... file modified in place (same line count, different hash)` の critical | ダッシュボードの履歴圧縮（`pkg/alert` `NewHistory(200)`）が同一 4 分窓で「追記 + 切り詰め」を行い、行数が変わらないとき | 誤 critical（実測: 2026-10-03 03:14〜18:03 の 14.5 時間で 1 件。アラート多発時は増える） | `checkAlertHistory` に最終行ハッシュを保存し、「最終行が変わっていれば追記 + 圧縮」と判断して warning へ落とす（中間行の書換のみ critical 維持） |
+| 事象 | 条件 | 対応 |
+|---|---|---|
+| `アラート履歴 ... file modified in place (same line count, different hash)` の critical | ダッシュボードの履歴圧縮（`pkg/alert` `NewHistory(200)`）が同一 4 分窓で「追記 + 切り詰め」を行い、行数が変わらないとき（実測: 03:14〜18:03 の 14.5 時間で 1 件。アラート多発時は増える） | **修正済み**: `checkAlertHistory` が最終（最後の非空）行の sha256 を状態ファイル（`last_hash`）に保存し、行数が同じでハッシュが変わった場合は「最終行が進んでいれば正規の圧縮 = warning / 最終行が変わらなければ改ざん = critical」と判定する。旧形式の状態ファイルからの移行直後は基準が無いため warning に留める（誤報回避）。テスト: `TestCheckAlertHistoryCompactionIsWarning`（圧縮 = warning / 中間行改ざん = critical / 旧形式 = warning の 3 ケース） |
+| `ログ ... line count decreased` の連発（退避後） | 退避時にログだけが退避され、行数アンカーが残っていた | **修正済み（§3-5）**: アンカーも `.legacy-<ts>` 付きで同時退避。テスト: `TestQuarantineResetsLineCountAnchor` |
+| `i18n 整合性` の `level.` 未定義 | 抽出器が `t('level.' + x)` の連結断片をキーと誤認 | **修正済み**: `scripts/check_i18n.js` はキー引用符の直後が `)`/`,` のときのみ採用（動的キーは除外） |
 
 `chain_quarantined`（退避）と FIM 署名不一致は**鍵ローテーション時の想定内**で、それぞれ 1 件ずつ出る
-（§3-3）。「line count decreased」の連発は §3-5 で修正済み。
+（§3-3）。なお `TCP ポート 8080 が新たに待ち受けを開始しました` はダッシュボード再起動に伴う
+1 回限りの warning（正常）。
 
 
 ---
