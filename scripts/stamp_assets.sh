@@ -28,7 +28,8 @@ if [ ! -d "$STATIC_DIR" ]; then
     exit 1
 fi
 
-# hash8 prints the first 8 hex chars of the file's sha256 (content-addressed).
+# hash8 はファイルの sha256 の先頭8桁の16進数を出力する（内容アドレス方式）。
+# hash8 prints the first 8 hex chars of the file.s sha256 (content-addressed).
 hash8() {
     if command -v sha256sum >/dev/null 2>&1; then
         sha256sum "$1" | cut -c1-8
@@ -41,21 +42,29 @@ changed=0
 for html in "$STATIC_DIR"/*.html; do
     [ -f "$html" ] || continue
     before="$(cat "$html")"
+    # ローカルの href/src="...?v=..." ごとに、対象ファイルのハッシュを再計算して
+    # 置換する。外部 URL（http/https/プロトコル相対）はスキップする。
+    # それらの内容は我々がハッシュする対象ではないからだ。
     # For every local href/src="...?v=...", recompute the hash of the target
     # file and substitute it. External URLs (http/https/protocol-relative) are
     # skipped: their content is not ours to hash.
     while IFS= read -r ref; do
+        # ref は例: /app.js?v=0.8.0 ; パスを分割しクエリを落とす。
         # ref is e.g. /app.js?v=0.8.0 ; split path and drop the query
         path="${ref%%\?*}"
+        # ローカルの非外部参照のみを対象にする。
         # Only local, non-external references.
         case "$path" in
             http://*|https://*|//*) continue ;;
         esac
+        # /foo.js を <dir>/foo.js に、foo.js を <dir>/foo.js に解決する。
         # Resolve /foo.js to <dir>/foo.js and foo.js to <dir>/foo.js.
         rel="${path#/}"
         target="$STATIC_DIR/$rel"
         [ -f "$target" ] || continue
         h="$(hash8 "$target")"
+        # まさにこのパスの ?v= 以降のクエリ値を置換する。無関係な ?v= を
+        # 触らないよう、パスへのリテラル一致を使う。
         # Replace the query value after ?v= for exactly this path.
         # Use a literal match on the path so unrelated ?v= are untouched.
         before2="$(cat "$html")"

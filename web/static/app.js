@@ -1,4 +1,6 @@
 // ============================================================
+// Kizuna-Eye ダッシュボード
+// ゲージエンジン v0.7.0
 // Kizuna-Eye Dashboard
 // Gauge Engine v0.7.0
 // ============================================================
@@ -28,6 +30,10 @@
     // i18n 翻訳ヘルパー（i18n.js 未読込時はキーをそのまま返す）
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
+    // pickLocalized は現在の UI 言語に一致するフィールドを返す。英語では field_en を
+    // 優先し、英語レンダリングが無い場合は基底フィールド（日本語）にフォールバック
+    // する — 古いレコードは基底フィールドしか持たないため、フォールバックで
+    // 可視性を保つ（タスク9）。
     // pickLocalized returns the field matching the current UI language.
     // For English it prefers field_en, falling back to the base field
     // (Japanese) when the English rendering is absent — older records only
@@ -100,6 +106,7 @@
         versionBadge: $('#versionBadge'),
         footerVersion: $('#footerVersion'),
         toastContainer: $('#toastContainer'),
+        // ★ フェーズ6
         // ★ Phase 6
         processModal: $('#processModal'),
         processModalTitle: $('#processModalTitle'),
@@ -377,6 +384,8 @@
         if (level === 'critical') cardEl.classList.add('alert-critical');
     }
 
+    // フロントエンドのアラート閾値をサーバー側設定と同期し、カード色 / トーストを
+    // 通知エンジンと一致させる。
     // Sync the frontend alert thresholds with the server-side settings
     // so the card colors / toasts match the notification engine.
     async function loadAlertThresholds() {
@@ -912,6 +921,8 @@
         const card = elements.diskCard;
         if (!card) return;
         const handler = () => {
+            // プロセスカードと同じガード: 公開ビューアは S.M.A.R.T ストレージ詳細
+            // （型番 / シリアル / 書込量）を開いてはならない。
             // Same guard as the process cards: a public viewer must not open
             // the S.M.A.R.T storage details (model / serial / written bytes).
             if (card.dataset.click !== 'storage') return;
@@ -1022,6 +1033,9 @@
     function setupProcessCardClicks() {
         document.querySelectorAll('[data-click="process"]').forEach(card => {
             const handler = () => {
+                // クリック時に属性を再確認する。applyAccessMode は公開ビューアの
+                // data-click を外すが、リスナーは以前に登録済みで、そのままだと
+                // モーダルを開いてしまう。
                 // Re-check the attribute at click time: applyAccessMode removes
                 // data-click for public viewers, but the listener was attached
                 // earlier and would otherwise still open the modal.
@@ -1126,15 +1140,18 @@
         const section = elements.backupSection;
         if (!section) return;
 
+        // バックアップオブジェクト欠落へのガード。
         // Guard against a missing backup object.
         if (!backup || typeof backup !== 'object') backup = {};
         currentBackup = backup;
 
+        // プラグイン状態セクションは常に表示する。
         // Always show the plugin status section.
         section.hidden = false;
 
         const norm = normalizeStatus(backup.status);
 
+        // ステータスバッジ（ラベル + 色の単一の真実源）。
         // Status badge (single source of truth for label + color).
         if (elements.backupStatusBadge) {
             const badge = elements.backupStatusBadge;
@@ -1330,6 +1347,9 @@
     // 無効化/削除されたら枠ごと取り除く（iframe も破棄する）。
     const mountedModuleCards = new Map();
 
+    // declaredModuleCards は有効なモジュールが宣言したカードを返す。pluginMetaMap
+    // （/api/plugins が埋める）経由で解決する。各カードはモジュール名を持ち、
+    // コアが /plugins/<name>/ の URL を組み立てられるようにする。
     // declaredModuleCards returns the cards declared by ENABLED modules,
     // resolved through pluginMetaMap (which /api/plugins fills). Each card
     // carries the module name so the core can build the /plugins/<name>/ URL.
@@ -1337,6 +1357,10 @@
         const enabledNames = new Set(
             (lastModules || []).filter(m => m.enabled).map(m => m.name)
         );
+        // dashboard が現在動作しているロール（checkAccessMode が設定）。min_role を
+        // 宣言するカードは、より低いロールにはマウントしてはならない。モジュール
+        // 自身の UI は operator 以上の /plugins/ が提供するため、これでマウント
+        // 判断がサーバーと一致する。未知/空の min_role は既定で operator。
         // The role the dashboard is currently running as (set by
         // checkAccessMode). A card that declares min_role must not be mounted
         // for a lower role; the module's own UI is served by /plugins/ which is
@@ -1358,6 +1382,9 @@
         return out;
     }
 
+    // rankOfRole はロール名をランクに対応付ける（viewer=1, operator=2, admin=3）。
+    // 未知の値は 0 に対応し、認識できない min_role は fail-closed（カードを
+    // マウントしない）になり、viewer として扱われない。
     // rankOfRole maps a role name to its rank (viewer=1, operator=2, admin=3).
     // An unknown value maps to 0 so an unrecognized min_role fails closed
     // (the card is not mounted) rather than being treated as viewer.
@@ -1365,6 +1392,8 @@
         return { viewer: 1, operator: 2, admin: 3 }[String(role || '').toLowerCase()] || 0;
     }
 
+    // moduleCardFrameSrc はモジュール UI の iframe URL を組み立て、現在の言語と
+    // テーマを伝える。テーマが重要なのは、iframe が親の CSS 変数を継承しないからだ。
     // moduleCardFrameSrc builds the iframe URL for a module UI, carrying the
     // current language and theme so the module can adapt. The theme matters
     // because iframes do not inherit the parent's CSS variables.
@@ -1375,6 +1404,8 @@
             '&theme=' + encodeURIComponent(theme);
     }
 
+    // reloadModuleCardFrames はマウント済みの全モジュール iframe を現在のテーマへ
+    // 向け直す。テーマ変更時に呼ばれ、プラグイン UI が追従する。
     // reloadModuleCardFrames re-points every mounted module iframe at the
     // current theme. Called when the theme changes so plugin UIs follow it.
     function reloadModuleCardFrames() {
@@ -1388,6 +1419,9 @@
         });
     }
 
+    // moduleCardSection は1つのモジュールカード用の汎用カードシェル
+    // （ヘッダー + iframe ホスト）を組み立てる。シェルは全モジュールで同じで、
+    // タイトルと iframe URL だけが異なるため、コアはカード固有の DOM を持たない。
     // moduleCardSection builds the generic card shell (header + iframe host)
     // for one module card. The shell is the same for every module; only the
     // title and the iframe URL differ, so the core owns no card-specific DOM.
@@ -1428,7 +1462,11 @@
         const body = document.createElement('div');
         body.className = 'backup-body';
 
-        // The module's UI is loaded in an iframe from /plugins/<name>/. The
+        // モジュールの UI は /plugins/<name>/ から iframe で読み込む。コアは
+        // カードへ自身の DOM を注入しない。サンドボックスと CSP は /plugins
+        // ルートがサーバー側で強制する（純正 = 直接、サードパーティ = サンド
+        // ボックス化ラッパー）。
+        // The module.s UI is loaded in an iframe from /plugins/<name>/. The
         // core does not inject its DOM into the card. Sandboxing and CSP are
         // enforced server-side by the /plugins route (official = direct,
         // third-party = sandboxed wrapper).
@@ -1436,6 +1474,11 @@
         iframe.className = 'module-card-frame';
         iframe.setAttribute('loading', 'lazy');
         iframe.setAttribute('referrerpolicy', 'no-referrer');
+        // ?lang=<ui> でモジュールが現在の言語で描画でき、&theme=<dark|light> で
+        // モジュール UI がダッシュボードのテーマに合わせられる。親の CSS 変数は
+        // iframe ドキュメントへ越えないため、背景をハードコードしたモジュールは
+        // ライトモードでも暗いままになる。パラメータに従うモジュールは自前の
+        // パレットを切り替える。
         // ?lang=<ui> so the module can render in the current language, and
         // &theme=<dark|light> so a module UI can match the dashboard theme.
         // The parent's CSS variables do NOT cross into an iframe document, so
@@ -1458,6 +1501,9 @@
         return section;
     }
 
+    // syncModuleCards はマウント済みカードと宣言を突き合わせる: 新しい宣言を
+    // メトリクス履歴のすぐ上に挿入し、モジュールが消えた / 宣言しなくなった
+    // カードを削除する。
     // syncModuleCards reconciles the mounted cards with the declarations:
     // it inserts new declarations right above the metrics history and removes
     // cards whose module is gone or no longer declares them.
@@ -1468,6 +1514,7 @@
             want.set(d.module + ':' + d.card.id, d);
         }
 
+        // 宣言されなくなったカードを削除する。
         // Remove cards no longer declared.
         for (const [key, mounted] of mountedModuleCards) {
             if (!want.has(key)) {
@@ -1478,6 +1525,7 @@
             }
         }
 
+        // 新しく宣言されたカードを履歴セクションの上に挿入する。
         // Insert newly declared cards above the history section.
         const hist = document.getElementById('historySection');
         for (const [key, d] of want) {
@@ -1491,6 +1539,8 @@
             mountedModuleCards.set(key, { section });
         }
 
+        // セクション並べ替えのセットアップを再実行（冪等）し、新しいカードが
+        // ドラッグハンドルと pointerdown リスナーを得るようにする。
         // Re-run the section reorder setup (idempotent) so the new cards get
         // their drag handle and pointerdown listener.
         setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
@@ -1543,6 +1593,7 @@
                 renderPluginList(lastModules);
             }
         } catch (e) {
+            // 致命的ではない。無視する。
             // Non-fatal; ignore.
         }
     }
@@ -1553,6 +1604,7 @@
     function updateDashboard(data) {
         if (!data) return;
 
+        // ---------- CPU ----------（CPU 使用率の表示）
         // ---------- CPU ----------
         const cpu = clamp(data.cpu_usage ?? data.cpu_percent ?? 0, 0, 100);
         if (elements.cpuValue) elements.cpuValue.textContent = `${cpu.toFixed(1)}%`;
@@ -1575,6 +1627,8 @@
         if (elements.memDetail) {
             elements.memDetail.textContent = `${formatBytesFixed(memoryUsed, 'GB')} / ${formatBytesFixed(memoryTotal, 'GB')}`;
         }
+        // メモリ閾値は「使用率」パーセントで設定される。バッジ用に空き容量
+        // パーセントへ変換する。
         // Memory thresholds are configured as *usage* percentages; convert
         // them to free-space percentages for the badge.
         updateFreeBadge(elements.memFreeBadge, memoryTotal - memoryUsed, memoryTotal,
@@ -1673,7 +1727,8 @@
     }
 
     // ============================================================
-    // WebSocket
+    // WebSocket（リアルタイム通信）
+    // WebSocket (real-time transport)
     // ============================================================
     let socket = null;
     let reconnectTimer = null;
@@ -1785,6 +1840,9 @@
         }
         if (elements.backupToggle) {
             elements.backupToggle.setAttribute('aria-expanded', String(!backupCollapsed));
+            // 矢印の検索をこのセクションに限定する。グローバルな querySelector は
+            // 履歴セクションのボタン（DOM 順で最初）を返し、プラグインセクション
+            // の矢印が回転しなかった。
             // Scope the arrow lookup to THIS section. A global querySelector
             // returned the history section's button (first in DOM order), so
             // the plugin section arrow never rotated.
@@ -1836,6 +1894,7 @@
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
+        // シャープな描画のため、canvas のバッキングストアを CSS サイズに合わせる。
         // Match the canvas backing store to its CSS size for sharp rendering.
         const cssW = canvas.clientWidth || 600;
         const cssH = 220;
@@ -1847,6 +1906,7 @@
         const h = canvas.height;
         ctx.clearRect(0, 0, w, h);
 
+        // グリッド + 軸ラベル（0/50/100%）。
         // Grid + axis labels (0/50/100%).
         ctx.strokeStyle = 'rgba(150,150,170,0.15)';
         ctx.fillStyle = 'rgba(160,170,195,0.7)';
@@ -1948,6 +2008,7 @@
             const level = knownLevels.indexOf(rawLevel) >= 0 ? rawLevel : 'info';
             const levelLabel = t('level.' + level);
             const time = a.timestamp ? new Date(a.timestamp).toLocaleString() : '';
+            // ソースバッジ: 信頼（dashboard 生成）vs 非信頼（agent/ログ由来）。
             // Source badge: trusted (dashboard-generated) vs untrusted (agent/log-derived).
             let srcBadge = '';
             if (a.source) {
@@ -2044,6 +2105,8 @@
         return '';
     }
 
+    // suggestActions はアラートに適したボタンを返す。意図的に保守的で、
+    // 妥当な既定ターゲット（または運用者に確認できる）アクションのみを出す。
     // suggestActions returns the buttons appropriate for an alert.
     // It is intentionally conservative: only actions with a sensible default
     // target (or that can prompt the operator) are offered.
@@ -2076,6 +2139,8 @@
         return out;
     }
 
+    // runAlertAction は確認（および不足ターゲット、例: PID）を求め、
+    // その後アクション API へ POST する。
     // runAlertAction asks for confirmation (and a missing target, e.g. a PID)
     // then POSTs to the action API.
     async function runAlertAction(id, action, target) {
@@ -2120,6 +2185,8 @@
         if (modal) modal.remove();
     }
 
+    // openModal は簡単なオーバーレイモーダルを組み立てる。contentHtml は
+    // 呼び出し側で既にエスケープ済みでなければならない。
     // openModal builds a simple overlay modal. contentHtml must already be
     // escaped by the caller.
     function openModal(title, contentHtml) {
@@ -2169,6 +2236,9 @@
     // マウスとタッチの両方に対応するため Pointer Events を使用する。
     // ============================================================
     const CARD_ORDER_KEY = 'kizuna-card-order';
+    // v2: モジュール提供カードの追加でセクション順が変わり、古い保存順だと
+    // カードが末尾に戻る（または消える）。キーを上げると古い順を一度破棄し、
+    // 新しい既定順を適用する。ユーザーは後で新しい順を再保存できる。
     // v2: the section order changed when the module-provided card was added,
     // and a stale saved order would put the card back at the bottom (or drop
     // it). Bumping the key discards the stale order once so the new default
@@ -2178,6 +2248,9 @@
     // 並べ替え対象。ゲージカード4枚は .gauge-grid 内、履歴・プラグイン・
     // アラートの3セクションは .main 直下で、それぞれ独立に並べ替えられる。
     const REORDER_CARD_SELECTOR = '.gauge-card';
+    // .insight-section は .alerts-section も持つ（セクションのスタイルを再利用）。
+    // そのため既に .alerts-section 部分で一致する。それでも明示するのは、
+    // スタイル用クラスが差し替わってもセクションが並べ替え可能であり続けるためだ。
     // .insight-section also carries .alerts-section (it reuses the section
     // styling), so it is matched by the .alerts-section part already. Listed
     // explicitly anyway: if the styling class is ever swapped, the section
@@ -2242,12 +2315,19 @@
         items.forEach(item => {
             // 既にハンドルがある場合は二重追加しない。
             if (item.querySelector(':scope > .drag-handle')) return;
+            // カード全体をクリック可能に保つため、ドラッグハンドルを追加する。
             // Add a drag handle so the whole card can stay clickable.
             const handle = document.createElement('button');
             handle.type = 'button';
             handle.className = 'drag-handle';
             handle.textContent = '⣿';
             handle.setAttribute('aria-label', t('card.reorder'));
+            // クリックと keydown の両方がカードへ届かないようにする。カード自体は
+            // role="button" で、Enter/Space でプロセス/ストレージモーダルを開く
+            // keydown ハンドラを持つ。以前はクリックしか止めておらず、ハンドルに
+            // フォーカスがある状態で Enter を押すとカードへ伝播しモーダルが開いた
+            // （ハンドルはフォーカス可能な <button>）。キーボードでの並べ替えは
+            // 非対応なので、ハンドルは自身のキーイベントを飲み込むべきだ。
             // Stop the click AND the keydown from reaching the card. The card
             // itself is role="button" with a keydown handler that opens the
             // process/storage modal on Enter/Space. Only the click was stopped
@@ -2293,6 +2373,10 @@
             try { item.setPointerCapture(e.pointerId); } catch (_) {}
         }
 
+        // autoScroll はポインタが上端/下端付近にある間ウィンドウをスクロールし、
+        // 背の高いカード/セクションを、スクロールのために離さず遠くへ
+        // ドロップできるようにする（以前の実装はポインタが別カード上にある
+        // 必要があり、項目がビューポートより高いと難しい）。
         // autoScroll scrolls the window while the pointer is near the top or
         // bottom edge, so a tall card/section can be dropped far away without
         // letting go to scroll (the previous implementation required the
@@ -2308,6 +2392,10 @@
             }
         }
 
+        // onMove はドラッグ中要素を、他項目の中間点に、それらのバウンディング
+        // 矩形だけに基づいて挿入する。elementFromPoint（ポインタが上にある間は
+        // ドラッグ中要素を返す）を使わず、特定ターゲットへホバーする必要も無い
+        // ため、全幅セクションでも並べ替えが滑らかだ。
         // onMove inserts the dragged element at the midpoint between the other
         // items, based only on their bounding rectangles. It does not use
         // elementFromPoint (which returns the dragged element while the
@@ -2344,12 +2432,17 @@
         }
 
         items.forEach(item => {
+            // setup の再実行（例: モジュール提供カード挿入後）で同じ項目に二重に
+            // リスナーが付かないようにするガード。
             // Guard so re-running setup (e.g. after a module-provided card is
             // inserted) does not attach a second listener to the same item.
             if (item.dataset.reorderBound === '1') return;
             item.dataset.reorderBound = '1';
             item.addEventListener('pointerdown', (e) => onDown(e, item));
         });
+        // ドキュメントレベルのリスナーはコンテナごとに1回だけ束縛する。
+        // onMove/onUp はクロージャの `dragging` を操作するため、グローバル
+        // シングルトンではなくこのコンテナのクロージャに属する必要がある。
         // Document-level listeners are bound once per container. onMove/onUp
         // operate on the closure's `dragging`, so they must belong to this
         // container's closure, not a global singleton.
@@ -2475,9 +2568,12 @@
         loadAlertThresholds();
         setInterval(loadAlertThresholds, 30000);
 
+        // 言語変更時に動的テキストを再描画する。
         // Re-render dynamic text on language change.
         window.addEventListener('kizuna-lang-change', () => {
             setConnectionState(currentConnectionState);
+            // setTheme は新しい言語でテーマラベルを再適用し、ステータスがある場合は
+            // ダッシュボードのテキストを再描画する。
             // setTheme re-applies the theme label in the new language and, when
             // a status is present, re-renders the dashboard text.
             setTheme(getTheme());

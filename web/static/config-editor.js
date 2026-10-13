@@ -3,6 +3,7 @@
 document.addEventListener('DOMContentLoaded', function () {
     'use strict';
 
+    // ----- 要素 -----
     // ----- elements -----
     const configEditor = document.getElementById('configEditor');
     const editorTitle = document.getElementById('editorTitle');

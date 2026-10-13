@@ -133,6 +133,7 @@
         dropdown.className = 'account-dropdown';
         dropdown.hidden = true;
 
+        // --- ヘッダー: アバター + 名前 + ロール ---
         // --- header: avatar + name + role ---
         const head = document.createElement('div');
         head.className = 'account-head';
@@ -184,6 +185,7 @@
             dropdown.appendChild(fileInput);
         }
 
+        // --- ログアウト ---
         // --- logout ---
         const sep = document.createElement('div');
         sep.className = 'account-sep';

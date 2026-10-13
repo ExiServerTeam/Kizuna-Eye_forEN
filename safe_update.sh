@@ -14,7 +14,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 
 BIN_DIR="${KIZUNA_BIN_DIR:-/opt/kizuna-eye/bin}"
 PLUGIN_OUT_DIR="${KIZUNA_PLUGIN_OUT_DIR:-$BIN_DIR/plugins}"
-# Must match update.sh's default (/var/backups/kizuna-eye). If the two
+# update.sh の既定（/var/backups/kizuna-eye）と一致させる必要がある。2つの
+# スクリプトが別ディレクトリを解決すると、このラッパーは update.sh が作った
+# バックアップを見つけられず、下のヘルスチェックによるロールバックが黙って
+# 何もせず、壊れたバイナリが残る。
+# Must match update.sh.s default (/var/backups/kizuna-eye). If the two
 # scripts resolve different directories, this wrapper cannot find the backup
 # update.sh just made, so the health-check rollback below silently does
 # nothing and a broken binary is left in place.
@@ -61,7 +65,10 @@ restart_services() {
 # update.sh と同じ規則でバックアップ先を解決する（/opt が sudo 所有のときは
 # HOME 配下へ退避）。ここがずれるとロールバック先を見失う。
 if ! mkdir -p "$BACKUP_ROOT" 2>/dev/null || [ ! -w "$BACKUP_ROOT" ]; then
-    # Mirror update.sh's fallback exactly ($HOME/.kizuna-eye/backup), ignoring
+    # update.sh のフォールバック（/.kizuna-eye/backup）を正確に踏襲し、
+    # ここでは KIZUNA_BACKUP_DIR を無視する。update.sh も同様なので、env が
+    # 書込不可のパスを指しても両スクリプトは同じディレクトリを指す。
+    # Mirror update.sh.s fallback exactly (/.kizuna-eye/backup), ignoring
     # KIZUNA_BACKUP_DIR here: update.sh does the same, so both scripts point at
     # the same directory even when the env var names an unwritable path.
     BACKUP_ROOT="$HOME/.kizuna-eye/backup"
@@ -109,6 +116,12 @@ if [ -n "$LATEST_BACKUP" ]; then
     for f in agent_linux dashboard_linux plugin-inspect plugin-sign; do
         [ -f "$LATEST_BACKUP/$f" ] && cp -a "$LATEST_BACKUP/$f" "$BIN_DIR/$f"
     done
+    # プラグインも復元する。Go プラグインは host バイナリのパッケージハッシュに
+    # 正確に一致する必要があるため、バイナリだけ戻して新しくビルドした .so を
+    # 残すと、古い host がそれらをロードできなくなる（"plugin was built with a
+    # different version of package ..."）。update.sh 自身のロールバックも同じ理由で
+    # プラグインを復元する。このラッパーも同様にしないと、ロールバックが
+    # サービスを壊れた状態のまま残す。
     # Restore the plugins too. Go plugins must match the host binary's package
     # hashes exactly, so rolling back only the binaries while leaving the
     # newly built .so files in place makes the old host fail to load them
@@ -118,6 +131,9 @@ if [ -n "$LATEST_BACKUP" ]; then
     if [ -d "$LATEST_BACKUP/plugins" ]; then
         mkdir -p "$PLUGIN_OUT_DIR" 2>/dev/null || true
         cp -a "$LATEST_BACKUP/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+        # .so と一緒に署名も復元する。.so だけ戻すと新しい .sig が残り、古い .so が
+        # 一致しなくなり、plugins.require_signature=true が全プラグインのロードを
+        # 拒否する（ロールバックが全セキュリティ監視を黙って無効化してしまう）。
         # Restore the signatures with the .so files. Restoring only the .so
         # leaves the NEW .sig in place, so the OLD .so no longer matches and
         # plugins.require_signature=true refuses to load every plugin (the

@@ -281,6 +281,9 @@ if [ -f "$ACTION_SERVER_SRC" ] && [ -f systemd/kizuna-action.socket ]; then
     fi
 fi
 
+# PLUGINS_REBUILT は実際に再ビルドできたプラグイン .so の数を数える。
+# 共有パッケージが変わったのにプラグインが1つも再ビルドできなかった場合、
+# 再起動を拒否するために使う（配備済み .so はロードに失敗するため）。
 # PLUGINS_REBUILT counts how many plugin .so files were actually rebuilt.
 # It is used below to refuse a restart when a shared package changed but no
 # plugin could be rebuilt (the deployed .so would then fail to load).

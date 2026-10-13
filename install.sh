@@ -119,6 +119,7 @@ tr_msg() {
         "不足分があります（--no-install のためスキップ）: "*)
             m="Missing packages (skipped, --no-install): ${m#不足分があります（--no-install のためスキップ）: }" ;;
         "必要なパッケージは揃っています") m="All required packages are present" ;;
+        # --- Go（Go ツールチェーン）---
         # --- Go ---
         "Go の確認（必要: "*"）") m="Go check (required: ${m#Go の確認（必要: })" ;;
         "検出: "*) m="Detected: ${m#検出: }" ;;
@@ -184,6 +185,7 @@ tr_msg() {
         "対処ヘルパーの設置に失敗しました: "*) m="Failed to install the action helper: ${m#対処ヘルパーの設置に失敗しました: }" ;;
         "対処用 sudoers の設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:")
             m="Failed to write the action sudoers (visudo or permissions). Configure manually:" ;;
+        # --- systemd（サービス登録）---
         # --- systemd ---
         "systemd 登録（dashboard + agent）") m="Registering systemd services (dashboard + agent)" ;;
         "sudo が使えないため systemd 登録をスキップします。手動で: sudo systemd/migrate-agent-user.sh "*)
@@ -338,6 +340,9 @@ fi
 
 log ""
 log "▶ パッケージ確認 (PM=${PM:-none})"
+# pkg_installed は検出したパッケージマネージャを使い、パッケージが導入済みかを返す。
+# この検査が無いと EXTRA_PKGS（例: ca-certificates）が無条件に追加され、
+# 不足が無くても毎回 `apt-get install` が走っていた。
 # pkg_installed reports whether a package is already installed, using the
 # detected package manager. Without this check EXTRA_PKGS (e.g.
 # ca-certificates) were appended unconditionally, so `apt-get install` ran on
@@ -357,6 +362,9 @@ for entry in "${REQUIRED[@]}"; do
     cmd="${entry%%:*}"; pkg="${entry##*:}"
     if command -v "$cmd" >/dev/null 2>&1; then ok "$cmd"; else err "$cmd （未導入 → $pkg）"; MISSING_PKGS+=("$pkg"); fi
 done
+# 追加パッケージは未導入のときだけ加える。`set -u` 下の空 EXTRA_PKGS に対して
+# ループを保護する。空配列の `"${arr[@]}"` は bash < 4.4 で
+# unbound-variable エラーになる。
 # Only add an extra package when it is not already installed. Guard the loop
 # against an empty EXTRA_PKGS under `set -u`: `"${arr[@]}"` on an empty array
 # is an unbound-variable error on bash < 4.4.
@@ -380,6 +388,7 @@ else
     ok "必要なパッケージは揃っています"
 fi
 
+# ---- 3. Go 1.27.2（Go の確認）----
 # ---- 3. Go 1.27.2 ----
 log ""
 log "▶ Go の確認（必要: ${GO_REQUIRED}）"
@@ -607,6 +616,10 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
             SMARTCTL_PATH=""
         fi
         RUN_USER="${SUDO_USER:-$(id -un)}"
+        # smartctl を実行するのは agent であり、H-1 以降は専用ユーザー kizuna-eye と
+        # して動く。install.sh を実行した運用者に NOPASSWD を与えると、agent は
+        # ヘルパーを使えず、運用者には不要な root 権限が渡ってしまう。
+        # サービスユーザーが存在する場合はそちらを優先する。
         # The agent is the process that runs smartctl, and after H-1 it runs as
         # the dedicated user kizuna-eye. Granting NOPASSWD to the operator who
         # ran install.sh would leave the agent unable to use the helper while
@@ -648,6 +661,10 @@ if [ "$SETUP_SUDOERS" -eq 1 ]; then
     log ""
     log "▶ cron 読み取りヘルパーの導入"
     CRON_USER="${SUDO_USER:-$(id -un)}"
+    # cron ヘルパーを実行するのは agent であり、H-1 以降は kizuna-eye だ。
+    # 運用者に与えると agent に使えるフォールバックが無くなる。
+    # cron ヘルパーを実行するのは agent であり、H-1 以降は kizuna-eye だ。
+    # 運用者に与えると agent に使えるフォールバックが無くなる。
     # The agent runs the cron helper; after H-1 that is kizuna-eye. Granting the
     # operator instead would leave the agent without a usable fallback.
     if id kizuna-eye >/dev/null 2>&1; then CRON_USER="kizuna-eye"; fi

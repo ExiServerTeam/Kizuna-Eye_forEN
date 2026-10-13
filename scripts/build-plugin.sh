@@ -101,6 +101,13 @@ PLUGIN_LDFLAGS="-s -w"
 if [ "${KIZUNA_DEBUG_BUILD:-0}" = "1" ]; then
     PLUGIN_LDFLAGS=""
 fi
+# ABI: host リポジトリも含めた combined go.work の下でプラグインをビルドする。
+# GOWORK=off だとプラグインは自身の `replace Kizuna-Eye => ...` で Kizuna-Eye を
+# 解決し、workspace ビルドの host とは全共有パッケージ（pkg/module、pkg/status、
+# pkg/fsutil）で異なる build ID を生む。その単一プラグインは、同一ツールチェーンと
+# -trimpath でも "plugin was built with a different version of package
+# Kizuna-Eye/pkg/fsutil" で稼働中 agent へのロードに失敗する。host とプラグイン
+# ディレクトリを1つの workspace に列挙するとモジュールグラフが同一になる。
 # ABI: build the plugin under a combined go.work that ALSO includes the host
 # repo. With GOWORK=off the plugin resolves Kizuna-Eye via its own
 # `replace Kizuna-Eye => ...`, which yields a DIFFERENT build ID for every

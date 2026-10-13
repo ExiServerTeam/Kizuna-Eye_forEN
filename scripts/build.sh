@@ -7,6 +7,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 export PATH="$PATH:/usr/local/go/bin"
+# 正確なパッチを固定する。host と全プラグインは同一ツールチェーンを使う
+# 必要がある。さもないと plugin.Open が
+# "different version of package" で失敗する。
 # Pin the exact patch: host and every plugin must use the SAME toolchain, or
 # plugin.Open fails with "different version of package".
 export GOTOOLCHAIN=${GOTOOLCHAIN:-auto}

@@ -100,8 +100,14 @@ mkdir -p logs
 export GOGC="${KIZUNA_GOGC:-50}"
 export GOMEMLIMIT="${KIZUNA_GOMEMLIMIT:-64MiB}"
 
+# is_running <binary-name> -> 実行中なら 0 を返す。
 # is_running <binary-name> -> 0 if running
 is_running() {
+    # NOTE: $name は必ず独立した行で代入する。シェルは `local` 実行前に全引数を
+    # 展開するため、1行にまとめた
+    #   local name="$1" pidfile="$RUN_DIR/$name.pid"
+    # は $name を呼び出し側/グローバルから（または空で）展開し、この関数は
+    # "$RUN_DIR/.pid" を見てプロセスを永遠に見つけられない。
     # NOTE: $name must be assigned on its own line. The shell expands every
     # argument before `local` runs, so a single combined
     #   local name="$1" pidfile="$RUN_DIR/$name.pid"

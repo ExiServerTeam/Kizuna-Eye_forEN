@@ -8,6 +8,7 @@
 
     const DICT = {
         ja: {
+            // --- ナビ ---
             // --- nav ---
             'nav.dashboard': 'ダッシュボード',
             'nav.modules': 'モジュール管理',
@@ -28,6 +29,7 @@
             'theme.toggle_to_light': 'ライトモードに切り替え',
             'theme.toggle_to_dark': 'ダークモードに切り替え',
 
+            // --- テーマ / 言語 ---
             // --- theme / lang ---
             'theme.dark': 'ダーク',
             'theme.light': 'ライト',
@@ -35,11 +37,13 @@
             'lang.label': 'JA',
             'lang.toggle': '言語切り替え',
 
+            // --- 接続 ---
             // --- connection ---
             'status.connected': '接続中',
             'status.connecting': '接続中...',
             'status.disconnected': '切断',
 
+            // --- ダッシュボードカード ---
             // --- dashboard cards ---
             'card.cpu': 'CPU',
             'card.memory': 'メモリ',
@@ -55,6 +59,7 @@
             'card.temp.na': 'N/A℃',
             'card.temp.na.tooltip': 'センサーの初期化中です。\nまたは非対応か、温度が室温以下のため表示できません。',
 
+            // --- 稼働時間 ---
             // --- uptime ---
             'uptime.boot_time': '起動日時',
             'uptime.load_avg': '平均負荷',
@@ -65,6 +70,7 @@
             'uptime.minutes_seconds': '{0}分{1}秒',
             'uptime.seconds': '{0}秒',
 
+            // --- ディスク ---
             // --- disk ---
             'disk.health.ok': '正常',
             'disk.health.fail': '異常',
@@ -89,6 +95,7 @@
             'storage.ssd': 'SSD',
             'storage.smart_unavailable': 'smartctl 未検出のため S.M.A.R.T 情報は取得できません',
 
+            // --- プラグインセクション ---
             // --- plugin section ---
             'plugin.section_title': 'モジュールステータス',
             'plugin.empty': 'モジュールが登録されていません',
@@ -288,6 +295,7 @@
             'config.gui_help_agent': 'エージェント（監視される側）の設定です。各項目に値を入力し、最後に「保存」を押してください。',
             'config.gui_help_dashboard': 'ダッシュボード（監視する側）の設定です。各項目に値を入力し、最後に「保存」を押してください。',
 
+            // --- 設定エディタ GUI スキーマ ---
             // --- config editor GUI schema ---
             'config.g.agent.conn': '接続先',
             'config.g.agent.behavior': '動作',
@@ -348,6 +356,7 @@
             'modules.group_basic': '基本設定',
             'modules.plugin_config_heading': 'モジュール設定',
 
+            // --- ステータス ---
             // --- statuses ---
             'status.success': '成功',
             'status.ok': '正常',
@@ -361,6 +370,7 @@
             'status.critical': '重大',
             'status.unknown': '不明',
 
+            // --- プロセスモーダル ---
             // --- process modal ---
             'process.title_cpu': 'プロセス一覧 (Top 10 / CPU順)',
             'process.title_mem': 'プロセス一覧 (Top 10 / メモリ順)',
@@ -380,6 +390,7 @@
             'process.close': '閉じる',
             'process.card_hint': 'クリックで詳細',
 
+            // --- トースト ---
             // --- toast ---
             'toast.mem_high': 'メモリ使用率が {0}% に達しました',
             'toast.disk_low': 'ストレージの空きが {0}% を切りました',
@@ -388,9 +399,11 @@
             'toast.disconnected': 'サーバーとの接続が切断されました。再接続を試みています。',
             'toast.reconnected': 'サーバーとの接続が復帰しました。',
 
+            // --- フッター ---
             // --- footer ---
             'footer.text': 'Kizuna-Eye {0} · リアルタイムシステムモニタリング',
 
+            // --- フッターのタグライン / ページタイトル ---
             // --- footer tagline / page titles ---
             'footer.tagline': 'リアルタイムシステムモニタリング',
             'config.page_title': '設定エディタ - Kizuna-Eye',
@@ -399,6 +412,7 @@
             'login.page_title': 'Kizuna-Eye - ログイン',
             'setup.page_title': 'Kizuna-Eye - 初期セットアップ',
 
+            // --- 認証ページ（ログイン / セットアップ）---
             // --- auth pages (login / setup) ---
             'login.subtitle': 'ログイン',
             'login.username': 'ユーザー名',
@@ -422,6 +436,7 @@
             'setup.err_failed': 'セットアップに失敗しました',
             'setup.err_network': '通信エラーが発生しました',
 
+            // --- モジュールページ ---
             // --- modules page ---
             'modules.page_title': 'Kizuna-Eye - モジュール管理',
             'modules.heading': 'モジュール管理',
@@ -531,6 +546,7 @@
             'common.delete': '削除する',
             'common.close': '閉じる',
 
+            // --- ユーザー ---
             // --- users ---
             'users.title': 'ユーザー管理',
             'users.add': '+ ユーザーを追加',
@@ -656,6 +672,7 @@
             'disk.health.ok': 'OK',
             'disk.health.fail': 'FAIL',
 
+            // --- ストレージ（CrystalDiskInfo 風モーダル）---
             // --- storage (CrystalDiskInfo-style modal) ---
             'storage.modal_title': 'Storage Details',
             'storage.col_path': 'Mount',
@@ -763,6 +780,7 @@
             'alerts.a_confirm': 'Run "{0}"? Target: {1}',
             'alerts.a_done': 'Action executed and recorded in the alert history',
             'alerts.a_failed': 'Action failed: {0}',
+            // --- アラートレベル（より明確な表現）---
             // --- alert levels (clearer wording) ---
             'level.info': 'Caution',
             'level.warning': 'Alert',
@@ -874,6 +892,7 @@
             'config.gui_help_agent': 'Settings for the agent (the monitored side). Fill in each field and press Save at the bottom.',
             'config.gui_help_dashboard': 'Settings for the dashboard (the monitoring side). Fill in each field and press Save at the bottom.',
 
+            // --- 設定エディタ GUI スキーマ ---
             // --- config editor GUI schema ---
             'config.g.agent.conn': 'Connection',
             'config.g.agent.behavior': 'Behavior',
@@ -1053,8 +1072,10 @@
             'modules.fail.unknown': 'Failed to load the module. Check the settings and logs.',
             'modules.label_interval': 'Interval: {0}s',
             'modules.label_log': 'Log: {0}',
+            // プラグイン設定の選択肢ラベル（EN）。プラグイン自身の語彙に合わせ、
+            // 生の enum 値のままにする。
             // Select option labels for plugin settings (EN). These stay as the
-            // raw enum values so they match the plugin's own vocabulary.
+            // raw enum values so they match the plugin.s own vocabulary.
             'opt.critical': 'critical',
             'opt.warning': 'warning',
             'opt.info': 'info',
@@ -1110,6 +1131,7 @@
             'common.delete': 'Delete',
             'common.close': 'Close',
 
+            // --- ユーザー ---
             // --- users ---
             'users.title': 'User Management',
             'users.add': '+ Add User',
@@ -1195,6 +1217,8 @@
             if (saved && DICT[saved]) return saved;
         } catch (e) {}
 
+        // dashboard_config.json（language）のサーバー側既定。install.sh が設定する。
+        // 未知/未設定は "en" を意味する。/lang.js 経由で配信される。
         // Server-side default from dashboard_config.json (language). install.sh
         // sets this; unknown/unset means "en". Served via /lang.js.
         const def = (window.KIZUNA_DEFAULT_LANG || '').toLowerCase();
@@ -1217,7 +1241,11 @@
         }
         const args = Array.prototype.slice.call(arguments, 1);
         args.forEach(function (val, i) {
-            // Use a function replacement so "$" in val (e.g. $&, $1) is treated
+            // val 内の " （例:             // Use a function replacement so "$" in val (e.g. $&, $1) is treated
+            // literally instead of as a special replacement pattern., ）を特殊な置換パターンではなくリテラルとして
+            // 扱うため、関数置換を使う。
+            // Use a function replacement so "  in val (e.g.             // Use a function replacement so "$" in val (e.g. $&, $1) is treated
+            // literally instead of as a special replacement pattern., ) is treated
             // literally instead of as a special replacement pattern.
             str = str.replace(new RegExp('\\{' + i + '\\}', 'g'), function () { return String(val); });
         });
@@ -1262,6 +1290,8 @@
             const key = el.getAttribute('data-i18n-aria-label');
             if (key) el.setAttribute('aria-label', t(key));
         });
+        // ドキュメントタイトル: ページが <html> に data-i18n-doc-title を設定すると、
+        // ブラウザタブのタイトルが翻訳される（例: "Kizuna-Eye - Logs"）。
         // Document title: a page sets data-i18n-doc-title on <html> to have its
         // browser-tab title translated (e.g. "Kizuna-Eye - Logs").
         scope.querySelectorAll('[data-i18n-doc-title]').forEach(function (el) {

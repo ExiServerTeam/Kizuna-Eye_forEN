@@ -555,6 +555,7 @@ body {
     cursor: grabbing;
 }
 
+/* ドラッグ中はカードを持ち上げ、ホバー時の持ち上げ変形を止める。 */
 /* While dragging, lift the card and stop the hover lift transform. */
 .gauge-card.dragging {
     opacity: 0.6;
@@ -569,6 +570,7 @@ body {
     outline-offset: 3px;
 }
 
+/* デスクトップでのドラッグ中にテキスト選択を防ぐ。 */
 /* Prevent text selection while dragging on desktop. */
 body.card-dragging {
     user-select: none;
@@ -2925,6 +2927,7 @@ body.card-dragging {
 
     .logo { font-size: 1.15rem; }
 
+    /* ヘッダーのコントロールは画面からあふれず、折り返す必要がある。 */
     /* Header controls must wrap instead of overflowing the screen. */
     .header {
         gap: 8px;
@@ -3751,6 +3754,7 @@ html {
     html { font-size: 13px; }
 }
 
+/* フェーズ V5: アラートのソースバッジ（trusted=dashboard / untrusted=agent） */
 /* Phase V5: alert source badge (trusted=dashboard / untrusted=agent) */
 .alert-source-badge {
     display: inline-flex;

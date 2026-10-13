@@ -14,6 +14,9 @@
     /* max(env()) 非対応の古いブラウザでは top/right が丸ごと無効になり、
        ボタンが通常フロー位置（カード中央付近）に浮く。先に固定値を書き、
        対応ブラウザだけ env() でセーフエリアを考慮する。 */
+    /* max(env()) 非対応の古いブラウザでは top/right が丸ごと無効になり、
+       ボタンが通常フロー位置（カード中央付近）に浮く。先に固定値を書き、
+       対応ブラウザだけ env() でセーフエリアを考慮する。 */
     /* On older browsers without max(env()), top/right is dropped entirely
        and the button floats in the normal flow (near the card centre).
        Write the fixed value first; only browsers that support env()
@@ -402,6 +405,7 @@
    表示崩れ防止（ログイン / ユーザー管理）
    ============================================================ */
 /* ============================================================
+   Layout-stability guards（ログイン / ユーザー管理）
    Layout-stability guards (login / user management)
    ============================================================ */
 *,

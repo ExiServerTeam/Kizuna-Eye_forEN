@@ -83,5 +83,11 @@ jobs:
           node scripts/check_xss.js
           node scripts/check_i18n.js
 
+      - name: Check bilingual comments (JA + EN)
+        run: |
+          node scripts/check_comments.cjs --strict --no-tests cmd internal pkg
+          node scripts/check_comments.cjs --strict --lang js web/static
+          node scripts/check_comments.cjs --strict --lang sh .
+
       - name: Check that no secrets are committed
         run: bash scripts/check_secrets.sh

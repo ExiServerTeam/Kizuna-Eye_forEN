@@ -2,6 +2,7 @@
 // Kizuna-Eye - モジュール管理 JavaScript
 // Phase 8-5: 手動実行ボタン追加
 // Kizuna-Eye - module management JavaScript
+// フェーズ8-5: 手動実行ボタンを追加
 // Phase 8-5: added the manual run button
 // ============================================
 
@@ -115,6 +116,7 @@
         return (fields || []).filter(f => !ADMIN_ONLY_CONFIG_FIELDS.has(f.key));
     }
 
+    // プラグインごとの最新バックアップ状態。WS の backup_result イベントで更新する。
     // Latest backup status per plugin, updated from WS backup_result events.
     const moduleStatus = new Map();
 
@@ -473,7 +475,8 @@
     }
 
     // ============================================================
-    // API
+    // API（バックエンド通信）
+    // API (backend communication)
     // ============================================================
     async function fetchModules() {
         try {

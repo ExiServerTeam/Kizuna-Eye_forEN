@@ -1,9 +1,13 @@
 #!/bin/bash
 set -e
-umask 077  # New files: 0600/0700 (owner-executable binaries)
+umask 077  # 新規ファイルは 0600/0700（所有者のみ実行可能なバイナリ）
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
 export PATH="$PATH:/usr/local/go/bin"
+# 正確なパッチを固定する。host と全プラグインは同一ツールチェーンで
+# ビルドしなければならない。さもないと plugin.Open が
+# "different version of package" で失敗する。
+# GOTOOLCHAIN=auto は未導入時に go1.27.2 を取得させる。
 # Pin the exact patch: host and every plugin must be built with the SAME
 # toolchain, or plugin.Open fails with "different version of package".
 # GOTOOLCHAIN=auto lets this fetch go1.27.2 if it is not installed yet.
@@ -45,6 +49,8 @@ echo "🔨 ビルド中... (version=${VERSION}, go=$(GOTOOLCHAIN=${PINNED_GO} go
 CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-inspect" ./cmd/plugin-inspect
 CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/dashboard_linux" ./cmd/dashboard
 CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/agent_linux" ./cmd/agent
+# A-3: プラグイン署名ツール（Ed25519）。CGO は不要だが、ツールチェーンを
+# 揃えるため他バイナリと同じビルドフラグを保つ。
 # A-3: plugin signing helper (Ed25519). CGO is not required, but keep the
 # build flags identical to the other binaries for a consistent toolchain.
 CGO_ENABLED=1 GOTOOLCHAIN=${PINNED_GO} go build -buildvcs=false ${TRIMPATH} -ldflags "$LDFLAGS" -o "$BIN_DIR/plugin-sign" ./cmd/plugin-sign

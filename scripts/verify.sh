@@ -250,6 +250,9 @@ check_json() {
     fi
 }
 
+# check_json_empty_ok: check_json と同様だが、空配列 / null ボディも
+# 許容する。新規インストールで正当に空となるエンドポイント
+# （例: モジュール追加前の /api/modules）に使う。
 # check_json_empty_ok: like check_json, but an empty array / null body is
 # also accepted. Used for endpoints that are legitimately empty on a fresh
 # install (e.g. /api/modules before any module is added).
@@ -267,6 +270,8 @@ check_json_empty_ok() {
         ok "GET $path ($key)"
         return
     fi
+    # 新規インストールにはモジュールが無い: 応答は [] か null（または空リストを
+    # 持つオブジェクト）だ。これを正常な非エラー結果として受け付ける。
     # A fresh install has no modules: the response is [] or null (or an
     # object with an empty list). Accept that as a valid, non-error result.
     if [ "$code" = "200" ] && { [ "$body" = "[]" ] || [ "$body" = "null" ]; }; then

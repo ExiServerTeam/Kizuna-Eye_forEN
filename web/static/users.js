@@ -109,6 +109,7 @@
             .catch(function () { alert(t('users.network_error')); });
     }
 
+    // ---- 追加モーダル ----
     // ---- add modal ----
     document.getElementById('addUserBtn').addEventListener('click', function () {
         addModal.hidden = false;

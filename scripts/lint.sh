@@ -17,6 +17,7 @@ else
     echo "[lint] gofmt: OK"
 fi
 
+# 2) go vet による静的検査
 # 2) go vet
 if go vet ./...; then
     echo "[lint] go vet: OK"
