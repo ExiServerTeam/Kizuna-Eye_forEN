@@ -43,7 +43,7 @@ SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-}"
 log() { echo "[build-all] $*"; }
 
 log "1/3 host binaries"
-VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.7.1)}"
+VERSION="${VERSION:-$(cat VERSION 2>/dev/null || echo v0.8.0)}"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LDFLAGS="-X Kizuna-Eye/internal/api.Version=${VERSION} -X Kizuna-Eye/internal/api.BuildTime=${BUILD_TIME}"
 # メモリ最適化: -s -w でバイナリを約3割縮める（RSS の大半は

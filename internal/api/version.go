@@ -11,7 +11,7 @@ import (
 // file (see build.sh / Makefile), so this literal is only the fallback used
 // when the binary is built without ldflags (e.g. a bare `go run`). Keep it in
 // step with VERSION so a non-ldflags build does not report a stale version.
-var Version = "v0.7.1"
+var Version = "v0.8.0"
 
 // BuildTime is the build timestamp (optional).
 var BuildTime = ""

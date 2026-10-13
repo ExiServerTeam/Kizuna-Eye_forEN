@@ -45,7 +45,7 @@ for html in "$STATIC_DIR"/*.html; do
     # file and substitute it. External URLs (http/https/protocol-relative) are
     # skipped: their content is not ours to hash.
     while IFS= read -r ref; do
-        # ref is e.g. /app.js?v=0.7.1 ; split path and drop the query
+        # ref is e.g. /app.js?v=0.8.0 ; split path and drop the query
         path="${ref%%\?*}"
         # Only local, non-external references.
         case "$path" in

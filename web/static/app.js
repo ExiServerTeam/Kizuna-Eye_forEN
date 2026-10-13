@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.7.1';
+    const VERSION = 'v0.8.0';
 
     const GAUGE = {
         radiusRatio: 0.40,

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-12
+
 ### Fixed
 - モジュール提供カード（iframe）がライトモードでも暗いままになる問題への対応。コアは iframe の URL に `&theme=dark|light` を付与し、テーマ切替時に再読み込みするようにした（`web/static/app.js`）。あわせて Kizuna-Security の Web UI（`webui.go`）が `?theme=` を読み、`html[data-theme]` に応じて背景・文字色を切り替える（ダーク `#17181c` / ライト `#ffffff`）ようにした。従来は `background:transparent` ＋ OS の `prefers-color-scheme` 依存で、ダッシュボードのテーマに追従しなかった。
 - **プラグイン ABI の重大な落とし穴（-trimpath）**: ホスト（agent / plugin-inspect）は `-trimpath` 付きでビルドされているため、プラグイン `.so` を `-trimpath` **なし**でビルドすると標準ライブラリ（`cmp` 等）のビルドハッシュが食い違い、`plugin was built with a different version of package cmp` でロードに失敗する（実機で発生）。プラグインは必ず `go build -trimpath -buildvcs=false -buildmode=plugin` でビルドする（`build-all.sh` / `scripts/build-plugin.sh` / `update.sh` は対応済みだが、手動ビルド時は要注意）。
