@@ -111,12 +111,50 @@
 }
 
 /* ===== ベース ===== */
+/* 基準フォントを 16px -> 17px に上げる。ページ内の文字はほぼ rem 指定なので、
+   ここ 1 箇所で全体が連動して大きくなる（個別指定の小さい文字は下で底上げ）。 */
+html {
+    font-size: 17px;
+}
+
 body {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: var(--bg-primary);
     color: var(--text-primary);
+    font-size: 1rem;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+}
+
+/* 小さい文字（0.6〜0.75rem 台）は据え置きだと小さすぎるため、下限を上げる。 */
+.cpu-model,
+.temp-badge,
+.free-badge,
+.status-badge,
+.version-badge,
+.gauge-title,
+.process-hint,
+.storage-hint {
+    font-size: 0.82rem;
+}
+
+.nav-tab {
+    font-size: 0.95rem;
+}
+
+.gauge-detail,
+.gauge-value {
+    font-size: 1.05rem;
+}
+
+.backup-header h2,
+.plugin-list-title {
+    font-size: 1rem;
+}
+
+.process-table {
+    font-size: 0.95rem;
 }
 
 .app { position: relative; }
