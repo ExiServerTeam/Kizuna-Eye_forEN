@@ -1,15 +1,107 @@
 # Security Policy
 
+Kizuna-Eye のセキュリティポリシーです。脆弱性の報告方法・サポート範囲・
+修正ポリシー・既知の制約をまとめます。
+
 ## Supported Versions
+
+最新のマイナー系列のみをサポートします。
 
 | Version | Supported |
 |---------|-----------|
-| 0.6.x   | Yes       |
+| 0.7.x   | Yes       |
+| 0.6.x   | No        |
 | < 0.6   | No        |
+
+セキュリティ修正は原則として最新系列に対してのみ提供します。
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability, please send an email to
-sy815twty@gmail.com. Do not open a public issue.
+脆弱性を発見した場合は、**公開 Issue を立てず**、次のいずれかで非公開に
+報告してください。
 
-We will respond within 48 hours and provide a timeline for a fix.
+- メール: sy815twty@gmail.com
+- GitHub Security Advisories（Private vulnerability reporting）
+
+48 時間以内に一次応答し、修正までの見込み期間を提示します。
+
+### 報告に含めてほしい情報
+
+- 影響を受けるバージョン（`VERSION` または `version-badge`）
+- 再現手順（最小構成が望ましい）
+- 想定される影響（RCE / 情報漏洩 / DoS / 権限昇格など）
+- 可能なら PoC（実行しない形での説明でも可）
+
+### 報告の暗号化（任意）
+
+機微な内容（エクスプロイト・鍵・実 IP 等）を含む場合は、PGP 暗号化を
+希望できます。公開鍵は次の方法で取得してください。
+
+- リポジトリの `SECURITY.md` に鍵指纹（fingerprint）を掲載する運用に
+  段階的に移行します。当面はメールで「暗号化希望」と伝えてください。
+  （フィンガープリントを折り返し連絡します。）
+
+> 注: 暗号化は必須ではありません。平文でも構いませんが、認証情報・
+> 実環境の鍵・個人情報はマスクして送ってください。
+
+## Fix Policy（修正ポリシー）
+
+- 重大度は概ね次の基準で判断します。
+  - **Critical**: リモートコード実行、認証回避、署名検証の突破、
+    エージェント権限の奪取。
+  - **High**: 情報漏洩（鍵・トークン・ログ）、プラグイン機構の欠陥。
+  - **Medium**: DoS、CSRF、限定的な情報漏洩。
+  - **Low**: 防御の多層化に関わる軽微な欠陥。
+- Critical/High は最優先で修正し、パッチリリースを出します。
+- 修正は「同一ソースからの再ビルド」を前提とします（Go plugin の制約）。
+- 修正後は `CHANGELOG.md` に記載し、必要に応じて `docs/ROADMAP.md` を更新します。
+- 報告者へは修正版のリリース後、クレジット（希望があれば）を記載します。
+
+## Known Risks / 既知の制約（重要）
+
+Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**完全な防御では
+ありません**。以下は既知の制約です。利用前に必ず理解してください。
+
+### 1. 同一ユーザー権限の限界（最大の弱点）
+
+- 既定では agent と攻撃者が**同一の OS ユーザー**で動作し得ます。
+- HMAC チェーン鍵（`chain.key`）、FIM ベースライン、`security.log`、
+  `alert_history.jsonl` は同一ユーザー所有（0600）です。
+- したがって、そのユーザー権限を奪った攻撃者は鍵も状態ファイルも
+  書き換えられ、**改ざん検知の完全な防御は保証できません**。
+- 根本対策は **agent 専用ユーザー化（権限分離）** です（`docs/ROADMAP.md`
+  の H-1 / 未実装）。
+
+### 2. プラグイン機構
+
+- Go の `.so` プラグインはホストと同一権限で動作します。信頼できる
+  プラグインのみを配置してください。
+- 署名検証（Ed25519）は実装済みですが、既定では**任意**（`plugins.require_signature`）。
+  本番では有効化を強く推奨します。
+- `plugin-inspect` は `.so` を `plugin.Open` でロードしてメタデータを
+  読みます。悪意ある `.so` はこの検査プロセスでコード実行に至り得ます。
+  `bwrap` による分離（`plugins.inspect_isolation`）を推奨します。
+
+### 3. 危険なデフォルト（OSS 公開前に見直し予定）
+
+- `auth.enabled` は既定 `false`、`public_viewer` は既定 `true`、
+  `agent_token` は既定 空、`plugins.require_signature` は既定 `false`。
+- これらは「簡単」を優先した既定です。**公開ネットワークに晒す場合は
+  必ず安全側へ変更**してください（`docs/ROADMAP.md` のデフォルト変更計画）。
+
+### 4. ログのローカル性
+
+- ログはローカルに保存されます。同一ユーザー権限を奪われた場合、
+  ローカルの証跡は改ざんされ得ます。リモート転送は未実装です
+  （`docs/ROADMAP.md` のログ層）。
+
+## 運用上の推奨
+
+- 設定ファイル（`agent_config.json` / `dashboard_config.json`）は 0600 を維持。
+- 認証を有効化し、`plugins_upload_enabled=true` と併用しない。
+- HTTPS 終端（リバースプロキシ）を前段に置き、`secure_cookies` を有効化。
+- agent を専用ユーザー（systemd）で動かす（`systemd/migrate-agent-user.sh`）。
+
+## 謝辞
+
+脆弱性を報告してくださった方々に感謝します。
