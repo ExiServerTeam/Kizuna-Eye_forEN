@@ -8,6 +8,7 @@
 //     秘密を含むため 0600、ディレクトリは 0700。
 //   - 復元は原子的（fsutil.WriteFileAtomic）。復元前の現行は「上書きされる
 //     1 スロット」だけに退避する（復元は設定変更ではないので、履歴を増やさない）。
+//
 // Package configsnap keeps timestamped snapshots of configuration files so an
 // operator can roll back to any earlier point ("time travel").
 //

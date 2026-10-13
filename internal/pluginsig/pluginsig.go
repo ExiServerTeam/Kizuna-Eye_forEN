@@ -18,6 +18,7 @@
 //     すべての空白は無視する。
 //   - 検証は呼び出し側で fail-closed だ。公開鍵欠落、署名欠落、不一致は
 //     警告ではなくエラーになる。
+//
 // Package pluginsig implements detached Ed25519 signature verification for
 // plugin (.so) files. This is the root fix for hardening item A-3 (G-3):
 // loading a Go plugin executes its init()/package initializers, so a .so must

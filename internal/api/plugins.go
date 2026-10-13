@@ -342,6 +342,7 @@ func (p *PluginManager) RegisterRoutes(mux *http.ServeMux) {
 //     付けないため、iframe 内は opaque origin になり、親の cookie / 本体 API /
 //     DOM にアクセスできない。加えて実コンテンツ側 CSP で connect-src を
 //     禁止し、UI からの API 呼び出しを二重に塞ぐ。
+//
 // handleWebUI serves a plugin's bundled web UI.
 //
 // 設計書 5.4 に従い、実行方式を origin で分ける:
