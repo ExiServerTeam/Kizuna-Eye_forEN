@@ -220,11 +220,24 @@ func parseVersion(v string) []int {
 		v = v[:idx]
 	}
 	parts := strings.Split(v, ".")
+	// Cap the number of components so a pathological version string cannot
+	// make the comparison loop iterate over a huge slice.
+	if len(parts) > 16 {
+		parts = parts[:16]
+	}
 	out := make([]int, 0, len(parts))
 	for _, p := range parts {
 		n := 0
+		// Cap each numeric component. Without this a version like
+		// "99999999999999999999" overflows int and can become negative,
+		// flipping the comparison (a "newer" version compares as older,
+		// so the auto-update silently never fires). The cap is far above
+		// any real version number.
 		for _, r := range p {
 			if r < '0' || r > '9' {
+				break
+			}
+			if n > 1_000_000_000 {
 				break
 			}
 			n = n*10 + int(r-'0')
