@@ -71,6 +71,15 @@ Kizuna-Eye is intended for use within a trusted network / VPN. The following set
 - **Only place trusted plugin `.so` files.** A Go plugin runs with the same privileges as the server itself.
 - **Notification bodies contain externally derived values.** Each channel (Discord / Slack / Telegram / LINE) escapes and disables mentions.
 
+## Plugin rebuild note (important)
+
+Go's `plugin` package requires the plugin and the host to agree on a **hash of every shared package**. If you change either of the following, you must **rebuild the Agent and all plugins (`.so`) from the same source at the same time**. Rebuilding only one side fails at load time with `plugin was built with a different version of package ...`.
+
+- `pkg/module` (shared plugin types/interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
+- `pkg/status` (shared types such as `SystemStatus`)
+
+Example: 1) rebuild the host with `./build.sh`. 2) rebuild each plugin from the same source (e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`). 3) deploy the `.so` into `plugins/` and restart the agent.
+
 ## Installation
 
 ### 1. Clone the repository
