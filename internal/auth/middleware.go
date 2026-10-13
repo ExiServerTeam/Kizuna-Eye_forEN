@@ -218,6 +218,16 @@ func isPublicPath(p string) bool {
 		return true
 	}
 
+	// A plugin's bundled web UI (/plugins/{name}/...) is operator-only (it is
+	// served by handleWebUI under the /plugins rule). It must NOT slip through
+	// the static-asset rule below just because a file ends in .js/.css/etc.:
+	// otherwise /plugins/{name}/app.js would be served without a session,
+	// leaking a plugin's UI (and any data it embeds) to unauthenticated
+	// clients. Return false so the normal role check applies.
+	if strings.HasPrefix(p, "/plugins/") {
+		return false
+	}
+
 	// Static assets (CSS / JS / fonts / images) are shared by every page,
 	// including the login and setup screens which are shown before a session
 	// exists. Serving them without a session is safe: they contain no user
