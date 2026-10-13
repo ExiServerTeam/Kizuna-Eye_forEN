@@ -734,8 +734,19 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
     RUN_USER="${SUDO_USER:-$(id -un)}"
     RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
     [ -n "$RUN_HOME" ] || RUN_HOME="$HOME"
-    # dashboard の設定・ログの基準ディレクトリ（H-1 後は ~/.kizuna-eye/data）。
-    if [ -f "$RUN_HOME/.kizuna-eye/data/dashboard_config.json" ]; then
+    # 設定・ログの基準ディレクトリを解決する。優先順:
+    #   1. /var/lib/kizuna-eye/data  … H-1 (migrate-agent-user.sh) の移行先。
+    #   2. ~/.kizuna-eye/data        … 旧配置（移行前のシステム）。
+    #   3. $PWD                       … 未インストール（設定がまだ無い）。
+    #
+    # 1 を最初に見るのが重要: 移行後は ~/.kizuna-eye/data が存在しないため、
+    # 従来の判定では $PWD (リポジトリ) にフォールバックし、agent unit の
+    # ExecStart の __DATA__ をリポジトリのパスへ書き換えてしまっていた。
+    # 再インストール時に agent が誤った設定/モジュールを読む（最悪は起動失敗）
+    # 原因になる。
+    if [ -f /var/lib/kizuna-eye/data/dashboard_config.json ]; then
+        DATA_DIR="/var/lib/kizuna-eye/data"
+    elif [ -f "$RUN_HOME/.kizuna-eye/data/dashboard_config.json" ]; then
         DATA_DIR="$RUN_HOME/.kizuna-eye/data"
     else
         DATA_DIR="$PWD"
