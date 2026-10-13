@@ -142,15 +142,13 @@ body {
 
 /* ===== ヘッダー ===== */
 /* ヘッダーは 2 段構成:
-   1 段目 = ロゴ + 接続ステータス（左） / 各コントロール（右）
-   2 段目 = ナビゲーション（全幅・折り返し可）
+   1 段目 = ロゴ / 接続ステータス / ナビ / 言語・モード・バージョン
+   2 段目 = ユーザー名・ユーザー設定・ログアウト（右寄せ）
    どの幅でも要素がはみ出したり不自然に改行したりしない。 */
 .header {
     display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    column-gap: 16px;
-    row-gap: 10px;
+    flex-direction: column;
+    gap: 10px;
     padding: 14px 24px;
     border-radius: 16px;
     background: var(--bg-header);
@@ -162,13 +160,29 @@ body {
     transition: background 0.35s, border-color 0.35s, box-shadow 0.35s;
 }
 
-/* 1 段目の左側: ロゴと接続ステータスだけ。ナビは次の行へ送る。 */
-.header-left {
+/* 1 段目: ロゴ・ステータス・ナビ・コントロールを 1 行に並べる。 */
+.header-main {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
-    flex: 1 1 auto;
+    column-gap: 16px;
+    row-gap: 8px;
+    width: 100%;
     min-width: 0;
+}
+
+/* 2 段目: ユーザーメニューを右寄せで表示。 */
+.header-user {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.header-user:empty {
+    display: none;
 }
 
 .logo {
@@ -183,13 +197,11 @@ body {
     background-clip: text;
 }
 
-/* ナビは 2 段目に全幅で配置する。 */
+/* ナビは 1 段目でロゴ・コントロールの間に並べる。 */
 .nav-tabs {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    flex: 1 1 100%;
-    order: 3;
     margin-left: 0;
     min-width: 0;
 }
@@ -253,15 +265,13 @@ body {
     color: var(--status-warning);
 }
 
-.header-right {
+/* 言語・モード切替・バージョンをまとめる（ナビの右、右寄せ）。 */
+.header-controls {
     display: flex;
     align-items: center;
     gap: 12px;
-    flex: 0 0 auto;
     flex-wrap: wrap;
-    justify-content: flex-end;
     margin-left: auto;
-    order: 2;
 }
 
 .version-badge {
@@ -2338,16 +2348,14 @@ body.card-dragging {
         gap: 10px;
     }
 
-    /* スマホ: 1段目=ロゴ+ステータス / 2段目=コントロール / 3段目=ナビ */
+    /* スマホ: 1段目に全要素を折り返し配置、2段目にユーザーメニュー */
     .header {
         padding: 12px 14px;
         row-gap: 8px;
     }
 
-    .header-left {
-        flex: 1 1 auto;
-        gap: 10px;
-        min-width: 0;
+    .header-main {
+        gap: 8px 10px;
     }
 
     .logo {
@@ -2359,22 +2367,9 @@ body.card-dragging {
         padding: 2px 10px;
     }
 
-    /* コントロール群はナビの前に全幅で並べる */
-    .header-right {
-        flex: 1 1 100%;
-        order: 2;
-        gap: 8px;
-        flex-wrap: wrap;
-        justify-content: flex-start;
-        max-width: 100%;
-        margin-left: 0;
-    }
-
-    /* ナビは最下段に全幅・折り返し */
+    /* ナビは折り返して全幅で表示 */
     .nav-tabs {
         flex: 1 1 100%;
-        order: 3;
-        margin-left: 0;
         gap: 2px;
     }
 
@@ -2382,6 +2377,16 @@ body.card-dragging {
         padding: 6px 12px;
         font-size: 0.8rem;
         white-space: nowrap;
+    }
+
+    /* コントロール群は折り返して左寄せ */
+    .header-controls {
+        gap: 8px;
+        margin-left: 0;
+    }
+
+    .header-user {
+        justify-content: flex-end;
     }
 
     .gauge-grid {
@@ -2564,16 +2569,13 @@ body.card-dragging {
         gap: 8px;
     }
 
-    .header-left {
-        min-width: 0;
-        gap: 8px;
+    .header-main {
+        gap: 6px 8px;
     }
 
-    .header-right {
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        width: 100%;
+    .header-controls {
         gap: 6px;
+        margin-left: 0;
     }
 
     .version-badge { font-size: 0.6rem; padding: 3px 8px; }

@@ -38,9 +38,10 @@
             }
         });
 
-        // Show the user menu (admin only link + logout) in the header.
-        const headerRight = document.querySelector('.header-right');
-        if (!headerRight) return;
+        // Show the user menu in the second header row.
+        const headerUser = document.getElementById('headerUser')
+            || document.querySelector('.header-right');
+        if (!headerUser) return;
 
         const box = document.createElement('div');
         box.className = 'user-menu';
@@ -67,6 +68,6 @@
         });
         box.appendChild(logoutBtn);
 
-        headerRight.appendChild(box);
+        headerUser.appendChild(box);
     }
 })();
