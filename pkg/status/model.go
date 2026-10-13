@@ -26,6 +26,14 @@ type DiskInfo struct {
 	Percent float64 `json:"percent"`
 	Temp    float64 `json:"temp,omitempty"`
 	Health  string  `json:"health,omitempty"`
+
+	// Optional S.M.A.R.T metadata (present only when smartctl is
+	// available and the device reports it).
+	Model        string `json:"model,omitempty"`
+	Serial       string `json:"serial,omitempty"`
+	WriteBytes   uint64 `json:"write_bytes,omitempty"`   // total bytes written over the device lifetime
+	PowerOnHours uint64 `json:"power_on_hours,omitempty"`
+	RotationRate int    `json:"rotation_rate,omitempty"`   // RPM; 0 (SSD) and -1 (unknown) are omitted
 }
 
 // ============================================================

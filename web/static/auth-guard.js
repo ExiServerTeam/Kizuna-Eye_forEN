@@ -100,13 +100,13 @@
             fileInput.value = '';
         });
 
-        settings.appendChild(menuItem('🖼️ アイコンを変更', function () { fileInput.click(); }));
-        settings.appendChild(menuItem('🔑 パスワードを変更', function () { changeOwnPassword(); }));
+        settings.appendChild(menuItem('アイコンを変更', function () { fileInput.click(); }));
+        settings.appendChild(menuItem('パスワードを変更', function () { changeOwnPassword(); }));
         if (me.role === 'admin') {
             const usersLink = document.createElement('a');
             usersLink.className = 'account-item';
             usersLink.href = '/users.html';
-            usersLink.textContent = '👤 ユーザー管理';
+            usersLink.textContent = 'ユーザー管理';
             settings.appendChild(usersLink);
         }
         dropdown.appendChild(settings);

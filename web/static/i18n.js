@@ -4,7 +4,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.6.1';
+    const VERSION = 'v0.7.1';
 
     const DICT = {
         ja: {
@@ -53,6 +53,24 @@
             'disk.health.fail': '異常',
             'disk.health.unknown': '不明',
             'disk.free': '空き {0}',
+
+            // --- storage (CrystalDiskInfo 風モーダル) ---
+            'storage.modal_title': 'ストレージ詳細',
+            'storage.col_path': 'マウント',
+            'storage.col_model': '型番',
+            'storage.col_serial': 'シリアル',
+            'storage.col_health': '健康状態',
+            'storage.col_temp': '温度',
+            'storage.col_write': '総書込量',
+            'storage.col_power_on': '通電時間',
+            'storage.col_capacity': '容量',
+            'storage.col_usage': '使用率',
+            'storage.none': 'ディスク情報がありません',
+            'storage.not_available': '未取得',
+            'storage.power_on_hours': '{0} 時間',
+            'storage.hdd': 'HDD {0}rpm',
+            'storage.ssd': 'SSD',
+            'storage.smart_unavailable': 'smartctl 未検出のため S.M.A.R.T 情報は取得できません',
 
             // --- plugin section ---
             'plugin.section_title': 'プラグインステータス',
@@ -172,6 +190,8 @@
             'toast.disk_low': 'ストレージの空きが {0}% を切りました',
             'toast.cpu_temp_high': 'CPU温度が {0}℃ に達しました',
             'toast.cpu_high': 'CPU使用率が {0}% に達しました',
+            'toast.disconnected': 'サーバーとの接続が切断されました。再接続を試みています...',
+            'toast.reconnected': 'サーバーに再接続しました',
 
             // --- footer ---
             'footer.text': 'Kizuna-Eye {0} · リアルタイムシステムモニタリング',
@@ -325,6 +345,24 @@
 
             'disk.health.ok': 'OK',
             'disk.health.fail': 'FAIL',
+
+            // --- storage (CrystalDiskInfo-style modal) ---
+            'storage.modal_title': 'Storage Details',
+            'storage.col_path': 'Mount',
+            'storage.col_model': 'Model',
+            'storage.col_serial': 'Serial',
+            'storage.col_health': 'Health',
+            'storage.col_temp': 'Temp',
+            'storage.col_write': 'Total Written',
+            'storage.col_power_on': 'Power-On',
+            'storage.col_capacity': 'Capacity',
+            'storage.col_usage': 'Usage',
+            'storage.none': 'No disk information',
+            'storage.not_available': 'N/A',
+            'storage.power_on_hours': '{0} h',
+            'storage.hdd': 'HDD {0}rpm',
+            'storage.ssd': 'SSD',
+            'storage.smart_unavailable': 'smartctl not found; S.M.A.R.T data unavailable',
             'disk.health.unknown': 'N/A',
             'disk.free': 'Free {0}',
 
@@ -442,6 +480,8 @@
             'toast.disk_low': 'Storage free space dropped below {0}%',
             'toast.cpu_temp_high': 'CPU temperature reached {0}℃',
             'toast.cpu_high': 'CPU usage reached {0}%',
+            'toast.disconnected': 'Connection to the server was lost. Reconnecting...',
+            'toast.reconnected': 'Reconnected to the server',
 
             'footer.text': 'Kizuna-Eye {0} · Real-time System Monitoring',
 

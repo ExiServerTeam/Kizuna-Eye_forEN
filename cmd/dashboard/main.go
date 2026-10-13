@@ -826,8 +826,15 @@ func main() {
 	defer sessionMgr.Stop()
 	authHandler := auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
 	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))
+	if cfg.Auth.PublicViewer {
+		authHandler.SetAllowGuest(true)
+	}
 	authHandler.RegisterRoutes(mux)
 	authMiddleware := auth.NewMiddleware(authHandler, cfg.Auth.Enabled)
+	if cfg.Auth.PublicViewer {
+		authMiddleware.SetPublicViewer(true)
+		lg.Info("公開ビューアモード: 有効（ログイン不要で CPU/メモリ/ディスク使用率を閲覧可能）")
+	}
 
 	if cfg.Auth.Enabled {
 		switch {

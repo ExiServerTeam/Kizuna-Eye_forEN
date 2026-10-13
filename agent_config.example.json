@@ -3,5 +3,12 @@
     "interval": 1.0,
     "log_file": "logs/agent.log",
     "disk_path": "/",
-    "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING"
+    "token": "CHANGE_ME_TO_A_LONG_RANDOM_STRING",
+    "auto_update": {
+        "enabled": false,
+        "repository_url": "github.com/your-org/Kizuna-Eye",
+        "archive_name": "kizuna-eye-linux-amd64.tar.gz",
+        "update_script": "safe_update.sh",
+        "interval_hours": 6
+    }
 }

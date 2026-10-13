@@ -17,6 +17,21 @@ type AgentConfig struct {
 	// Token authenticates the agent to the dashboard over WebSocket.
 	// Empty disables agent authentication (backward compatible).
 	Token string `json:"token"`
+
+	// AutoUpdate controls the GitHub Releases version check. When enabled and
+	// a newer version is found, safe_update.sh is executed (which backs up the
+	// binaries, rebuilds host + plugins, and rolls back on failure).
+	AutoUpdate AutoUpdateConfig `json:"auto_update"`
+}
+
+// AutoUpdateConfig configures the automatic update check.
+type AutoUpdateConfig struct {
+	Enabled       bool   `json:"enabled"`
+	RepositoryURL string `json:"repository_url"` // e.g. github.com/owner/Kizuna-Eye
+	ArchiveName   string `json:"archive_name"`   // release asset name
+	UpdateScript  string `json:"update_script"`  // default: safe_update.sh
+	// IntervalHours is how often to check. Default 6.
+	IntervalHours int `json:"interval_hours"`
 }
 
 // NotificationChannel is one notification channel config.
@@ -68,6 +83,14 @@ type AuthConfig struct {
 	// AgentToken authenticates the agent's WebSocket connection. When empty,
 	// the dashboard falls back to heuristic agent detection (legacy).
 	AgentToken string `json:"agent_token"`
+
+	// PublicViewer exposes the dashboard and the read-only monitoring
+	// endpoints (CPU/memory/disk usage) to unauthenticated clients.
+	// When true, a viewer can open the dashboard without logging in, but
+	// only the dashboard page, /ws and /api/status are public: history,
+	// alerts, logs, modules and user management still require a session.
+	// Default false keeps the previous behaviour (everything needs login).
+	PublicViewer bool `json:"public_viewer"`
 }
 
 // DashboardConfig is the dashboard configuration.

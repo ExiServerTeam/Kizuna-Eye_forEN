@@ -58,12 +58,49 @@ var protectedRules = []routeRule{
 type Middleware struct {
 	handler *Handler
 	enabled bool
+
+	// publicViewer allows unauthenticated access to the dashboard page,
+	// /ws and /api/status so a viewer can see CPU/memory/disk usage without
+	// logging in. All other endpoints still require a session.
+	publicViewer bool
 }
 
 // NewMiddleware creates the auth middleware.
 // When enabled is false, all requests pass through unchanged (backward compat).
 func NewMiddleware(handler *Handler, enabled bool) *Middleware {
 	return &Middleware{handler: handler, enabled: enabled}
+}
+
+// SetPublicViewer enables the login-free viewer mode. It must be called
+// during startup before the server begins serving requests.
+func (m *Middleware) SetPublicViewer(enabled bool) {
+	m.publicViewer = enabled
+}
+
+// isPublicViewerPath reports whether a path may be served without a session
+// when public viewer mode is on. Only the dashboard page, its static assets,
+// the live WebSocket feed and the latest-status snapshot are exposed; history,
+// alerts, logs, modules and user management stay behind login.
+func isPublicViewerPath(method, p string) bool {
+	// Live feed and initial snapshot (read-only, viewer-level data).
+	if p == "/ws" {
+		return true
+	}
+	if p == "/api/status" || strings.HasPrefix(p, "/api/status?") {
+		return method == http.MethodGet || method == http.MethodHead
+	}
+	// The dashboard itself. Only the root page is public; modules,
+	// config-editor, logs and users pages are not.
+	if p == "/" || p == "/index.html" {
+		return true
+	}
+	// Static assets needed to render the dashboard.
+	switch p {
+	case "/app.js", "/style.css", "/i18n.js", "/auth-guard.js",
+		"/auth-theme.js", "/connection.js":
+		return true
+	}
+	return false
 }
 
 // csrfOriginOK reports whether a state-changing request comes from this
@@ -106,6 +143,7 @@ func isPublicPath(p string) bool {
 		"/api/auth/status",
 		"/api/auth/setup",
 		"/api/auth/login",
+		"/api/auth/guest",
 		"/login.html",
 		"/setup.html",
 		"/login.js",
@@ -186,6 +224,17 @@ func (m *Middleware) Wrap(next http.Handler) http.Handler {
 		if isPublicPath(path) {
 			next.ServeHTTP(w, r)
 			return
+		}
+
+		// Login-free viewer mode: the dashboard page, its assets, /ws and
+		// /api/status are served without a session. If a session IS present,
+		// fall through so the normal role checks (and, for /ws, the agent
+		// path) still apply.
+		if m.publicViewer && isPublicViewerPath(r.Method, path) {
+			if _, ok := m.handler.sessionFromRequest(r); !ok {
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 
 		// Everything else requires a valid session.

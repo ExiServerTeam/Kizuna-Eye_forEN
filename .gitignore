@@ -3,6 +3,8 @@ agent_config.json
 modules.json
 # users.json holds bcrypt password hashes; never commit it.
 users.json
+# Uploaded avatar images are runtime data; never commit them.
+avatars/
 logs/
 *.log
 # Rotated logs (e.g. agent.log.1, kizuna-security.log.legacy-...).

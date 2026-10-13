@@ -31,6 +31,11 @@ type Handler struct {
 	limiter     *loginLimiter
 	// avatarsDir holds uploaded avatar images (default: "avatars").
 	avatarsDir string
+	// allowGuest enables the "login as guest" button, which grants a
+	// read-only viewer session without credentials. It is tied to
+	// auth.public_viewer so the guest entry point only exists when the
+	// operator explicitly opted in to login-free viewer access.
+	allowGuest bool
 }
 
 // NewHandler creates an auth Handler.
@@ -53,11 +58,15 @@ func NewHandler(store *Store, manager *SessionManager, logger Logger, secure, au
 // SetAvatarsDir sets the directory used for avatar images.
 func (h *Handler) SetAvatarsDir(dir string) { h.avatarsDir = dir }
 
+// SetAllowGuest enables the guest login endpoint (viewer role, no password).
+func (h *Handler) SetAllowGuest(enabled bool) { h.allowGuest = enabled }
+
 // RegisterRoutes registers the auth routes.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/auth/status", h.handleStatus)
 	mux.HandleFunc("POST /api/auth/setup", h.handleSetup)
 	mux.HandleFunc("POST /api/auth/login", h.handleLogin)
+	mux.HandleFunc("POST /api/auth/guest", h.handleGuestLogin)
 	mux.HandleFunc("POST /api/auth/logout", h.handleLogout)
 	mux.HandleFunc("GET /api/auth/me", h.handleMe)
 
@@ -129,6 +138,7 @@ func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"auth_enabled":  h.authEnabled,
 		"needs_setup":   needsSetup && h.authEnabled,
 		"authenticated": false,
+		"guest_enabled": h.allowGuest,
 	}
 	if s, ok := h.sessionFromRequest(r); ok {
 		resp["authenticated"] = true
@@ -241,6 +251,36 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"username": u.Username,
 		"role":     string(u.Role),
+	})
+}
+
+// handleGuestLogin starts a read-only viewer session without credentials.
+// It is available only when auth.public_viewer is enabled; otherwise it
+// behaves like a missing endpoint (404-style forbidden).
+func (h *Handler) handleGuestLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.allowGuest {
+		writeError(w, http.StatusForbidden, "ゲストログインは無効です")
+		return
+	}
+
+	// Session fixation defense: drop any existing session first.
+	if old, ok := h.sessionFromRequest(r); ok {
+		h.manager.Delete(old.ID)
+	}
+
+	sess, err := h.manager.Create("guest", RoleViewer)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "セッションの作成に失敗しました")
+		return
+	}
+	h.setCookie(w, sess.ID, sess.ExpiresAt)
+
+	if h.logger != nil {
+		h.logger.Info("ゲストログイン: role=viewer from=%s", clientIP(r))
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"username": "guest",
+		"role":     string(RoleViewer),
 	})
 }
 

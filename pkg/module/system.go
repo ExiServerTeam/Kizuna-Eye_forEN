@@ -45,9 +45,16 @@ type smartCache struct {
 	checked   bool
 }
 
+// smartEntry is the cached S.M.A.R.T data for one block device.
+// Zero values mean "not reported" and are omitted from the JSON.
 type smartEntry struct {
-	temp   float64
-	health string
+	temp         float64
+	health       string
+	model        string
+	serial       string
+	writeBytes   uint64
+	powerOnHours uint64
+	rotationRate int
 }
 
 func newSmartCache() *smartCache {
@@ -63,19 +70,20 @@ func (s *smartCache) shouldRefresh() bool {
 	return time.Since(s.lastCheck) >= s.interval
 }
 
-func (s *smartCache) get(device string) (float64, string) {
+// get returns the cached S.M.A.R.T data for a device. The second return
+// value reports whether an entry exists at all, so callers can distinguish
+// "device not checked yet" from "checked but no data".
+func (s *smartCache) get(device string) (smartEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if e, ok := s.entries[device]; ok {
-		return e.temp, e.health
-	}
-	return 0, ""
+	e, ok := s.entries[device]
+	return e, ok
 }
 
-func (s *smartCache) set(device string, temp float64, health string) {
+func (s *smartCache) set(device string, e smartEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.entries[device] = smartEntry{temp: temp, health: health}
+	s.entries[device] = e
 }
 
 func (s *smartCache) markChecked() {
@@ -579,27 +587,32 @@ func (m *SystemModule) updateStatus() {
 				continue
 			}
 
-			var temp float64
-			var health string
+			var se smartEntry
 			if m.smart.checkAvailable() && p.Device != "" {
 				blockDev := resolveBlockDevice(p.Device)
 				if !seenDevices[blockDev] {
 					seenDevices[blockDev] = true
 					if refreshSmart {
-						t, h := runSmartctl(blockDev)
-						m.smart.set(blockDev, t, h)
+						m.smart.set(blockDev, runSmartctl(blockDev))
 					}
 				}
-				temp, health = m.smart.get(blockDev)
+				if e, ok := m.smart.get(blockDev); ok {
+					se = e
+				}
 			}
 
 			disks = append(disks, status.DiskInfo{
-				Path:    p.Mountpoint,
-				Total:   usage.Total,
-				Used:    usage.Used,
-				Percent: usage.UsedPercent,
-				Temp:    temp,
-				Health:  health,
+				Path:         p.Mountpoint,
+				Total:        usage.Total,
+				Used:         usage.Used,
+				Percent:      usage.UsedPercent,
+				Temp:         se.temp,
+				Health:       se.health,
+				Model:        se.model,
+				Serial:       se.serial,
+				WriteBytes:   se.writeBytes,
+				PowerOnHours: se.powerOnHours,
+				RotationRate: se.rotationRate,
 			})
 			totalDiskUsed += usage.Used
 			totalDiskTotal += usage.Total
@@ -799,43 +812,101 @@ func resolveBlockDevice(device string) string {
 // ============================================================
 // runSmartctl
 // ============================================================
-func runSmartctl(device string) (float64, string) {
-	cmd := exec.Command("smartctl", "-A", "-H", "-j", device)
+func runSmartctl(device string) smartEntry {
+	cmd := exec.Command("smartctl", "-A", "-H", "-i", "-j", device)
 	out, err := cmd.Output()
 	if len(out) == 0 {
-		return 0, ""
+		return smartEntry{}
 	}
 	_ = err
 
-	// smart_status はポインタで受ける。フィールドが存在しない出力
-	// （loop デバイスや SMART 非対応デバイスなど）を「FAILED」と誤判定しないため。
+	// Fields are pointers/optional where absence must not be mistaken for a
+	// real value (a loop device or a SMART-incapable disk must not be
+	// reported as FAILED, and a missing attribute must not become 0).
 	var result struct {
-		Temperature struct {
+		Device struct {
+			Model        string `json:"model_name"`
+			Serial       string `json:"serial_number"`
+			RotationRate int    `json:"rotation_rate"`
+		} `json:"device"`
+		ModelName    string `json:"model_name"`
+		SerialNumber string `json:"serial_number"`
+		RotationRate int    `json:"rotation_rate"`
+		Temperature  struct {
 			Current int `json:"current"`
 		} `json:"temperature"`
 		SmartStatus *struct {
 			Passed bool `json:"passed"`
 		} `json:"smart_status"`
+		// ATA attributes: Total_LBA_Written (241) and Power_On_Hours (9).
+		ATASmartAttributes struct {
+			Table []struct {
+				ID    int `json:"id"`
+				Raw   struct {
+					Value uint64 `json:"value"`
+				} `json:"raw"`
+			} `json:"table"`
+		} `json:"ata_smart_attributes"`
+		// NVMe health log: DataUnitsWritten is in 1000-unit (512-byte) blocks.
+		NVMeLog struct {
+			DataUnitsWritten uint64 `json:"data_units_written"`
+			PowerOnHours     uint64 `json:"power_on_hours"`
+		} `json:"nvme_smart_health_information_log"`
 	}
 
 	if jerr := json.Unmarshal(out, &result); jerr != nil {
-		return 0, ""
+		return smartEntry{}
 	}
 
-	temp := float64(result.Temperature.Current)
+	e := smartEntry{
+		temp:   float64(result.Temperature.Current),
+		health: "UNKNOWN",
+	}
 
 	// smart_status が無い場合は UNKNOWN（通知対象外）とする。
 	// これにより実ディスクでない・SMART 非対応のデバイスで誤警報しない。
-	health := "UNKNOWN"
 	if result.SmartStatus != nil {
 		if result.SmartStatus.Passed {
-			health = "PASSED"
+			e.health = "PASSED"
 		} else {
-			health = "FAILED"
+			e.health = "FAILED"
 		}
 	}
 
-	return temp, health
+	// Model / serial / rotation live under "device" in modern smartctl
+	// JSON, but older versions put model_name/serial_number at the top level.
+	e.model = result.Device.Model
+	if e.model == "" {
+		e.model = result.ModelName
+	}
+	e.serial = result.Device.Serial
+	if e.serial == "" {
+		e.serial = result.SerialNumber
+	}
+	e.rotationRate = result.Device.RotationRate
+	if e.rotationRate == 0 && result.RotationRate != 0 {
+		e.rotationRate = result.RotationRate
+	}
+
+	// ATA: Total_LBA_Written is LBA count (512 bytes per LBA).
+	for _, attr := range result.ATASmartAttributes.Table {
+		switch attr.ID {
+		case 241: // Total_LBA_Written
+			e.writeBytes = attr.Raw.Value * 512
+		case 9: // Power_On_Hours
+			e.powerOnHours = attr.Raw.Value
+		}
+	}
+
+	// NVMe: data_units_written is in 1000 * 512-byte units.
+	if e.writeBytes == 0 && result.NVMeLog.DataUnitsWritten > 0 {
+		e.writeBytes = result.NVMeLog.DataUnitsWritten * 1000 * 512
+	}
+	if e.powerOnHours == 0 && result.NVMeLog.PowerOnHours > 0 {
+		e.powerOnHours = result.NVMeLog.PowerOnHours
+	}
+
+	return e
 }
 
 // ============================================================
