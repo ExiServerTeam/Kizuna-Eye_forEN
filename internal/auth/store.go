@@ -53,6 +53,9 @@ type User struct {
 	PasswordHash string    `json:"password_hash"`
 	Role         Role      `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Avatar is the file name of the user's avatar inside the avatar
+	// directory (empty when the user has no avatar).
+	Avatar string `json:"avatar,omitempty"`
 }
 
 // PublicUser is the API-facing view of a user (no hash).
@@ -60,6 +63,7 @@ type PublicUser struct {
 	Username  string    `json:"username"`
 	Role      Role      `json:"role"`
 	CreatedAt time.Time `json:"created_at"`
+	Avatar    string    `json:"avatar,omitempty"`
 }
 
 var (
@@ -286,13 +290,40 @@ func (s *Store) Get(username string) (*User, bool) {
 	return u, ok
 }
 
+// SetAvatar records the user's avatar file name (empty to clear).
+func (s *Store) SetAvatar(username, filename string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u, ok := s.users[username]
+	if !ok {
+		return ErrUserNotFound
+	}
+	prev := u.Avatar
+	u.Avatar = filename
+	if err := s.saveLocked(); err != nil {
+		u.Avatar = prev
+		return err
+	}
+	return nil
+}
+
+// AvatarOf returns the avatar file name for a user, or "".
+func (s *Store) AvatarOf(username string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if u, ok := s.users[username]; ok {
+		return u.Avatar
+	}
+	return ""
+}
+
 // List returns all users as public views, sorted by name.
 func (s *Store) List() []PublicUser {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]PublicUser, 0, len(s.users))
 	for _, u := range s.users {
-		out = append(out, PublicUser{Username: u.Username, Role: u.Role, CreatedAt: u.CreatedAt})
+		out = append(out, PublicUser{Username: u.Username, Role: u.Role, CreatedAt: u.CreatedAt, Avatar: u.Avatar})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
 	return out

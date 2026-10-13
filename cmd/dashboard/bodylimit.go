@@ -20,6 +20,11 @@ func bodyLimitMiddleware(next http.Handler) http.Handler {
 		if r.Method == http.MethodPost && r.URL.Path == "/api/plugins/upload" {
 			limit = int64(uploadLimitBytes)
 		}
+		// Avatar upload is a multipart image (max 1 MiB), so allow a little
+		// more than the JSON limit for the multipart framing.
+		if r.Method == http.MethodPost && r.URL.Path == "/api/auth/avatar" {
+			limit = int64(2 << 20) // 2 MiB
+		}
 		if r.Body != nil {
 			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
