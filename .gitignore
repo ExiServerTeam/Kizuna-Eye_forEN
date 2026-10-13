@@ -104,6 +104,4 @@ Kizunaシリーズ　資料/
 
 # エディタ/手動バックアップの残骸
 # Stray editor / manual backup artifacts.
-*.bak
-*.bak-*
 install.sh.bak*
