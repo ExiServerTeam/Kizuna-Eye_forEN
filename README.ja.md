@@ -92,6 +92,16 @@ dashboard_config.json の auth.agent_token と agent_config.json の token に�
 - Caddy や nginx で TLS 終端し、127.0.0.1:8080 へプロキシ
 - secure_cookies を true に設定（Cookie が HTTPS 時のみ送信される）
 
+## セキュリティ上の注意
+
+Kizuna-Eye は信頼できるネットワーク / VPN 内での利用を想定しています。以下の設定は**実質的なリモートコード実行（RCE）**につながるため、特に注意してください。
+
+- **`plugins_upload_enabled: true` と `auth.enabled: false` を同時に使わないでください。** この組み合わせでは、ネットワーク上の誰でも `.so` プラグインをアップロードして実行でき、サーバーを乗っ取られます。プラグインのアップロードを使う場合は必ず認証を有効にしてください（起動時にも警告ログを出力します）。
+- **設定ファイルには秘密情報が含まれます。** `dashboard_config.json`（`agent_token` / `webhook_url`）と `agent_config.json`（`token`）はリポジトリにコミットせず、権限を 0600 に保ってください（`.gitignore` 済み）。
+- **`/api/config` は秘密情報をマスクして返します。** マスク値（`***`）をそのまま保存しても既存の秘密は保持されますが、`users.json` と同様に取り扱いには注意してください。
+- **プラグイン `.so` は信頼できるものだけを配置してください。** Go プラグインはサーバー本体と同じ権限で動作します。
+- **通知本文は外部入力由来の値を含みます。** Discord / Slack / Telegram / LINE 向けに、各チャンネルでエスケープとメンション無効化を行っています。
+
 ## インストール
 
 ### 1. リポジトリをクローン
