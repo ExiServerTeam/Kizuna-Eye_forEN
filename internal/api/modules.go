@@ -71,7 +71,17 @@ func (s *ModulesStorage) Load() error {
 		return nil
 	}
 
-	return json.Unmarshal(data, &s.modules)
+	// Decode into a temporary slice first. json.Unmarshal can partially
+	// populate its target before returning an error, so unmarshalling
+	// directly into s.modules would leave the in-memory list half-updated
+	// (and handleGetAll ignores the error, so the UI would render broken
+	// data). Only a fully successful decode replaces the live list.
+	var parsed []ModuleConfig
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
+	}
+	s.modules = parsed
+	return nil
 }
 
 // Save writes the config file atomically.
