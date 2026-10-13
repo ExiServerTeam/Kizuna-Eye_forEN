@@ -1174,13 +1174,16 @@ body.card-dragging {
         font-size: 0.8rem;
     }
 
+    /* .file-actions は 768px 側で display:flex にしているため、
+       grid-template-columns は効かない（死んだ宣言だった）。
+       flex のまま 2 列相当の等幅になるよう flex-basis を 50% に固定する。 */
     .file-actions {
-        grid-template-columns: 1fr 1fr;
         gap: 6px;
     }
 
     .file-actions .btn-secondary,
     label.btn-secondary {
+        flex: 1 1 calc(50% - 3px);
         padding: 10px 6px;
         font-size: 0.75rem;
         min-height: 40px;

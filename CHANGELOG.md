@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）
 
 ### Changed
+- モバイル UI の最適化（`web/static/modules.css` / `web/static/redesign.css`）。①モジュール管理のファイル操作（`.file-actions`）が 480px 以下で `display:flex` のまま `grid-template-columns` を指定しており（死んだ宣言）、意図した 2 列等幅になっていなかったため `flex: 1 1 calc(50% - 3px)` に修正。②スマホ横向き（`max-width: 960px and orientation: landscape`）ではゲージグリッドを 2 列に戻し、短い縦幅を有効に使う（縦向きは 1 列のまま）。③スマホ（≤768px）で表示が過大になる問題を修正。`redesign.css` は PC の読みやすさ優先で基準フォント 19px・カード余白 30px・ゲージ canvas max-width 320px と大きくしており、後読みのため `style.css` のスマホ向け縮小（`.gauge-card { padding: 12px 10px }` 等）を上書きしていた。ファイル末尾にスマホ専用のコンパクションブロックを追加し、基準フォント（768px=15px / 600px=14px / 420px=13px）・ヘッダー・カード・ゲージ・コアタイルを縮める。PC（>768px）には影響しない。
 - ダッシュボードの稼働時間カードで、数字（`.uptime-value`）だけをヘッダーの「ダッシュボード」タブと同じアクセント色（`--primary-color`）にする。カード見出し「稼働時間」やメタ項目（起動日時/平均負荷/ネットワーク）は従来どおりの文字色のまま（`web/static/redesign.css`）
 - 通知チャンネルの webhook が example のプレースホルダのまま有効な場合、保存時は検証エラー、ロード/実行時は警告してスキップする（Discord が HTTP 400 を返し続け、通知が一度も届かないまま再試行ストームになるのを防ぐ）
 - `build-all.sh` を追加。共有パッケージ（`pkg/module` / `pkg/status` / `pkg/fsutil` 等）を変更した際に、host と全プラグインを一括でビルド・署名・配置する（片方だけ更新すると ABI 不一致で全プラグインがロード不能になる事故の恒久対策）

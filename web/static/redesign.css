@@ -388,6 +388,12 @@ input, select, textarea {
 @media (max-width: 720px) {
     .gauge-grid { grid-template-columns: 1fr; }
 }
+/* 横向き（ランドスケープ）のスマホは、CSS 幅が 600〜900px 程度あり、
+   縦向きの「1列」のままだと間延びして見にくい。横向きのときは 2 列に
+   戻して、短い縦幅を有効に使う。縦向き（portrait）には影響しない。 */
+@media (max-width: 960px) and (orientation: landscape) {
+    .gauge-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* ゲージカード（CPU/メモリ/ストレージ/稼働時間）もつまみで並べ替えられるよう、
    つまみを表示する。以前はヘッダー直下で目立つため非表示にしていたが、
@@ -1267,4 +1273,87 @@ input, select, textarea {
 
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
+}
+
+/* ============================================================
+   スマホ向けコンパクション（最後に読み込み、上を上書きする）
+   ============================================================
+   redesign.css は「読みやすさ優先」で基準フォント・ヘッダー・カードを
+   大きくしている（html 19px / .gauge-card 30px 余白 / .gauge-container
+   canvas max-width 320px 等）。PC では快適だが、スマホでは 1 枚のカードが
+   画面を占領し、ヘッダーが縦に膨らんで情報が一望できない。
+   ここではスマホ幅でのみ縮め、PC（>768px）には一切影響しない。
+   ============================================================ */
+
+/* 基準フォント: PC 19px はスマホだと大きすぎる。
+   style.css の html 指定も後勝ちで上書きする。 */
+@media (max-width: 768px) {
+    html { font-size: 15px; }
+}
+@media (max-width: 600px) {
+    html { font-size: 14px; }
+}
+@media (max-width: 420px) {
+    html { font-size: 13px; }
+}
+
+@media (max-width: 768px) {
+    /* --- ヘッダー --- */
+    /* ヘッダーの余白・ロゴ・タブを詰める。ロゴ/バッジ/タブ/操作群が
+       積み重なって画面上部を占領しないようにする。 */
+    .header {
+        padding: 10px 12px;
+        gap: 6px;
+        margin-bottom: 14px;
+    }
+    .logo { font-size: 1.15rem; }
+    .status-badge { font-size: 0.66rem; padding: 2px 8px; }
+    .nav-tab {
+        padding: 6px 10px;
+        font-size: 0.82rem;
+    }
+    .nav-tabs { gap: 4px; }
+    .header-controls { gap: 6px; }
+    .theme-toggle { padding: 5px 8px; }
+    .theme-label { min-width: 0; font-size: 0.72rem; }
+    .version-badge { font-size: 0.66rem; padding: 2px 6px; }
+
+    /* --- カード --- */
+    /* カードの余白を詰め、1 画面に複数枚が入るようにする。 */
+    .gauge-card {
+        padding: 14px 14px 12px;
+    }
+    .gauge-title { font-size: 0.95rem; }
+
+    /* --- ゲージ --- */
+    /* canvas を小さくし、カード内の縦幅を圧縮する。 */
+    .gauge-container {
+        height: 180px;
+    }
+    .gauge-container canvas {
+        max-width: 190px;
+    }
+    .gauge-value { font-size: 1.5rem; }
+    .uptime-value { font-size: 30px; }
+    .uptime-meta { margin-top: 10px; padding-top: 10px; gap: 4px; }
+    .uptime-meta-item { font-size: 0.72rem; }
+    .uptime-meta-item .value { font-size: 0.72rem; }
+
+    /* コアタイルも縮める（CPU カードの下に並ぶ C1/C2 等）。 */
+    .cpu-core-item { height: 56px; }
+    .cpu-cores { gap: 6px; }
+
+    /* --- レイアウト --- */
+    .main { gap: 12px; }
+}
+
+@media (max-width: 480px) {
+    .header { padding: 8px 10px; margin-bottom: 12px; }
+    .logo { font-size: 1.05rem; }
+    .gauge-card { padding: 12px 12px 10px; }
+    .gauge-container { height: 168px; }
+    .gauge-container canvas { max-width: 168px; }
+    .gauge-value { font-size: 1.35rem; }
+    .uptime-value { font-size: 26px; }
+    .cpu-core-item { height: 50px; }
 }
