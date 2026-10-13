@@ -293,6 +293,15 @@ body {
 }
 .gauge-detail { font-variant-numeric: tabular-nums; }
 
+/* 文字の影は使わない（style.css の text-shadow を打ち消す）。 */
+.gauge-value,
+.uptime-value,
+.gauge-title,
+.gauge-detail,
+.logo {
+    text-shadow: none !important;
+}
+
 .temp-badge, .free-badge {
     border-radius: var(--radius-sm);
     font-weight: 600;
