@@ -1260,6 +1260,35 @@ body.card-dragging {
     display: block;
 }
 
+/* 凡例: グラフの線がどの指標か（CPU / メモリ / ディスク）を色で示す。
+   線色は drawHistoryChart() の series と一致させる。 */
+.history-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px 20px;
+    padding: 12px 4px 2px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.history-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.history-legend-chip {
+    width: 14px;
+    height: 4px;
+    border-radius: 2px;
+    display: inline-block;
+}
+
+.history-legend-chip.cpu  { background: #18d66b; }
+.history-legend-chip.mem  { background: #7b3ff2; }
+.history-legend-chip.disk { background: #d946ef; }
+
 /* ===== アラート履歴セクション ===== */
 .alerts-section {
     margin-top: 24px;
@@ -1608,7 +1637,9 @@ body.card-dragging {
 
 .plugin-card-header {
     display: flex;
-    align-items: center;
+    /* 名前が長いと2行以上に折り返すため、中央揃えだとバッジが
+       宙に浮いて見える。上揃えにして名前の1行目と揃える。 */
+    align-items: flex-start;
     gap: 8px;
     min-width: 0;
 }
@@ -1619,9 +1650,13 @@ body.card-dragging {
     font-size: 0.95rem;
     font-weight: 600;
     color: var(--text-primary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    /* 1行に強制すると長いプラグイン名が「…」で切れて何のプラグインか
+       分からなくなる。折り返して全文を出す。長い英数字トークンでも
+       溢れないよう overflow-wrap を併用する。 */
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    line-height: 1.3;
 }
 
 .plugin-card-body {
@@ -3382,6 +3417,142 @@ svg {
 .account-name,
 .plugin-card-name,
 .module-name,
+.alert-item.clickable {
+    cursor: pointer;
+}
+
+.alert-item.clickable:hover {
+    background: var(--bg-card-hover);
+}
+
+/* アラート詳細モーダル (タスク1) */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.modal-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    max-width: 720px;
+    width: 100%;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-head h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.modal-close {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1.1rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.modal-close:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 16px 18px;
+    overflow: auto;
+}
+
+.alert-detail-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+}
+
+.alert-detail-title {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.alert-detail-row {
+    display: flex;
+    gap: 12px;
+    padding: 8px 0;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.85rem;
+}
+
+.alert-detail-label {
+    flex: 0 0 130px;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.alert-detail-value {
+    flex: 1;
+    color: var(--text-primary);
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+
+.alert-detail-log {
+    flex: 1;
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow: auto;
+}
+
+.alert-detail-note {
+    margin-top: 10px;
+    color: var(--text-muted);
+    font-size: 0.8rem;
+    font-style: italic;
+}
+
+.alert-detail-actions {
+    margin-top: 16px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+.alert-detail-actions-title {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.alert-action-btn {
+    margin: 0 8px 8px 0;
+}
+
 .alert-item-title,
 .alert-item-message,
 .uptime-meta-item .value,

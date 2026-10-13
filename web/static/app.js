@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.8.11';
+    const VERSION = 'v0.7.1';
 
     const GAUGE = {
         radiusRatio: 0.40,
@@ -27,6 +27,16 @@
 
     // i18n 翻訳ヘルパー（i18n.js 未読込時はキーをそのまま返す）
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
+
+    // pickLocalized returns the field matching the current UI language.
+    // For English it prefers field_en, falling back to the base field
+    // (Japanese) when the English rendering is absent — older records only
+    // have the base field, so falling back keeps them visible (task 9).
+    function pickLocalized(base, en) {
+        const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
+        if (lang === 'en' && en) return en;
+        return base || '';
+    }
 
     const elements = {
         connectionStatus: $('#connectionStatus'),
@@ -1643,19 +1653,192 @@
                 const label = trusted ? t('alerts.source_trusted') : t('alerts.source_untrusted');
                 srcBadge = `<span class="alert-source-badge ${cssClass(cls)}" title="${escapeHtml(a.source)}">${escapeHtml(label)}</span>`;
             }
+            const idAttr = a.id ? ` data-alert-id="${escapeHtml(a.id)}"` : '';
+            const clickable = a.id ? ' clickable' : '';
             html += `
-                <div class="alert-item ${cssClass(level)}">
+                <div class="alert-item ${cssClass(level)}${clickable}"${idAttr}>
                     <span class="alert-level-badge ${cssClass(level)}">${escapeHtml(levelLabel)}</span>
                     ${srcBadge}
                     <div class="alert-item-body">
-                        <div class="alert-item-title">${escapeHtml(a.title || '')}</div>
-                        <div class="alert-item-message">${escapeHtml(a.message || '')}</div>
+                        <div class="alert-item-title">${escapeHtml(pickLocalized(a.title, a.title_en))}</div>
+                        <div class="alert-item-message">${escapeHtml(pickLocalized(a.message, a.message_en))}</div>
                     </div>
                     <span class="alert-item-time">${escapeHtml(time)}</span>
                 </div>
             `;
         });
         elements.alertList.innerHTML = html;
+        // クリックで詳細モーダルを開く (タスク1)。
+        Array.from(elements.alertList.querySelectorAll('.alert-item[data-alert-id]')).forEach(el => {
+            el.addEventListener('click', () => showAlertDetail(el.getAttribute('data-alert-id')));
+        });
+    }
+
+    // ============================================================
+    // アラート詳細モーダル (タスク1)
+    // ============================================================
+    async function showAlertDetail(id) {
+        if (!id) return;
+        let a;
+        try {
+            const res = await fetch(`/api/alerts/${encodeURIComponent(id)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            a = await res.json();
+        } catch (e) {
+            showToast(t('alerts.detail_failed'), 'error');
+            return;
+        }
+        const level = String(a.level || 'info').toLowerCase();
+        const time = a.timestamp ? new Date(a.timestamp).toLocaleString() : '';
+        const row = (label, value) => value
+            ? `<div class="alert-detail-row"><span class="alert-detail-label">${escapeHtml(label)}</span><span class="alert-detail-value">${escapeHtml(value)}</span></div>`
+            : '';
+        const detectLogic = a.detect_file
+            ? `${a.detect_file}${a.detect_line ? ':' + a.detect_line : ''}`
+            : '';
+        // 対処ボタン (タスク2)。アラート種別に応じて出し分ける。
+        const actions = suggestActions(a);
+        const actionsHtml = actions.length ? `
+            <div class="alert-detail-actions">
+                <div class="alert-detail-actions-title">${escapeHtml(t('alerts.d_actions'))}</div>
+                ${actions.map(act => `<button type="button" class="btn-secondary alert-action-btn" data-action="${escapeHtml(act.action)}" data-target="${escapeHtml(act.target || '')}">${escapeHtml(act.label)}</button>`).join('')}
+            </div>
+        ` : '';
+        const html = `
+            <div class="alert-detail">
+                <div class="alert-detail-head">
+                    <span class="alert-level-badge ${cssClass(level)}">${escapeHtml(t('level.' + level))}</span>
+                    <span class="alert-detail-title">${escapeHtml(pickLocalized(a.title, a.title_en))}</span>
+                </div>
+                <div class="alert-detail-row"><span class="alert-detail-label">${escapeHtml(t('alerts.d_time'))}</span><span class="alert-detail-value">${escapeHtml(time)}</span></div>
+                ${row(t('alerts.d_message'), pickLocalized(a.message, a.message_en))}
+                ${row(t('alerts.d_command'), a.command)}
+                ${row(t('alerts.d_detect'), detectLogic)}
+                ${row(t('alerts.d_remediation'), a.remediation)}
+                ${row(t('alerts.d_type'), a.type)}
+                ${row(t('alerts.d_source'), a.source)}
+                ${a.related_log ? `<div class="alert-detail-row"><span class="alert-detail-label">${escapeHtml(t('alerts.d_related'))}</span><pre class="alert-detail-log">${escapeHtml(a.related_log)}</pre></div>` : ''}
+                ${(a.command || a.detect_file || a.remediation || a.related_log) ? '' : `<div class="alert-detail-note">${escapeHtml(t('alerts.d_no_detail'))}</div>`}
+                ${actionsHtml}
+            </div>
+        `;
+        openModal(t('alerts.d_title'), html);
+        // 対処ボタンに click を配線する。
+        Array.from(document.querySelectorAll('#alertDetailModal .alert-action-btn')).forEach(btn => {
+            btn.addEventListener('click', () => runAlertAction(a.id, btn.getAttribute('data-action'), btn.getAttribute('data-target')));
+        });
+    }
+
+    // extractPortFromAlert pulls the TCP port from a listening-port alert's
+    // command ("待ち受け: TCP 0.0.0.0:55555") or message ("ポート 55555 が...").
+    function extractPortFromAlert(a) {
+        const cmd = String(a.command || '');
+        let m = cmd.match(/:(\d{1,5})\b/);
+        if (m) return m[1];
+        const msg = String(a.message || '');
+        m = msg.match(/ポート\s*(\d{1,5})/);
+        if (m) return m[1];
+        return '';
+    }
+
+    // suggestActions returns the buttons appropriate for an alert.
+    // It is intentionally conservative: only actions with a sensible default
+    // target (or that can prompt the operator) are offered.
+    function suggestActions(a) {
+        const out = [];
+        const title = String(a.title || '');
+        const type = String(a.type || '');
+        const ipMatch = String(a.message || '').match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/);
+        const ip = ipMatch ? ipMatch[0] : '';
+        if (type === 'security_ssh_failed' || type === 'security_ssh_login') {
+            if (ip) out.push({ action: 'block_ip', label: t('alerts.a_block_ip') + ' (' + ip + ')', target: ip });
+        }
+        if (type === 'security_listen_port') {
+            // モーダルはポートを対象と分かっているので、PID を手入力させず
+            // ポートをそのまま渡す。ヘルパー側が ss でPIDを解決して停止する。
+            const port = extractPortFromAlert(a);
+            if (port) {
+                out.push({ action: 'kill_port', label: t('alerts.a_kill_port') + ' (:' + port + ')', target: port });
+            } else {
+                // ポートが取れない異例のケースだけ、従来の PID 手入力へ。
+                out.push({ action: 'kill_process', label: t('alerts.a_kill_process'), target: '' });
+            }
+        }
+        if (type === 'security_cron') {
+            out.push({ action: 'delete_cron', label: t('alerts.a_delete_cron'), target: '' });
+        }
+        if (type === 'security_integrity' || type === 'security_suid') {
+            out.push({ action: 'restore_file', label: t('alerts.a_restore_file'), target: a.source || '' });
+        }
+        return out;
+    }
+
+    // runAlertAction asks for confirmation (and a missing target, e.g. a PID)
+    // then POSTs to the action API.
+    async function runAlertAction(id, action, target) {
+        if (!id || !action) return;
+        // kill_process だけが PID の手入力を必要とする（kill_port は
+        // ポートからヘルパーが PID を解決するので入力不要）。
+        if (action === 'kill_process' && !target) {
+            const pid = window.prompt(t('alerts.a_pid_prompt'), '');
+            if (!pid) return;
+            if (!/^[0-9]{1,10}$/.test(pid)) {
+                showToast(t('alerts.a_pid_invalid'), 'error');
+                return;
+            }
+            target = pid;
+        }
+        // restore_file はバックアップパスが必要。
+        let backup = '';
+        if (action === 'restore_file') {
+            backup = window.prompt(t('alerts.a_backup_prompt'), '') || '';
+            if (!backup) return;
+        }
+        const label = t('alerts.a_' + action);
+        if (!window.confirm(t('alerts.a_confirm', label, target))) return;
+        try {
+            const res = await fetch(`/api/alerts/${encodeURIComponent(id)}/action`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, target: target, backup: backup })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.status === 'success') {
+                showToast(t('alerts.a_done'), 'success');
+            } else {
+                showToast(t('alerts.a_failed', data.detail || ('HTTP ' + res.status)), 'error');
+            }
+        } catch (e) {
+            showToast(t('alerts.a_failed', e.message), 'error');
+        }
+        // 結果（監査エントリ含む）を反映するため履歴を再取得する。
+        loadAlerts();
+        const modal = document.getElementById('alertDetailModal');
+        if (modal) modal.remove();
+    }
+
+    // openModal builds a simple overlay modal. contentHtml must already be
+    // escaped by the caller.
+    function openModal(title, contentHtml) {
+        const existing = document.getElementById('alertDetailModal');
+        if (existing) existing.remove();
+        const overlay = document.createElement('div');
+        overlay.id = 'alertDetailModal';
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-box" role="dialog" aria-modal="true">
+                <div class="modal-head">
+                    <h3>${escapeHtml(title)}</h3>
+                    <button type="button" class="modal-close" aria-label="close">✕</button>
+                </div>
+                <div class="modal-body">${contentHtml}</div>
+            </div>
+        `;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) overlay.remove();
+        });
+        overlay.querySelector('.modal-close').addEventListener('click', () => overlay.remove());
+        document.body.appendChild(overlay);
     }
 
     async function loadAlerts() {
