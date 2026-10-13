@@ -395,16 +395,26 @@ const (
 
 // ConfigField is a config field declared by a plugin.
 // JSON tags are used directly by the frontend form.
+//
+// The *EN fields are optional English renderings. When the dashboard UI is
+// switched to English, the frontend prefers them and falls back to the
+// Japanese field when they are empty, so a plugin that does not translate is
+// still usable. A plugin that wants a fully English UI must fill all four
+// (LabelEN / HintEN / PlaceholderEN / GroupEN).
 type ConfigField struct {
 	Key         string          `json:"key"`
 	Label       string          `json:"label"`
+	LabelEN     string          `json:"label_en,omitempty"`
 	Type        ConfigFieldType `json:"type"`
 	Default     string          `json:"default,omitempty"`
 	Required    bool            `json:"required,omitempty"`
 	Options     []string        `json:"options,omitempty"`
 	Placeholder string          `json:"placeholder,omitempty"`
+	PlaceholderEN string        `json:"placeholder_en,omitempty"`
 	Hint        string          `json:"hint,omitempty"`
+	HintEN      string          `json:"hint_en,omitempty"`
 	Group       string          `json:"group,omitempty"`
+	GroupEN     string          `json:"group_en,omitempty"`
 	Min         *float64        `json:"min,omitempty"`
 	Max         *float64        `json:"max,omitempty"`
 	Pattern     string          `json:"pattern,omitempty"`

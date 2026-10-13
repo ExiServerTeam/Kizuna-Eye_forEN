@@ -41,6 +41,15 @@ const (
 	// signature (plugins/Foo.so -> plugins/Foo.so.sig).
 	SigSuffix = ".sig"
 
+	// EmbedMagic marks an embedded signature trailer appended to a .so.
+	// A signed .so is [ELF body][EmbedMagic (13 bytes)][Ed25519 sig (64 bytes)].
+	// The ELF loader ignores bytes after the last section, so a signed file
+	// is still loadable without stripping the trailer first.
+	EmbedMagic = "KIZUNA_SIG_V1"
+
+	// EmbedTrailerLen is the fixed size of the trailer (magic + signature).
+	EmbedTrailerLen = len(EmbedMagic) + ed25519.SignatureSize
+
 	// Size caps. Keys and signatures are tiny; the cap keeps a hostile or
 	// corrupt file from being read into memory before the check starts.
 	sigMaxSize  = 8 << 10 // 8 KiB
@@ -57,6 +66,124 @@ var ErrNoSignature = errors.New("署名ファイルが見つかりません")
 
 // SigPath returns the detached-signature path for a plugin path.
 func SigPath(soPath string) string { return soPath + SigSuffix }
+
+// ============================================================
+// Embedded signature (trailer form)
+// ============================================================
+//
+// A signed plugin can carry its signature inside the .so itself, so the
+// operator only has to distribute one file. The signature covers the body
+// bytes that precede the trailer; the trailer is [EmbedMagic][64-byte sig].
+// Both the agent and the dashboard prefer the embedded signature and fall
+// back to the detached .sig for backward compatibility.
+
+// HasEmbeddedSignature reports whether data ends with the embedded trailer.
+func HasEmbeddedSignature(data []byte) bool {
+	return len(data) >= EmbedTrailerLen &&
+		string(data[len(data)-EmbedTrailerLen:len(data)-ed25519.SignatureSize]) == EmbedMagic
+}
+
+// SplitEmbedded returns the body (bytes before the trailer) and the signature
+// when data ends with the trailer. ok is false when no trailer is present, so
+// the caller can fall back to the detached signature.
+func SplitEmbedded(data []byte) (body, sig []byte, ok bool) {
+	if !HasEmbeddedSignature(data) {
+		return nil, nil, false
+	}
+	cut := len(data) - EmbedTrailerLen
+	return data[:cut], data[len(data)-ed25519.SignatureSize:], true
+}
+
+// EmbedSignatureBytes returns data with the trailer appended. The signature is
+// computed over data as it is, so the result is deterministic for a given key.
+func EmbedSignatureBytes(data []byte, priv ed25519.PrivateKey) ([]byte, error) {
+	if len(priv) != ed25519Priv {
+		return nil, errors.New("署名鍵が不正です")
+	}
+	sig := ed25519.Sign(priv, data)
+	out := make([]byte, 0, len(data)+EmbedTrailerLen)
+	out = append(out, data...)
+	out = append(out, EmbedMagic...)
+	out = append(out, sig...)
+	return out, nil
+}
+
+// EmbedSignatureFile reads soPath and rewrites it with the embedded trailer.
+// The rewrite is atomic (temp file + rename) so a crash cannot leave a
+// half-written plugin.
+func EmbedSignatureFile(soPath string, priv ed25519.PrivateKey) error {
+	data, err := os.ReadFile(soPath)
+	if err != nil {
+		return fmt.Errorf("署名対象の読み込みに失敗 (%s): %w", soPath, err)
+	}
+	// Re-signing an already signed file would sign the old trailer too.
+	// Strip it first so the operation is idempotent.
+	if body, _, ok := SplitEmbedded(data); ok {
+		data = body
+	}
+	signed, err := EmbedSignatureBytes(data, priv)
+	if err != nil {
+		return err
+	}
+	tmp := soPath + ".embed.tmp"
+	if err := os.WriteFile(tmp, signed, 0o644); err != nil {
+		return fmt.Errorf("埋め込み署名の書き込みに失敗 (%s): %w", tmp, err)
+	}
+	if err := os.Rename(tmp, soPath); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("埋め込み署名の配置に失敗 (%s): %w", soPath, err)
+	}
+	return nil
+}
+
+// VerifyEmbedded verifies the embedded trailer in data, if present. ok is
+// false when there is no trailer (the caller then tries the detached .sig).
+// A present-but-bad signature returns ok=true and an error, so a tampered
+// file is never silently downgraded to "no signature".
+func VerifyEmbedded(data []byte, pub ed25519.PublicKey) (ok bool, err error) {
+	if len(pub) != ed25519Pub {
+		return false, errors.New("検証鍵が不正です")
+	}
+	body, sig, present := SplitEmbedded(data)
+	if !present {
+		return false, nil
+	}
+	if !ed25519.Verify(pub, body, sig) {
+		return true, errors.New("埋め込み署名が一致しません（改ざんまたは鍵不一致の可能性）")
+	}
+	return true, nil
+}
+
+// VerifyFileAny verifies soPath with the embedded trailer first and the
+// detached <file>.sig second. It returns the source that matched so callers
+// can log how a plugin was authenticated.
+func VerifyFileAny(soPath string, pub ed25519.PublicKey) (source string, err error) {
+	data, err := os.ReadFile(soPath)
+	if err != nil {
+		return "", fmt.Errorf("署名対象の読み込みに失敗 (%s): %w", soPath, err)
+	}
+	if ok, verr := VerifyEmbedded(data, pub); ok {
+		if verr != nil {
+			return "embedded", verr
+		}
+		return "embedded", nil
+	}
+	sigPath := SigPath(soPath)
+	if _, serr := os.Stat(sigPath); serr != nil {
+		if os.IsNotExist(serr) {
+			return "", fmt.Errorf("%w: %s", ErrNoSignature, sigPath)
+		}
+		return "", fmt.Errorf("署名ファイルを開けません (%s): %w", sigPath, serr)
+	}
+	sigBytes, rerr := os.ReadFile(sigPath)
+	if rerr != nil {
+		return "", fmt.Errorf("署名ファイルの読み込みに失敗 (%s): %w", sigPath, rerr)
+	}
+	if verr := VerifyBytes(data, sigBytes, pub, soPath); verr != nil {
+		return "detached", verr
+	}
+	return "detached", nil
+}
 
 // GenerateKeyPair returns a fresh Ed25519 key pair.
 func GenerateKeyPair() (ed25519.PublicKey, ed25519.PrivateKey, error) {

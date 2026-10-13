@@ -59,7 +59,9 @@
                 })
                 .then(function (res) {
                     if (res.ok) {
-                        location.replace('/login.html');
+                        // The setup endpoint issues a session, so go straight to
+                        // the dashboard instead of making the user log in again.
+                        location.replace('/');
                         return;
                     }
                     btn.disabled = false;

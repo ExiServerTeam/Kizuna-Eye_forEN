@@ -6,7 +6,7 @@
 (function () {
     'use strict';
 
-    const VERSION = 'v0.7.0';
+    const VERSION = 'v0.7.1';
 
     const GAUGE = {
         radiusRatio: 0.40,
@@ -1113,8 +1113,24 @@
         const enabled = mod.enabled !== false;
         const type = (mod.type || 'plugin').toLowerCase();
         const meta = pluginMetaMap.get(mod.name) || {};
-        const displayName = meta.display_name || mod.name;
+        // カードのタイトルはモジュール管理画面と同じ優先順位にする。
+        // 運用者が付けた表示名（user_label）→プラグイン申告の display_name→
+        // 内部名、の順。これで両画面の見た目が一致する。
+        const displayName = (meta.user_label || '').trim() || meta.display_name || mod.name;
         const isBackup = meta.is_backup === true;
+        // サードパーティー製は Tag() を無視して PLUGIN を強制する。外部の
+        // モジュールが Tag() で GUARD/LITE/PRO を名乗り、純正に見えて
+        // しまうのを防ぐ（modules.js のカードと同じ扱い）。
+        const isThirdParty = meta.origin === 'third_party';
+        const declaredTag = isThirdParty ? '' : (meta.tag || '').trim().toUpperCase();
+        let tagClass = '';
+        if (declaredTag === 'GUARD') tagClass = 'badge-guard';
+        else if (declaredTag === 'LITE') tagClass = 'badge-lite';
+        else if (declaredTag === 'PRO') tagClass = 'badge-pro';
+        // カード左端のアクセントカラーもタグに合わせる。タグ未宣言
+        // （サードパーティー）は PLUGIN バッジと同じ紫にする。空のまま
+        // にすると既定の緑（enabled）が当たり、バッジと色が食い違う。
+        const cardTagClass = declaredTag ? ('tag-' + declaredTag.toLowerCase()) : 'tag-plugin';
         const isActive = currentBackup && currentBackup.name === mod.name;
         const activeNorm = normalizeStatus(currentBackup ? currentBackup.status : '');
 
@@ -1206,10 +1222,10 @@
         const target = meta.has_web_ui ? ' target="_blank" rel="noopener"' : '';
 
         return `
-            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''}" href="${escapeAttr(href)}"${target}>
+            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''} ${cssClass(cardTagClass)}" href="${escapeAttr(href)}"${target}>
                 <div class="plugin-card-header">
                     <span class="plugin-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
-                    <span class="plugin-row-type">${escapeHtml(type)}</span>
+                    <span class="plugin-row-type${tagClass ? ' ' + cssClass(tagClass) : ''}">${escapeHtml(declaredTag || type)}</span>
                     <span class="plugin-row-state ${cssClass(stateCls)}">${escapeHtml(stateLabel)}</span>
                 </div>
                 <div class="plugin-card-body">

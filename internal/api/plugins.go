@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -111,6 +112,18 @@ type PluginMeta struct {
 	UploaderIP   string               `json:"uploader_ip,omitempty"`
 	InspectError string               `json:"inspect_error,omitempty"`
 	HasWebUI     bool                 `json:"has_web_ui,omitempty"`
+	// Origin is "official" when the upload carried a signature that
+	// verified against the configured public key, and "third_party"
+	// otherwise (unsigned upload, allowed only after explicit
+	// confirmation). The UI uses this to distinguish pure Kizuna plugins
+	// from third-party ones.
+	Origin string `json:"origin,omitempty"`
+	// UserLabel is the name the operator typed at upload time. It is
+	// display-only: modules.json and the agent registry stay keyed by the
+	// plugin's own Name(), but the card shows UserLabel so the operator
+	// sees the name they chose. Empty means the upload name matched the
+	// plugin's own name, so there is nothing extra to show.
+	UserLabel string `json:"user_label,omitempty"`
 }
 
 // NewPluginManager creates a PluginManager.
@@ -205,6 +218,7 @@ func (p *PluginManager) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/plugins", p.handleList)
 	mux.HandleFunc("DELETE /api/plugins/{name}", p.handleDelete)
 	mux.HandleFunc("POST /api/plugins/{name}/run", p.handleRunPlugin) // ★ Phase 8-5
+	mux.HandleFunc("PUT /api/plugins/{name}/label", p.handleRenameLabel)
 	// Serve plugin web UI from plugins/<name>.web/.
 	mux.HandleFunc("GET /plugins/{name}/", p.handleWebUI)
 }
@@ -288,6 +302,39 @@ func fileExists(path string) bool {
 }
 
 var safeNameRe = regexp.MustCompile(`^[A-Za-z0-9_\-]+$`)
+
+// remoteIP returns the client IP from a "host:port" RemoteAddr, dropping
+// the port so alert messages read cleanly. A value that is not host:port is
+// returned unchanged.
+func remoteIP(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
+}
+
+// sanitizeLabel cleans a user-supplied display label. Unlike sanitizeName it
+// accepts any UTF-8 (so "My Backup 2026" or "バックアップ" works), because the
+// label is display-only and never becomes a path or an identifier. Control
+// characters are stripped and the rune count is capped at 64.
+func sanitizeLabel(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	s = strings.TrimSpace(b.String())
+	if len([]rune(s)) > 64 {
+		return "", fmt.Errorf("プラグインの表示名が長すぎます（64文字以内で指定してください）")
+	}
+	return s, nil
+}
 
 func sanitizeName(name string) (string, error) {
 	name = strings.TrimSpace(name)
@@ -449,7 +496,7 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rawName := r.FormValue("name")
+	rawLabel := r.FormValue("name")
 	file, header, err := r.FormFile("plugin")
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "ファイルがありません: "+err.Error())
@@ -461,13 +508,27 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "拡張子は .so である必要があります")
 		return
 	}
-	if rawName == "" {
-		rawName = strings.TrimSuffix(header.Filename, ".so")
-	}
-	name, err := sanitizeName(rawName)
+	// The typed name is a display-only label. Derive the filesystem-safe name
+	// from the uploaded filename instead, so a Japanese or spaced label cannot
+	// break the quarantine temp file or become a modules.json key. The
+	// plugin's own Name() replaces this as the canonical identifier below.
+	fsBase := strings.TrimSuffix(filepath.Base(header.Filename), ".so")
+	name, err := sanitizeName(fsBase)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, err.Error())
+		// Filename is not a safe identifier; use a unique placeholder. The
+		// plugin's own Name() becomes the canonical identifier later anyway.
+		name = "plugin_" + time.Now().Format("20060102_150405")
+	}
+	if rawLabel == "" {
+		rawLabel = name
+	}
+	label, lerr := sanitizeLabel(rawLabel)
+	if lerr != nil {
+		writeJSONError(w, http.StatusBadRequest, lerr.Error())
 		return
+	}
+	if label == "" {
+		label = name
 	}
 
 	// soPath/metaPath are finalized after plugin-inspect: the canonical
@@ -513,42 +574,85 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 		kelog.LogInfo(p.logger, "api.plugin_upload_recv", name, written, r.RemoteAddr)
 	}
 
-	// A-3: verify the detached Ed25519 signature BEFORE plugin-inspect.
+	// A-3: verify the Ed25519 signature BEFORE plugin-inspect.
 	// Inspecting a .so loads it (running its init()), so with
 	// plugins.require_signature=true an unauthenticated file must never reach
-	// that step. The signature is applied to the bytes that were just written.
+	// that step.
+	//
+	// Signature source order:
+	//   1. embedded trailer in the .so  (KIZUNA_SIG_V1; one file, preferred)
+	//   2. detached .sig part in the multipart form (legacy, supported)
+	// A file with no signature at all is a third-party candidate.
+	//
+	// Origin policy:
+	//   - signature present + verifies -> "official" (a Kizuna-series plugin)
+	//   - signature present but bad    -> reject (tampered; never allowed)
+	//   - signature absent             -> "third_party", allowed only after
+	//     the operator confirms the risk (confirm_unsigned=true).
 	sigBytes, err := readUploadedSignature(r)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	data, rerr := os.ReadFile(tmpPath)
+	if rerr != nil {
+		writeJSONError(w, http.StatusInternalServerError, "検疫ファイルの読み込みに失敗: "+rerr.Error())
+		return
+	}
+	origin := "third_party"
+	sigSource := ""
 	if p.policy.WantSignature() {
-		if len(sigBytes) == 0 {
-			writeJSONError(w, http.StatusBadRequest,
-				"プラグイン署名が必要です（plugins.require_signature=true）。.so と同時に .sig ファイルを選択してください")
-			return
-		}
 		pub, kerr := pluginsig.LoadPublicKey(p.policy.PublicKeyFile)
 		if kerr != nil {
 			writeJSONError(w, http.StatusInternalServerError, "公開鍵の読み込みに失敗: "+kerr.Error())
 			return
 		}
-		data, rerr := os.ReadFile(tmpPath)
-		if rerr != nil {
-			writeJSONError(w, http.StatusInternalServerError, "検疫ファイルの読み込みに失敗: "+rerr.Error())
-			return
-		}
-		if verr := pluginsig.VerifyBytes(data, sigBytes, pub, name+".so"); verr != nil {
-			if p.logger != nil {
-				kelog.LogError(p.logger, "api.plugin_sig_failed", name, verr)
+		// 1) embedded trailer (preferred). embOK=false means there is no
+		//    trailer at all; then we try the detached .sig below.
+		embOK, embErr := pluginsig.VerifyEmbedded(data, pub)
+		if embOK {
+			if embErr != nil {
+				if p.logger != nil {
+					kelog.LogError(p.logger, "api.plugin_sig_failed", name, embErr)
+				}
+				p.reportAudit("plugin_upload_rejected",
+					"埋め込み署名の検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr))
+				writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+embErr.Error())
+				return
 			}
-			p.reportAudit("plugin_upload_rejected",
-				"署名検証に失敗したプラグイン '"+name+"' を拒否しました (from "+r.RemoteAddr+")")
-			writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+verr.Error())
-			return
+			origin = "official"
+			sigSource = "embedded"
+		} else if len(sigBytes) > 0 {
+			// 2) detached .sig (legacy path).
+			if verr := pluginsig.VerifyBytes(data, sigBytes, pub, name+".so"); verr != nil {
+				if p.logger != nil {
+					kelog.LogError(p.logger, "api.plugin_sig_failed", name, verr)
+				}
+				p.reportAudit("plugin_upload_rejected",
+					"署名検証に失敗したため、プラグイン「"+name+"」の追加を拒否しました。追加元: "+remoteIP(r.RemoteAddr))
+				writeJSONError(w, http.StatusBadRequest, "プラグイン署名の検証に失敗しました: "+verr.Error())
+				return
+			}
+			origin = "official"
+			sigSource = "detached"
+		} else {
+			// 3) no signature at all -> third-party candidate.
+			if !isUnsignedConfirmed(r) {
+				writeJSON(w, http.StatusConflict, map[string]interface{}{
+					"error":              "このプラグインは署名がありません。純正か確認が取れませんでした。",
+					"needs_confirmation": true,
+					"origin":             "third_party",
+					"name":               name,
+				})
+				return
+			}
+			if p.logger != nil {
+				kelog.LogWarn(p.logger, "api.plugin_sig_missing", name)
+			}
+			origin = "third_party"
 		}
-		if p.logger != nil {
-			kelog.LogInfo(p.logger, "api.plugin_sig_ok", name)
+		if sigSource != "" && p.logger != nil {
+			kelog.LogInfo(p.logger, "api.plugin_sig_ok", name+" ("+sigSource+")")
 		}
 	}
 
@@ -600,16 +704,24 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// storage.Get test and overwrite the installed .so via os.Rename below,
 	// destroying a working plugin.
 	if p.storage.Get(canonical) != nil {
-		writeJSONError(w, http.StatusConflict, "同名のプラグインが既に登録されています: "+canonical)
+		writeJSONError(w, http.StatusConflict,
+			"同じプラグインが既に登録されています。先に既存のプラグインを削除してから、もう一度お試しください: "+canonical)
 		return
 	}
 	meta.Name = canonical
 	meta.SOFilename = canonical + ".so"
+	meta.Origin = origin
+	// Show the operator's label on the card only when it differs from the
+	// plugin's own name; otherwise the pretty display_name (from the plugin)
+	// is the better title.
+	if label != "" && label != canonical {
+		meta.UserLabel = label
+	}
 	soPath = filepath.Join(p.pluginsDir, canonical+".so")
 	metaPath = filepath.Join(p.pluginsDir, canonical+".meta.json")
 	if fileExists(soPath) || fileExists(metaPath) {
 		writeJSONError(w, http.StatusConflict,
-			"同名のプラグインファイルが既に存在します。先に削除してください: "+canonical)
+			"同じプラグインのファイルが既に存在します。先に既存のプラグインを削除してから、もう一度お試しください: "+canonical)
 		return
 	}
 
@@ -684,8 +796,19 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Audit: installing a plugin is a code-execution boundary and must be
-	// recorded in the alert history, not only logged.
-	p.reportAudit("plugin_upload", "プラグイン '"+canonical+"' をアップロード・登録しました (from "+r.RemoteAddr+")")
+	// recorded in the alert history, not only logged. Show the operator's
+	// label (matching the card title) and spell the origin out in words.
+	displayName := canonical
+	if meta.UserLabel != "" {
+		displayName = meta.UserLabel
+	}
+	// 純正かサードパーティーかで前置きを切り替える。
+	prefix := "純正プラグイン"
+	if origin == "third_party" {
+		prefix = "サードパーティー製プラグイン"
+	}
+	p.reportAudit("plugin_upload",
+		prefix+"「"+displayName+"」が追加されました。追加元: "+remoteIP(r.RemoteAddr))
 
 	writeJSON(w, http.StatusOK, meta)
 }
@@ -746,6 +869,16 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Read meta.json before removing it so the audit message can use the
+	// operator's label (which may differ from the internal name).
+	deleteLabel := name
+	if data, rerr := os.ReadFile(filepath.Join(p.pluginsDir, name+".meta.json")); rerr == nil {
+		var m PluginMeta
+		if json.Unmarshal(data, &m) == nil && m.UserLabel != "" {
+			deleteLabel = m.UserLabel
+		}
+	}
+
 	// Delete persists internally and rolls back on save failure. A save
 	// failure (disk full, permissions) must not be reported as 404.
 	if err := p.storage.Delete(name); err != nil {
@@ -779,9 +912,75 @@ func (p *PluginManager) handleDelete(w http.ResponseWriter, r *http.Request) {
 		kelog.LogInfo(p.logger, "api.plugin_module_deleted", name)
 	}
 	// Audit: removing a plugin is a code-execution boundary change.
-	p.reportAudit("plugin_delete", "プラグイン '"+name+"' を削除しました (from "+r.RemoteAddr+")")
+	p.reportAudit("plugin_delete",
+		"プラグイン「"+deleteLabel+"」が削除されました。削除元: "+remoteIP(r.RemoteAddr))
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
+}
+
+// handleRenameLabel updates the display-only label of a registered plugin by
+// rewriting plugins/<name>.meta.json. The plugin's own name, its .so and
+// modules.json are untouched, so events and backups keep working. An empty
+// user_label clears the override and the card falls back to display_name.
+func (p *PluginManager) handleRenameLabel(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if name == "" {
+		writeJSONError(w, http.StatusBadRequest, "プラグイン名が指定されていません")
+		return
+	}
+	if _, err := sanitizeName(name); err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	var body struct {
+		UserLabel string `json:"user_label"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "リクエストの解析に失敗しました: "+err.Error())
+		return
+	}
+	label, err := sanitizeLabel(body.UserLabel)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	metaPath := filepath.Join(p.pluginsDir, name+".meta.json")
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		writeJSONError(w, http.StatusNotFound, "プラグインのメタ情報が見つかりません: "+err.Error())
+		return
+	}
+	var meta PluginMeta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "メタ情報の読み込みに失敗しました: "+err.Error())
+		return
+	}
+	if label == "" || label == meta.Name {
+		meta.UserLabel = ""
+	} else {
+		meta.UserLabel = label
+	}
+	out, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "メタ情報の生成に失敗しました: "+err.Error())
+		return
+	}
+	tmp := metaPath + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "メタ情報の書き込みに失敗しました: "+err.Error())
+		return
+	}
+	if err := os.Rename(tmp, metaPath); err != nil {
+		_ = os.Remove(tmp)
+		writeJSONError(w, http.StatusInternalServerError, "メタ情報の保存に失敗しました: "+err.Error())
+		return
+	}
+	if p.logger != nil {
+		kelog.LogInfo(p.logger, "api.plugin_label_renamed", name, label)
+	}
+	writeJSON(w, http.StatusOK, meta)
 }
 
 // inspectPlugin runs plugin-inspect and parses the result.
@@ -904,4 +1103,13 @@ func readUploadedSignature(r *http.Request) ([]byte, error) {
 		return []byte(v), nil
 	}
 	return nil, nil
+}
+
+// isUnsignedConfirmed reports whether the client explicitly acknowledged
+// installing a plugin without a verifiable signature. The value is taken from
+// the multipart form ("true"/"1"/"yes") and is only meaningful when the
+// upload has no signature.
+func isUnsignedConfirmed(r *http.Request) bool {
+	v := strings.ToLower(strings.TrimSpace(r.FormValue("confirm_unsigned")))
+	return v == "true" || v == "1" || v == "yes"
 }

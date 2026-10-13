@@ -80,9 +80,18 @@ var loadedPlugins = struct {
 	// under, so a hand-edited modules.json whose name differs from the
 	// plugin's Name() can still be disabled/reconfigured correctly.
 	byCfg map[string]string
+	// openedPaths records every .so path that plugin.Open has already
+	// succeeded on. Go plugins cannot be unloaded from a process, so once a
+	// path is opened a second plugin.Open on it always fails with
+	// "plugin already loaded". Without this set, a plugin whose Configure
+	// fails would be retried on every modules.json reload and fail the same
+	// way forever (log spam, no working plugin). Recording the path lets the
+	// agent skip a doomed retry and log a clear "restart required" error.
+	openedPaths map[string]bool
 }{
-	names: make(map[string]bool),
-	byCfg: make(map[string]string),
+	names:       make(map[string]bool),
+	byCfg:       make(map[string]string),
+	openedPaths: make(map[string]bool),
 }
 
 // wsWriter serializes writes to a WebSocket connection.
@@ -438,17 +447,52 @@ func verifyPluginSignature(soPath string, policy config.PluginSecurityConfig, lg
 	if err != nil {
 		return fmt.Errorf("プラグイン公開鍵を読み込めません: %w", err)
 	}
-	sigPath := pluginsig.SigPath(soPath)
-	if err := pluginsig.VerifyFile(soPath, sigPath, pub); err != nil {
+	// Prefer the embedded trailer, fall back to the detached .sig for
+	// backward compatibility. Either path authenticates the .so before
+	// plugin.Open; only a file with no signature at all is refused.
+	source, err := pluginsig.VerifyFileAny(soPath, pub)
+	if err != nil {
 		if errors.Is(err, pluginsig.ErrNoSignature) {
-			return fmt.Errorf("未署名のプラグインを拒否しました（%s がありません。plugin-sign で署名してください）: %w", sigPath, err)
+			// 署名が一切ない。ダッシュボードで運用者が「純正と確認でき
+			// ない」ことを承知のうえで追加したサードパーティー製だけを
+			// 許容する（meta.json の origin=third_party が同意の記録）。
+			// それ以外の未署名 .so は、たとえファイルが置かれていても
+			// 拒否する。
+			if isThirdPartyApproved(soPath) {
+				if lg != nil {
+					lg.WarnT("agent.plugin_third_party_allowed", soPath)
+				}
+				return nil
+			}
+			return fmt.Errorf("未署名のプラグインを拒否しました（埋め込み署名も %s もありません。plugin-sign --embed で署名してください）: %w", pluginsig.SigPath(soPath), err)
 		}
 		return fmt.Errorf("プラグイン署名の検証に失敗しました（改ざんまたは鍵不一致の可能性）: %w", err)
 	}
 	if lg != nil {
-		lg.InfoT("agent.plugin_sig_ok", soPath)
+		lg.InfoT("agent.plugin_sig_ok", soPath+" ("+source+")")
 	}
 	return nil
+}
+
+// isThirdPartyApproved reports whether the plugin's .meta.json records that
+// an operator explicitly confirmed it as a third-party plugin through the
+// dashboard. The origin field is written by the upload path only after the
+// operator accepted the "not verified" overlay, so its presence is the
+// record of consent. A missing or unreadable meta file is treated as "not
+// approved", so an unsigned .so dropped on disk by hand is still refused.
+func isThirdPartyApproved(soPath string) bool {
+	metaPath := strings.TrimSuffix(soPath, ".so") + ".meta.json"
+	data, err := os.ReadFile(metaPath)
+	if err != nil {
+		return false
+	}
+	var meta struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return false
+	}
+	return meta.Origin == "third_party"
 }
 
 // loadAndRegisterPlugin loads and registers the plugin and returns the name it
@@ -470,10 +514,26 @@ func loadAndRegisterPlugin(
 		return "", err
 	}
 
+	// Go plugins cannot be unloaded, so a path that plugin.Open has already
+	// opened cannot be opened again in this process. Refuse the doomed
+	// retry with a clear message instead of letting plugin.Open return
+	// "plugin already loaded" on every reload. The operator must restart the
+	// agent to retry after fixing the plugin (e.g. its config).
+	//
+	// NOTE: the caller (loadPluginsFromConfig) already holds loadedPlugins'
+	// lock, so this function must not take it again (sync.Mutex is not
+	// reentrant; doing so deadlocks the whole agent).
+	if loadedPlugins.openedPaths[path] {
+		return "", fmt.Errorf("プラグイン %s は既に一度ロードされています（設定変更などの再試行には Agent の再起動が必要です）", path)
+	}
+
 	p, err := plugin.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
 	}
+	// plugin.Open succeeded: remember the path before any later step can
+	// fail, because this process can never open it again.
+	loadedPlugins.openedPaths[path] = true
 
 	sym, err := p.Lookup("NewPluginModule")
 	if err != nil {

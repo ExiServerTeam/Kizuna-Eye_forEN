@@ -40,6 +40,39 @@
     line-height: 1;
 }
 
+/* ===== 言語切替ボタン（テーマ切替の左隣に固定） ===== */
+.auth-lang-toggle {
+    position: fixed;
+    top: 16px;
+    /* テーマ切替（右16px + 幅44px + 間隔8px）の左に置く */
+    right: 68px;
+    top: max(16px, env(safe-area-inset-top));
+    right: max(68px, calc(env(safe-area-inset-right) + 52px));
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-header);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--text-primary);
+    cursor: pointer;
+    box-shadow: var(--shadow);
+    transition: background 0.3s, transform 0.2s, border-color 0.3s;
+    z-index: 10;
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+
+.auth-lang-toggle:hover {
+    background: var(--bg-card-hover);
+    transform: translateY(-2px);
+}
+
 /* ===== 背景 ===== */
 .auth-body {
     min-height: 100vh;

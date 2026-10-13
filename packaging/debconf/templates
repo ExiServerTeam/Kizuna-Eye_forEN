@@ -1,0 +1,9 @@
+Template: kizuna-eye/language
+Type: select
+Choices: en, ja
+Default: en
+Description: UI default language for Kizuna-Eye:
+ The language used by the web UI when no preference is saved yet.
+ .
+ en - English (default)
+ ja - 日本語

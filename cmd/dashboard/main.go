@@ -1053,6 +1053,32 @@ func main() {
 	moduleHandler := api.NewModuleHandler(storage, cfg.ResolvePluginsDir())
 	moduleHandler.RegisterRoutes(mux)
 
+	// collectPluginLogs builds {moduleName: logPath} from modules.json so the
+	// log viewer can list and serve plugin logs that live outside logDir.
+	// Only entries with a usable log_path are returned.
+	collectPluginLogs := func(store *api.ModulesStorage) map[string]string {
+		out := make(map[string]string)
+		if store == nil {
+			return out
+		}
+		for _, m := range store.GetAll() {
+			var cfg struct {
+				LogPath string `json:"log_path"`
+			}
+			if len(m.Config) == 0 {
+				continue
+			}
+			if err := json.Unmarshal(m.Config, &cfg); err != nil {
+				continue
+			}
+			if cfg.LogPath == "" {
+				continue
+			}
+			out[m.Name] = cfg.LogPath
+		}
+		return out
+	}
+
 	// ---- Plugin management API (passes hub) ----
 	pluginManager, err := api.NewPluginManager(storage, cfg, lg, hub)
 	if err != nil {
@@ -1062,14 +1088,37 @@ func main() {
 		// Record plugin upload/delete (a code-execution boundary) in the
 		// alert history and notifications, not only the log.
 		pluginManager.SetAuditHook(func(kind, detail string) {
+			// kind ごとに自然なタイトルを選ぶ。"操作を検知" のような
+			// 汎用文言だと何が起きたのか一目で分からないため。
+			title, level, icon := "プラグイン操作を検知", notify.LevelCritical, "🚨"
+			// サードパーティー製は「未検証（untrusted）」として扱う。
+			// ダッシュボードが生成したアラートでも、外部由来のコード追加は
+			// 信頼済みバッジを付けるべきではない。
+			isThirdParty := strings.HasPrefix(detail, "サードパーティー製")
+			switch kind {
+			case "plugin_upload":
+				// 純正（Kizuna シリーズ）は警戒、サードパーティー製は重大。
+				// 純正は作者が作成したものなので危険度は低いが、追加自体は
+				// コード実行境界を越える操作なので警戒で通知する。
+				title = "プラグインが追加されました"
+				if isThirdParty {
+					level, icon = notify.LevelCritical, "🚨"
+				} else {
+					level, icon = notify.LevelWarning, "⚠️"
+				}
+			case "plugin_delete":
+				title, level, icon = "プラグインが削除されました", notify.LevelCritical, "🚨"
+			case "plugin_upload_rejected":
+				title, level, icon = "プラグインの追加を拒否しました", notify.LevelWarning, "⚠️"
+			}
 			engine.ReportAlert(&notify.Alert{
 				Type:      "audit_" + kind,
-				Level:     notify.LevelCritical,
-				Icon:      "🚨",
-				Title:     "プラグイン操作を検知",
+				Level:     level,
+				Icon:      icon,
+				Title:     title,
 				Message:   detail,
 				Timestamp: time.Now(),
-			}, "dashboard", true)
+			}, "dashboard", !isThirdParty)
 		})
 		pluginManager.RegisterRoutes(mux)
 		lg.InfoT("dash.api_plugins")
@@ -1109,6 +1158,13 @@ func main() {
 		dashboardLogPath, // dashboard log
 		"logs",           // log directory
 	)
+	// Plugin logs are written under each plugin's own directory (outside
+	// logDir), so register a callback that re-reads modules.json on every
+	// request. A one-time snapshot would not follow a module added or
+	// removed from the UI while the dashboard keeps running.
+	logHandler.SetExtraLogsFunc(func() map[string]string {
+		return collectPluginLogs(storage)
+	})
 	logHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_logs")
 

@@ -1,0 +1,13 @@
+#!/bin/sh
+# ============================================================
+# Kizuna-Eye debconf config
+# インストール時の質問（言語）を定義する。実際の適用は postinst が行う。
+# ============================================================
+set -e
+
+. /usr/share/debconf/confmodule
+
+db_input high kizuna-eye/language || true
+db_go || true
+
+exit 0

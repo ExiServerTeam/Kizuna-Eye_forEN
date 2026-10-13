@@ -41,14 +41,21 @@ const usage = `plugin-sign - Kizuna-Eye プラグイン署名ツール (A-3)
       DIR/plugin_signing.pub (0644) を書き出す。
       秘密鍵は共有上に置かず、オフホストで保管すること。
 
+  plugin-sign -embed FILE -private-key KEYFILE
+      FILE (.so) の末尾に署名を埋め込む。配布ファイルは .so 一つで済む。
+      再実行は冪等（既存の埋め込み署名を剥がして署名し直す）。
+
+  plugin-sign -embed-all DIR -private-key KEYFILE
+      DIR 直下の *.so すべてに埋め込み署名する。
+
   plugin-sign -sign FILE -private-key KEYFILE [-out SIGFILE]
-      FILE の分離署名を書き出す（既定: FILE.sig）。
+      FILE の分離署名を書き出す（既定: FILE.sig）。後方互換用。
 
   plugin-sign -sign-all DIR -private-key KEYFILE
-      DIR 直下の *.so すべてに署名する。サブディレクトリは走査しない。
+      DIR 直下の *.so すべてに分離署名する。
 
   plugin-sign -verify FILE -public-key PUBFILE
-      FILE と FILE.sig を検証する（不一致なら exit 1）。
+      FILE を検証する。埋め込み署名を優先し、無ければ FILE.sig を読む。
 
   plugin-sign -print-public-key -private-key KEYFILE
       秘密鍵から公開鍵を base64 で表示する（PUBFILE への配布用）。
@@ -57,6 +64,11 @@ const usage = `plugin-sign - Kizuna-Eye プラグイン署名ツール (A-3)
   公開鍵   : PKIX PEM / hex / base64
   秘密鍵   : PKCS#8 PEM / hex / base64（64 バイト鍵 または 32 バイト seed）
   署名     : base64 / hex（'#' 始まりのコメント行と空白は無視）
+
+埋め込み署名のレイアウト:
+  [.so 本体][マジック 13B "KIZUNA_SIG_V1"][Ed25519 署名 64B]
+  署名は本体のみを対象とする。ELF ローダは末尾の余分バイトを無視するため、
+  署名付き .so もそのまま plugin.Open できる。
 `
 
 func main() {
@@ -77,12 +89,14 @@ func run(args []string) error {
 	var (
 		genKey    = fs.Bool("gen-key", false, "新しい Ed25519 鍵対を生成する")
 		keyDir    = fs.String("key-dir", ".", "-gen-key の保存先ディレクトリ")
-		signFile  = fs.String("sign", "", "署名する .so ファイル")
-		signAll   = fs.String("sign-all", "", "ディレクトリ直下の全 .so に署名する")
-		verify    = fs.String("verify", "", "検証する .so ファイル（<file>.sig を読む）")
+		signFile  = fs.String("sign", "", "分離署名する .so ファイル")
+		signAll   = fs.String("sign-all", "", "ディレクトリ直下の全 .so に分離署名する")
+		embedFile = fs.String("embed", "", "埋め込み署名する .so ファイル")
+		embedAll  = fs.String("embed-all", "", "ディレクトリ直下の全 .so に埋め込み署名する")
+		verify    = fs.String("verify", "", "検証する .so ファイル（埋め込み優先、無ければ <file>.sig）")
 		privKey   = fs.String("private-key", "", "秘密鍵ファイル")
 		pubKey    = fs.String("public-key", "", "公開鍵ファイル")
-		outPath   = fs.String("out", "", "署名の出力先（既定: <file>.sig）")
+		outPath   = fs.String("out", "", "分離署名の出力先（既定: <file>.sig）")
 		printPub  = fs.Bool("print-public-key", false, "秘密鍵から公開鍵を表示する")
 		overwrite = fs.Bool("force", false, "既存の鍵・署名を上書きする")
 	)
@@ -96,6 +110,10 @@ func run(args []string) error {
 		return generateKeyPair(*keyDir, *overwrite)
 	case *printPub:
 		return printPublicKey(*privKey)
+	case *embedFile != "":
+		return embedOne(*embedFile, *privKey)
+	case *embedAll != "":
+		return embedAllIn(*embedAll, *privKey)
 	case *signFile != "":
 		return signOne(*signFile, *privKey, *outPath)
 	case *signAll != "":
@@ -226,7 +244,67 @@ func signAllIn(dir, privPath string, force bool) error {
 	return nil
 }
 
-// verifyOne verifies a file against its detached signature (<file>.sig).
+// embedOne appends an embedded signature trailer to a .so file.
+func embedOne(soPath, privPath string) error {
+	if privPath == "" {
+		return errors.New("-embed には -private-key が必要です")
+	}
+	if !strings.HasSuffix(soPath, ".so") {
+		return fmt.Errorf("埋め込み署名の対象は .so のみです: %s", soPath)
+	}
+	priv, err := pluginsig.LoadPrivateKey(privPath)
+	if err != nil {
+		return err
+	}
+	if err := pluginsig.EmbedSignatureFile(soPath, priv); err != nil {
+		return err
+	}
+	fmt.Printf("📦 埋め込み署名しました: %s\n", soPath)
+	return nil
+}
+
+// embedAllIn embeds a signature into every *.so directly under dir.
+func embedAllIn(dir, privPath string) error {
+	if privPath == "" {
+		return errors.New("-embed-all には -private-key が必要です")
+	}
+	priv, err := pluginsig.LoadPrivateKey(privPath)
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("ディレクトリを読めません (%s): %w", dir, err)
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".so") {
+			continue
+		}
+		names = append(names, e.Name())
+	}
+	if len(names) == 0 {
+		return fmt.Errorf("%s に .so がありません", dir)
+	}
+	sort.Strings(names)
+	failed := 0
+	for _, n := range names {
+		so := filepath.Join(dir, n)
+		if err := pluginsig.EmbedSignatureFile(so, priv); err != nil {
+			fmt.Fprintf(os.Stderr, "❌ %v\n", err)
+			failed++
+			continue
+		}
+		fmt.Printf("📦 %s\n", so)
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d 件の埋め込み署名に失敗しました", failed)
+	}
+	return nil
+}
+
+// verifyOne verifies a file. The embedded trailer is tried first; if there is
+// none, the detached <file>.sig is used. The source that matched is printed.
 func verifyOne(soPath, pubPath string) error {
 	if pubPath == "" {
 		return errors.New("-verify には -public-key が必要です")
@@ -235,10 +313,10 @@ func verifyOne(soPath, pubPath string) error {
 	if err != nil {
 		return err
 	}
-	sigPath := pluginsig.SigPath(soPath)
-	if err := pluginsig.VerifyFile(soPath, sigPath, pub); err != nil {
+	source, err := pluginsig.VerifyFileAny(soPath, pub)
+	if err != nil {
 		return fmt.Errorf("検証失敗: %w", err)
 	}
-	fmt.Printf("✅ 署名は有効です: %s (%s)\n", soPath, sigPath)
+	fmt.Printf("✅ 署名は有効です: %s (%s)\n", soPath, source)
 	return nil
 }

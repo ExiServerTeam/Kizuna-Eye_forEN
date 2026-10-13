@@ -422,11 +422,43 @@
         return res.json();
     }
 
+    // 表示名（user_label）だけを書き換える。プラグインの内部名・.so・
+    // modules.json は変更しないため、イベントやバックアップは壊れない。
+    async function updatePluginLabel(name, userLabel) {
+        const res = await fetch(`/api/plugins/${encodeURIComponent(name)}/label`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_label: userLabel }),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
     // ============================================================
     // ★ Phase 8-5: 手動実行
     // ============================================================
     async function handleRunClick(btn) {
         const name = btn.dataset.name;
+
+        // Refuse to run when a required config field is empty. The backup
+        // would otherwise fail on the agent side with a less obvious error.
+        const runMeta = pluginMetas.get(name);
+        const runMod = modules.find(m => m.name === name);
+        if (runMeta && runMod) {
+            const cfg = runMod.config || {};
+            const missing = (runMeta.fields || []).filter(f => {
+                if (!f.required) return false;
+                const v = cfg[f.key];
+                return v === '' || v === undefined || v === null;
+            });
+            if (missing.length > 0) {
+                showToast(t('toast.required_fields_missing'), 'error');
+                return;
+            }
+        }
 
         // すでに実行中なら受け付けない（二重実行の防止）
         if (runningPlugins.has(name)) {
@@ -519,22 +551,34 @@
                                (s === 'failed' || s === 'error') ? t('status.failed') :
                                (s === 'running' || s === 'processing') ? t('status.running') : t('status.unknown');
 
-            // バッジはプラグインの Tag() 宣言を最優先する。宣言が無い場合は
-            // 後方互換として display_name に LITE/PRO を含むかを見て、
-            // それも無ければ "PLUGIN" とする。
+            // Badge rules:
+            //   - pure (origin=official): honor the plugin's Tag() (GUARD/
+            //     LITE/PRO) or fall back to a display_name hint, then PLUGIN.
+            //   - third-party (origin=third_party): always PLUGIN. A
+            //     community plugin must not be able to claim GUARD/LITE/PRO
+            //     by naming its Tag() that way.
+            // The card title prefers the operator's own label (user_label)
+            // over the plugin's display_name, so the name they typed on
+            // upload is what they see.
             let versionBadge, versionLabel, displayLabel;
             if (mod.type === 'plugin') {
                 const meta = pluginMetas.get(mod.name);
                 const displayName = meta?.display_name || '';
-                displayLabel = displayName || mod.name;
-                // 宣言されたタグ（"GUARD" 等）。大文字化してそのまま使う。
-                const declaredTag = (meta?.tag || '').trim().toUpperCase();
+                const userLabel = (meta?.user_label || '').trim();
+                displayLabel = userLabel || displayName || mod.name;
+                const isThirdParty = meta?.origin === 'third_party';
+                const declaredTag = isThirdParty
+                    ? ''
+                    : (meta?.tag || '').trim().toUpperCase();
                 if (declaredTag) {
                     versionLabel = declaredTag;
                     versionBadge = declaredTag === 'GUARD' ? 'badge-guard'
                                  : declaredTag === 'LITE' ? 'badge-lite'
                                  : declaredTag === 'PRO' ? 'badge-pro'
                                  : 'badge-plugin';
+                } else if (isThirdParty) {
+                    versionBadge = 'badge-plugin';
+                    versionLabel = 'PLUGIN';
                 } else {
                     const upper = displayName.toUpperCase();
                     if (upper.includes('LITE')) {
@@ -579,7 +623,11 @@
                 : '';
 
             // 有効/無効の切り替えボタン
-            const toggleButton = `<button class="btn-toggle" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`;
+            // 状態が一目で分かるよう、ボタン色を有効/無効で変える。
+            //   有効 → 「無効化」（赤系・注意）
+            //   無効 → 「有効化」（緑系・前向き）
+            const toggleClass = mod.enabled ? 'btn-toggle on' : 'btn-toggle off';
+            const toggleButton = `<button class="${toggleClass}" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`;
 
             // カード本文。セキュリティ等の監視プラグインは専用の項目を表示する。
             const cfg = mod.config || {};
@@ -640,8 +688,14 @@
                     </div>
                 `;
 
+            // 表示名を変更できるボタン。プラグインの内部名は変えず、
+            // meta.json の user_label だけを書き換える（PUT /label）。
+            const labelButton = (mod.type === 'plugin')
+                ? `<button class="btn-label" data-name="${escapeAttr(mod.name)}" title="${escapeAttr(t('modules.btn_label_title'))}">${t('modules.btn_label')}</button>`
+                : '';
+
             html += `
-                <div class="module-card">
+                <div class="module-card" data-name="${escapeAttr(mod.name)}">
                     <div class="module-card-header">
                         <div class="module-card-row">
                             <span class="badge ${cssClass(versionBadge)}">${escapeHtml(versionLabel)}</span>
@@ -654,8 +708,10 @@
                             ${openButton}
                             ${runButton}
                             ${toggleButton}
+                            ${labelButton}
                             <button class="btn-edit" data-name="${escapeAttr(mod.name)}">${t('modules.btn_edit')}</button>
                             <button class="btn-delete" data-name="${escapeAttr(mod.name)}">${t('modules.btn_delete')}</button>
+                            <button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>
                         </div>
                     </div>
                     <div class="module-card-body">
@@ -713,6 +769,141 @@
                 deleteModal.style.display = 'flex';
             });
         });
+
+        // 名前変更ボタン（表示名だけを書き換える）
+        document.querySelectorAll('.btn-label').forEach(btn => {
+            btn.addEventListener('click', () => openLabelModal(btn.dataset.name));
+        });
+
+        // ドラッグ & ドロップで並べ替え（順序は localStorage に保存）
+        setupModuleReorder();
+    }
+
+    // ============================================================
+    // モジュールカード並べ替え（ダッシュボードと同じ方式）
+    // 順序は localStorage の kizuna-module-order に保存する。
+    // ============================================================
+    const MODULE_ORDER_KEY = 'kizuna-module-order';
+
+    function saveModuleOrder() {
+        try {
+            const order = Array.from(moduleGrid.children)
+                .filter(c => c.classList.contains('module-card'))
+                .map(c => c.dataset.name);
+            localStorage.setItem(MODULE_ORDER_KEY, JSON.stringify(order));
+        } catch (e) { /* localStorage 不可の環境では無視 */ }
+    }
+
+    function applyModuleOrder() {
+        let order;
+        try {
+            order = JSON.parse(localStorage.getItem(MODULE_ORDER_KEY) || '[]');
+        } catch (e) { order = []; }
+        if (!Array.isArray(order) || order.length === 0) return;
+
+        const byName = new Map();
+        Array.from(moduleGrid.children)
+            .filter(c => c.classList.contains('module-card'))
+            .forEach(card => byName.set(card.dataset.name, card));
+        order.forEach(name => {
+            const card = byName.get(name);
+            if (card) moduleGrid.appendChild(card);
+        });
+    }
+
+    function setupModuleReorder() {
+        if (!moduleGrid) return;
+        const isTarget = (el) => el && el.classList && el.classList.contains('module-card');
+        applyModuleOrder();
+
+        const items = Array.from(moduleGrid.children).filter(isTarget);
+        let dragging = null;
+        let pointerId = null;
+
+        function onDown(e, item) {
+            if (!e.target.classList.contains('drag-handle')) return;
+            e.preventDefault();
+            dragging = item;
+            pointerId = e.pointerId;
+            item.classList.add('dragging');
+            document.body.classList.add('card-dragging');
+            try { item.setPointerCapture(e.pointerId); } catch (_) {}
+        }
+
+        function onMove(e) {
+            if (!dragging) return;
+            e.preventDefault();
+            // ドラッグ中のカードは elementFromPoint の最前面にあり、その
+            // 下にあるカードを拾えない。一時的に当たり判定から外すことで
+            // 左右どちらへ動かしても正しい移動先を検出できる。
+            dragging.style.pointerEvents = 'none';
+            const target = document.elementFromPoint(e.clientX, e.clientY);
+            const over = target && target.closest('.module-card');
+            items.forEach(c => c.classList.remove('drop-target'));
+            if (!over || over === dragging || !moduleGrid.contains(over) || !isTarget(over)) return;
+            over.classList.add('drop-target');
+            const rect = over.getBoundingClientRect();
+            // グリッドは2次元配置なので、カーソルが over の中心から見て
+            // X/Y のどちらに大きく外れているかで前後を決める。横長カード
+            // では通常 X が支配的だが、行をまたぐときは Y が支配的になる。
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dx = e.clientX - cx;
+            const dy = e.clientY - cy;
+            const after = Math.abs(dx) > Math.abs(dy) ? dx > 0 : dy > 0;
+            moduleGrid.insertBefore(dragging, after ? over.nextSibling : over);
+        }
+
+        function onUp() {
+            if (!dragging) return;
+            dragging.classList.remove('dragging');
+            dragging.style.pointerEvents = '';
+            items.forEach(c => c.classList.remove('drop-target'));
+            document.body.classList.remove('card-dragging');
+            try { dragging.releasePointerCapture(pointerId); } catch (_) {}
+            dragging = null;
+            pointerId = null;
+            saveModuleOrder();
+        }
+
+        items.forEach(item => {
+            // 同じカードに二重登録しないよう、関数プロパティで印を付ける。
+            if (item.dataset.reorderBound === '1') return;
+            item.dataset.reorderBound = '1';
+            item.addEventListener('pointerdown', (e) => onDown(e, item));
+        });
+        if (!moduleGrid.dataset.reorderGlobalBound) {
+            moduleGrid.dataset.reorderGlobalBound = '1';
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onUp);
+            document.addEventListener('pointercancel', onUp);
+        }
+    }
+
+    // ============================================================
+    // 表示名の変更
+    // ============================================================
+    function openLabelModal(name) {
+        const mod = modules.find(m => m.name === name);
+        const meta = pluginMetas.get(name);
+        if (!mod || !meta) {
+            showToast(t('toast.plugin_meta_missing'), 'error');
+            return;
+        }
+        const current = (meta.user_label || meta.display_name || name);
+        const input = prompt(t('modules.label_prompt'), current);
+        if (input === null) return; // キャンセル
+        const trimmed = input.trim();
+        if ([...trimmed].length > 64) {
+            showToast(t('toast.plugin_name_too_long'), 'error');
+            return;
+        }
+        updatePluginLabel(name, trimmed)
+            .then(() => {
+                showToast(t('toast.plugin_label_saved'), 'success');
+                return loadModules();
+            })
+            .catch((err) => showToast(t('toast.save_fail', err.message), 'error'));
     }
 
     // ============================================================
@@ -795,7 +986,14 @@
 
         try {
             await deleteModule(deleteTarget);
-            showToast(t('toast.module_deleted', deleteTarget), 'success');
+            // Deleting a plugin is destructive (the .so, meta and modules.json
+            // entry are removed), so always show a red toast, regardless of
+            // origin. The card title prefers user_label so the operator sees
+            // the name they recognize.
+            const mod = modules.find(m => m.name === deleteTarget);
+            const meta = mod ? pluginMetas.get(mod.name) : null;
+            const label = (meta?.user_label || meta?.display_name || deleteTarget);
+            showToast(t('toast.module_deleted', label), 'error');
             deleteModal.style.display = 'none';
             deleteTarget = null;
             await loadModules();
@@ -886,11 +1084,19 @@
             const defaultName = file.name.replace(/\.so$/, '');
             const pluginName = prompt(t('toast.plugin_name_prompt'), defaultName);
             if (!pluginName) {
+                // The operator dismissed the name prompt before any upload
+                // started. This is a routine cancel, so use a neutral green
+                // toast ("Plugin installation was cancelled.").
+                showToast(t('toast.plugin_cancelled'), 'success');
                 e.target.value = '';
                 return;
             }
-            if (!/^[A-Za-z0-9_\-]+$/.test(pluginName)) {
-                showToast(t('toast.plugin_name_invalid'), 'error');
+            // The name is a display-only label, so any text is accepted
+            // (including Japanese and spaces). The server derives the
+            // filesystem name from the uploaded filename. Only an
+            // excessively long label is rejected.
+            if ([...pluginName].length > 64) {
+                showToast(t('toast.plugin_name_too_long'), 'error');
                 e.target.value = '';
                 return;
             }
@@ -907,17 +1113,16 @@
             try {
                 showToast(t('toast.plugin_uploading'), 'info');
 
-                const res = await fetch('/api/plugins/upload', {
-                    method: 'POST',
-                    body: formData,
-                });
+                const result = await uploadPlugin(formData);
 
-                if (!res.ok) {
-                    const err = await res.json().catch(() => ({}));
-                    throw new Error(err.error || `HTTP ${res.status}`);
+                // The operator declined the unsigned-plugin confirmation.
+                // The plugin looked like a third-party module, so this is a
+                // warning-level cancel: use a red toast that names the reason.
+                if (result && result.cancelled) {
+                    showToast(t('toast.plugin_cancelled_third_party'), 'error');
+                    e.target.value = '';
+                    return;
                 }
-
-                const result = await res.json();
 
                 if (result.inspect_error) {
                     showToast(t('toast.plugin_inspect_error', result.inspect_error), 'error');
@@ -926,7 +1131,14 @@
                     return;
                 }
 
-                showToast(t('toast.plugin_registered', result.name), 'success');
+                // Origin tells pure Kizuna plugins apart from third-party
+                // ones. A third-party install is a deliberate risk, so it is
+                // flagged in red even when the operator confirmed it.
+                if (result.origin === 'official') {
+                    showToast(t('toast.plugin_registered_official', result.name), 'success');
+                } else {
+                    showToast(t('toast.plugin_registered_third_party', result.name), 'error');
+                }
 
                 openPluginConfigModal(result, {});
                 await loadModules();
@@ -935,6 +1147,69 @@
             }
 
             e.target.value = '';
+        });
+    }
+
+    // uploadPlugin sends the .so (+ optional .sig). On 409 needs_confirmation
+    // it shows the "not verified" overlay and retries with confirm_unsigned=true
+    // only if the operator accepts the risk. Resolves with the server's JSON
+    // meta on success, with { cancelled: true } when the operator declines,
+    // and rejects with an Error on a real failure.
+    async function uploadPlugin(formData) {
+        const res = await fetch('/api/plugins/upload', { method: 'POST', body: formData });
+
+        // 409 + needs_confirmation => unsigned plugin. Ask the operator.
+        if (res.status === 409) {
+            const body = await res.json().catch(() => ({}));
+            if (body.needs_confirmation) {
+                const ok = await confirmUnsignedPlugin(body.name || '');
+                if (!ok) {
+                    // Declined: not an error. Return a sentinel so the caller
+                    // can show a neutral message instead of the error wrapper.
+                    return { cancelled: true };
+                }
+                formData.append('confirm_unsigned', 'true');
+                const retry = await fetch('/api/plugins/upload', { method: 'POST', body: formData });
+                if (!retry.ok) {
+                    const err = await retry.json().catch(() => ({}));
+                    throw new Error(err.error || `HTTP ${retry.status}`);
+                }
+                return retry.json();
+            }
+            throw new Error(body.error || `HTTP ${res.status}`);
+        }
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
+    // confirmUnsignedPlugin shows the overlay for an unsigned (third-party)
+    // plugin and resolves true only when the operator explicitly accepts.
+    function confirmUnsignedPlugin(name) {
+        return new Promise((resolve) => {
+            const overlay = $('#unsignedPluginModal');
+            const nameEl = $('#unsignedPluginName');
+            const okBtn = $('#unsignedPluginOk');
+            const cancelBtn = $('#unsignedPluginCancel');
+            if (!overlay || !okBtn || !cancelBtn) {
+                resolve(window.confirm(t('plugins.unsigned_confirm_plain')));
+                return;
+            }
+            if (nameEl) nameEl.textContent = name;
+            overlay.style.display = 'flex';
+
+            const cleanup = () => {
+                overlay.style.display = 'none';
+                okBtn.removeEventListener('click', onOk);
+                cancelBtn.removeEventListener('click', onCancel);
+            };
+            const onOk = () => { cleanup(); resolve(true); };
+            const onCancel = () => { cleanup(); resolve(false); };
+            okBtn.addEventListener('click', onOk);
+            cancelBtn.addEventListener('click', onCancel);
         });
     }
 
@@ -959,6 +1234,29 @@
         if (pluginConfigModal) pluginConfigModal.style.display = 'none';
     }
 
+    // labelForOption returns the i18n label for a plugin-provided select
+    // option (e.g. notify_min_level's "critical"/"warning"/"info"). Only
+    // options with an "opt.<value>" entry are translated; anything else
+    // falls back to the raw value the plugin declared, so unknown options
+    // still display sanely.
+    function labelForOption(value) {
+        const key = 'opt.' + String(value).toLowerCase();
+        const translated = t(key);
+        return translated !== key ? translated : value;
+    }
+
+    // pickLang returns the English variant of a ConfigField string when the
+    // UI is in English and the plugin supplied a translation, otherwise the
+    // Japanese value. This keeps a plugin usable even if it only translated
+    // some fields.
+    function pickLang(jaValue, enValue) {
+        const lang = (window.KizunaI18n && window.KizunaI18n.getLang)
+            ? window.KizunaI18n.getLang()
+            : 'ja';
+        if (lang === 'en' && enValue) return enValue;
+        return jaValue;
+    }
+
     function renderConfigForm(fields, values) {
         if (!fields || fields.length === 0) {
             return `<p class="form-empty">${escapeHtml(t('modules.plugin_config_empty'))}</p>`;
@@ -966,7 +1264,7 @@
 
         const groups = new Map();
         for (const f of fields) {
-            const g = f.group || t('modules.group_basic');
+            const g = pickLang(f.group, f.group_en) || t('modules.group_basic');
             if (!groups.has(g)) groups.set(g, []);
             groups.get(g).push(f);
         }
@@ -991,7 +1289,10 @@
         // id ambiguous with getElementById().
         const id = fieldElementId(f.key);
         const required = f.required ? 'required' : '';
-        const hint = f.hint ? `<div class="field-hint">${escapeHtml(f.hint)}</div>` : '';
+        const hintText = pickLang(f.hint, f.hint_en);
+        const hint = hintText ? `<div class="field-hint">${escapeHtml(hintText)}</div>` : '';
+        const placeholder = pickLang(f.placeholder, f.placeholder_en) || '';
+        const labelText = pickLang(f.label, f.label_en);
         let input = '';
 
         switch (f.type) {
@@ -999,7 +1300,7 @@
                 input = `<select id="${id}" name="${escapeAttr(f.key)}" ${required}>
                     ${(f.options || []).map(o => {
                         const sel = (o === value) ? 'selected' : '';
-                        return `<option value="${escapeAttr(o)}" ${sel}>${escapeHtml(o)}</option>`;
+                        return `<option value="${escapeAttr(o)}" ${sel}>${escapeHtml(labelForOption(o))}</option>`;
                     }).join('')}
                 </select>`;
                 break;
@@ -1018,47 +1319,40 @@
                 const max = (f.max !== undefined && f.max !== null) ? `max="${escapeAttr(f.max)}"` : '';
                 input = `<input type="number" id="${id}" name="${escapeAttr(f.key)}"
                     value="${escapeAttr(value)}" ${min} ${max} ${required}
-                    placeholder="${escapeAttr(f.placeholder || '')}">`;
+                    placeholder="${escapeAttr(placeholder)}">`;
                 break;
             }
             case 'password':
                 input = `<input type="password" id="${id}" name="${escapeAttr(f.key)}"
                     value="${escapeAttr(value)}" ${required}
-                    placeholder="${escapeAttr(f.placeholder || '')}"
+                    placeholder="${escapeAttr(placeholder)}"
                     autocomplete="new-password">`;
                 break;
             case 'textarea':
                 input = `<textarea id="${id}" name="${escapeAttr(f.key)}" ${required}
-                    placeholder="${escapeAttr(f.placeholder || '')}">${escapeHtml(value)}</textarea>`;
+                    placeholder="${escapeAttr(placeholder)}">${escapeHtml(value)}</textarea>`;
                 break;
             default:
                 input = `<input type="text" id="${id}" name="${escapeAttr(f.key)}"
                     value="${escapeAttr(value)}" ${required}
-                    placeholder="${escapeAttr(f.placeholder || '')}">`;
+                    placeholder="${escapeAttr(placeholder)}">`;
         }
 
         return `
             <div class="config-field" data-key="${escapeAttr(f.key)}">
-                <label for="${id}">${escapeHtml(f.label)}${f.required ? ' <span class="req">*</span>' : ''}</label>
+                <label for="${id}">${escapeHtml(labelText)}${f.required ? ' <span class="req">*</span>' : ''}</label>
                 ${input}
                 ${hint}
             </div>
         `;
     }
 
-    async function handlePluginConfigSave() {
-        const name = editingPluginName;
-        if (!name) return;
-
-        const meta = pluginMetas.get(name);
-        if (!meta) {
-            showToast(t('toast.plugin_config_meta_missing'), 'error');
-            return;
-        }
-
+    // collectFormValues reads the current values of the plugin config form into
+    // a plain object. It is used by save and by the language-change redraw so
+    // switching the UI language does not lose what the user typed.
+    function collectFormValues(fields) {
         const config = {};
-
-        for (const f of (meta.fields || [])) {
+        for (const f of (fields || [])) {
             // Never let a plugin-provided key pollute Object.prototype.
             if (isUnsafeKey(f.key)) continue;
             const el = document.getElementById(fieldElementId(f.key));
@@ -1072,12 +1366,26 @@
                 config[f.key] = el.value;
             }
         }
+        return config;
+    }
+
+    async function handlePluginConfigSave() {
+        const name = editingPluginName;
+        if (!name) return;
+
+        const meta = pluginMetas.get(name);
+        if (!meta) {
+            showToast(t('toast.plugin_config_meta_missing'), 'error');
+            return;
+        }
+
+        const config = collectFormValues(meta.fields);
 
         for (const f of (meta.fields || [])) {
             if (!f.required) continue;
             const v = config[f.key];
             if (v === '' || v === undefined || v === null) {
-                showToast(t('toast.required_field', f.label), 'error');
+                showToast(t('toast.required_field', pickLang(f.label, f.label_en)), 'error');
                 return;
             }
         }
@@ -1197,10 +1505,18 @@
     // ============================================================
     loadModules();
 
-    // 言語変更時に再描画
+    // 言語変更時に再描画。プラグイン設定モーダルが開いていれば、
+    // 入力中の値を読み取ってから描き直し、言語切替で入力が消えないようにする。
     window.addEventListener('kizuna-lang-change', () => {
         setTheme(getTheme());
         if (modules && modules.length > 0) renderModules();
+        if (pluginConfigModal && pluginConfigModal.style.display === 'flex' && editingPluginName) {
+            const meta = pluginMetas.get(editingPluginName);
+            if (meta && pluginConfigBody) {
+                const current = collectFormValues(meta.fields || []);
+                pluginConfigBody.innerHTML = renderConfigForm(meta.fields || [], current);
+            }
+        }
     });
 
 })();

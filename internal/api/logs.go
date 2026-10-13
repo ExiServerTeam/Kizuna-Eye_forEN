@@ -21,6 +21,25 @@ type LogHandler struct {
 	agentLogFile     string
 	dashboardLogFile string
 	logDir           string
+
+	// extra holds additional log files that live outside logDir, keyed by
+	// the id the UI requests (?type=<id>). Plugin logs are written under
+	// their own directories (e.g. /samba/share/Kizuna-.../logs/), which is
+	// outside the dashboard's logDir, so they must be registered explicitly.
+	extra map[string]string
+
+	// extraFn, when set, supplies the extra logs on every request. modules.json
+	// can change while the dashboard runs (a plugin is added or removed in the
+	// UI), so a one-time snapshot would keep listing a removed module or miss
+	// a newly added one until the dashboard restarts.
+	extraFn func() map[string]string
+}
+
+// SetExtraLogsFunc installs a callback that supplies the extra logs (plugin
+// logs) on every request. Use this instead of SetExtraLogs when modules.json
+// can change while the dashboard is running.
+func (l *LogHandler) SetExtraLogsFunc(fn func() map[string]string) {
+	l.extraFn = fn
 }
 
 // NewLogHandler creates a LogHandler.
@@ -29,6 +48,21 @@ func NewLogHandler(agentLogFile, dashboardLogFile, logDir string) *LogHandler {
 		agentLogFile:     agentLogFile,
 		dashboardLogFile: dashboardLogFile,
 		logDir:           logDir,
+		extra:            make(map[string]string),
+	}
+}
+
+// SetExtraLogs replaces the extra log registry. ids must match logNameRe so
+// they can be safely used as ?type=<id>; paths are made absolute later.
+func (l *LogHandler) SetExtraLogs(extra map[string]string) {
+	if l.extra == nil {
+		l.extra = make(map[string]string)
+	}
+	for id, path := range extra {
+		if id == "" || path == "" || !logNameRe.MatchString(id) {
+			continue
+		}
+		l.extra[id] = path
 	}
 }
 
@@ -55,7 +89,22 @@ func (l *LogHandler) resolveLogPath(logType string) (string, bool) {
 	case "dashboard":
 		return l.safeLogPath(l.dashboardLogFile)
 	}
-	if !logNameRe.MatchString(logType) || l.logDir == "" {
+	if !logNameRe.MatchString(logType) {
+		return "", false
+	}
+	// Extra logs (plugin logs outside logDir) take precedence: they are
+	// registered explicitly, so an id that matches one is served even though
+	// it is not under logDir. Re-read the callback so a removed module's log
+	// stops resolving immediately.
+	if l.extraFn != nil {
+		if p, ok := l.extraFn()[logType]; ok {
+			return l.safeExtraLogPath(p)
+		}
+	}
+	if p, ok := l.extra[logType]; ok {
+		return l.safeExtraLogPath(p)
+	}
+	if l.logDir == "" {
 		return "", false
 	}
 	return l.safeLogPath(filepath.Join(l.logDir, logType+".log"))
@@ -138,8 +187,8 @@ func (l *LogHandler) isBuiltinLog(realPath string) bool {
 }
 
 // handleLogTypes lists extra log files (plugin logs, etc.) found in the log
-// directory, newest name last. The built-in agent/dashboard logs are implied
-// and not listed here.
+// directory, plus the explicitly registered extra logs. The built-in
+// agent/dashboard logs are implied and not listed here.
 type logTypeInfo struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
@@ -147,33 +196,58 @@ type logTypeInfo struct {
 
 func (l *LogHandler) handleLogTypes(w http.ResponseWriter, r *http.Request) {
 	types := []logTypeInfo{}
-	if l.logDir != "" {
-		entries, err := os.ReadDir(l.logDir)
-		if err == nil {
-			names := make([]string, 0, len(entries))
-			for _, e := range entries {
-				if e.IsDir() || !strings.HasSuffix(e.Name(), ".log") {
-					continue
-				}
-				base := strings.TrimSuffix(e.Name(), ".log")
-				// Skip rotated files (agent.log.1 is a different suffix already,
-				// but a plain *.log with dots is not a valid type id) and the
-				// built-in logs.
-				if base == "agent" || base == "dashboard" || !logNameRe.MatchString(base) {
-					continue
-				}
-				names = append(names, base)
-			}
-			sort.Strings(names)
-			for _, n := range names {
-				types = append(types, logTypeInfo{ID: n, Label: n})
-			}
+
+	// List only the logs of currently registered modules. The dashboard
+	// supplies each plugin's log_path (SetExtraLogs/SetExtraLogsFunc), so
+	// this list follows modules.json even if it changes while the dashboard
+	// runs. Scanning logDir instead would surface leftover files from
+	// removed plugins and show the operator "modules" that are not
+	// installed, and would list the same file twice under two ids.
+	ids := make(map[string]bool)
+	if l.extraFn != nil {
+		for id := range l.extraFn() {
+			ids[id] = true
 		}
+	}
+	for id := range l.extra {
+		ids[id] = true
+	}
+	extraIDs := make([]string, 0, len(ids))
+	for id := range ids {
+		extraIDs = append(extraIDs, id)
+	}
+	sort.Strings(extraIDs)
+	for _, id := range extraIDs {
+		types = append(types, logTypeInfo{ID: id, Label: id})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"types": types})
+}
+
+// safeExtraLogPath validates an explicitly registered extra log. The file may
+// live outside logDir, so only the symlink and regular-file rules from
+// safeLogPath apply; the containment check is skipped on purpose.
+func (l *LogHandler) safeExtraLogPath(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		// Missing or unreadable. Reject so the caller never reads an
+		// unresolved symlink.
+		return "", false
+	}
+	info, serr := os.Stat(real)
+	if serr != nil || !info.Mode().IsRegular() {
+		return "", false
+	}
+	return filepath.Clean(real), true
 }
 
 // handleLogs returns the tail of a log file.

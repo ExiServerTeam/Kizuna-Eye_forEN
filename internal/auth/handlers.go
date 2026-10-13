@@ -258,9 +258,22 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.store.Create(body.Username, body.Password, RoleAdmin); err != nil {
+	u, err := h.store.Create(body.Username, body.Password, RoleAdmin)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Log the new admin in right away, so setup does not bounce the user to
+	// /login.html and make them authenticate again. Session fixation defense:
+	// drop any existing session first (same as handleLogin).
+	if old, ok := h.sessionFromRequest(r); ok {
+		h.manager.Delete(old.ID)
+	}
+	if sess, serr := h.manager.Create(u.Username, u.Role, clientIP(r)); serr == nil {
+		h.setCookie(w, sess.ID, sess.ExpiresAt)
+	} else if h.logger != nil {
+		kelog.LogWarn(h.logger, "auth.setup_session_failed", serr.Error())
 	}
 
 	if h.logger != nil {
