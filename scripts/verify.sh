@@ -25,6 +25,16 @@ esac
 BASE_URL="${BASE_URL:-http://localhost:8080}"
 BIN_DIR="${BIN_DIR:-/opt/kizuna-eye/bin}"
 
+# 設定の置き場。start.sh と同じ自動判定（共有外へ移行済みならそちらを使う）。
+DATA_DIR="${KIZUNA_DATA_DIR:-}"
+if [ -z "$DATA_DIR" ]; then
+    if [ -f "$HOME/.kizuna-eye/data/dashboard_config.json" ]; then
+        DATA_DIR="$HOME/.kizuna-eye/data"
+    else
+        DATA_DIR="$PWD"
+    fi
+fi
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -166,9 +176,9 @@ kill_by_exe "$BIN_DIR/agent_linux"
 wait_exe_gone "$BIN_DIR/dashboard_linux" || true
 wait_exe_gone "$BIN_DIR/agent_linux" || true
 
-"$BIN_DIR/dashboard_linux" -config dashboard_config.json > logs/dashboard.log 2>&1 &
+"$BIN_DIR/dashboard_linux" -config "$DATA_DIR/dashboard_config.json" > logs/dashboard.log 2>&1 &
 DPID=$!
-"$BIN_DIR/agent_linux" -config agent_config.json > logs/agent.log 2>&1 &
+"$BIN_DIR/agent_linux" -config "$DATA_DIR/agent_config.json" -modules "$DATA_DIR/modules.json" > logs/agent.log 2>&1 &
 APID=$!
 echo "  dashboard PID=$DPID / agent PID=$APID"
 
