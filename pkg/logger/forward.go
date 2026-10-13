@@ -37,6 +37,7 @@ type forwardWriter struct {
 	done   chan struct{}
 
 	closeOnce sync.Once
+	closed    atomic.Bool
 	dropped   atomic.Uint64
 }
 
@@ -107,6 +108,13 @@ func (fw *forwardWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	// Refuse writes after Close: the sender channel is closed then, and a send
+	// would panic. The logger already serializes Write/Close under its own
+	// mutex, but this keeps the writer safe on its own (a future caller could
+	// Close and keep logging).
+	if fw.closed.Load() {
+		return len(p), nil
+	}
 	buf := make([]byte, len(p))
 	copy(buf, p)
 	select {
@@ -123,7 +131,10 @@ func (fw *forwardWriter) Dropped() uint64 { return fw.dropped.Load() }
 
 // Close stops the sender and waits (bounded) for the in-flight line.
 func (fw *forwardWriter) Close() error {
-	fw.closeOnce.Do(func() { close(fw.ch) })
+	fw.closeOnce.Do(func() {
+		fw.closed.Store(true)
+		close(fw.ch)
+	})
 	select {
 	case <-fw.done:
 	case <-time.After(forwardCloseGrace):

@@ -120,3 +120,26 @@ func TestForwardWriterNonBlocking(t *testing.T) {
 		t.Fatal("expected some lines to be dropped with a dead endpoint")
 	}
 }
+
+// TestForwardWriterWriteAfterClose: Write after Close must not panic
+// (send on a closed channel).
+func TestForwardWriterWriteAfterClose(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer srv.Close()
+	fw, err := newForwardWriter(srv.URL, time.Second)
+	if err != nil {
+		t.Fatalf("newForwardWriter: %v", err)
+	}
+	if err := fw.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	// Must not panic and must report success (drop after close).
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Write after Close panicked: %v", r)
+		}
+	}()
+	if _, err := fw.Write([]byte("after-close\n")); err != nil {
+		t.Fatalf("Write after Close returned error: %v", err)
+	}
+}
