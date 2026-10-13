@@ -212,14 +212,10 @@ func (h *ActionHandler) handleAction(w http.ResponseWriter, r *http.Request) {
 		// ヘルパーは機械可読な理由（"no process is listening on port N"
 		// など）を返すので、UI にそのまま出すと意味が伝わらない。
 		// 人間が次に何をすればよいか分かる文に変換する。
-		// The helper returns a machine-readable reason (e.g. "no process is
-		// listening on port N"), which is not meaningful verbatim in the UI;
-		// turn it into a sentence that tells the operator what to do next.
 		detail = humanizeActionError(req.Action, target, resultText, runErr)
 	}
 
 	// 実行結果をアラート履歴に記録する（監査証跡）。
-	// Record the outcome in the alert history (audit trail).
 	h.provider.RecordAction(a, req.Action, target, result+" "+detail)
 
 	status := http.StatusOK
@@ -373,11 +369,7 @@ func extractPortFromAlert(a *alert.HistoryEntry) string {
 		return m[1]
 	}
 	re2 := regexp.MustCompile(`ポート\s*(\d{1,5})`)
-	if m := re2.FindStringSubmatch(a.Command); m != nil {
-		return m[1]
-	}
-	re3 := regexp.MustCompile(`ポート\s*(\d{1,5})`)
-	if m := re3.FindStringSubmatch(a.Message); m != nil {
+	if m := re2.FindStringSubmatch(a.Message); m != nil {
 		return m[1]
 	}
 	return ""
