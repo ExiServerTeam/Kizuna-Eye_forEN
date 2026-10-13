@@ -80,18 +80,26 @@ var loadedPlugins = struct {
 	// under, so a hand-edited modules.json whose name differs from the
 	// plugin's Name() can still be disabled/reconfigured correctly.
 	byCfg map[string]string
-	// openedPaths records every .so path that plugin.Open has already
-	// succeeded on. Go plugins cannot be unloaded from a process, so once a
-	// path is opened a second plugin.Open on it always fails with
-	// "plugin already loaded". Without this set, a plugin whose Configure
-	// fails would be retried on every modules.json reload and fail the same
-	// way forever (log spam, no working plugin). Recording the path lets the
-	// agent skip a doomed retry and log a clear "restart required" error.
-	openedPaths map[string]bool
+	// cache maps a .so path to the constructor discovered by plugin.Open.
+	// Go cannot Open the same path twice in one process, but the constructor
+	// it returns (NewPluginModule) can be called any number of times. Caching
+	// it lets a disable→enable cycle build a FRESH instance without restarting
+	// the agent. The entry also records the file's mtime/size: if the .so on
+	// disk is replaced, the cached constructor points at the old code, so it
+	// is invalidated and a re-Open is attempted (which Go refuses, requiring
+	// an agent restart — the only remaining case that needs one).
+	cache map[string]*pluginCacheEntry
 }{
-	names:       make(map[string]bool),
-	byCfg:       make(map[string]string),
-	openedPaths: make(map[string]bool),
+	names: make(map[string]bool),
+	byCfg: make(map[string]string),
+	cache: make(map[string]*pluginCacheEntry),
+}
+
+// pluginCacheEntry is one cached plugin constructor (see loadedPlugins.cache).
+type pluginCacheEntry struct {
+	ctor  func(module.Logger) module.PluginModule
+	mtime time.Time
+	size  int64
 }
 
 // moduleRuntime holds the outcome of the last load attempt for every module,
@@ -532,12 +540,13 @@ func classifyLoadError(err error) (code, message string) {
 	switch {
 	case strings.Contains(msg, "plugin already loaded"),
 		strings.Contains(msg, "既に一度ロードされています"):
-		// Two sources of the same fact: plugin.Open's English message, and the
-		// agent's own pre-check (loadedPlugins.openedPaths), which returns a
-		// Japanese message. Only the English one was matched before, so a
-		// disable→enable cycle produced reason_code="unknown" and the UI hid
-		// the "restart the Agent" guidance behind a generic failure text.
-		return "already_loaded", "このモジュールは既に読み込まれています。設定を変えた場合は Agent の再起動が必要です。"
+		// plugin.Open refuses a second Open of the same path in one process.
+		// Normally the constructor cache avoids this, but it still happens
+		// when the .so was replaced on disk: the cached constructor points at
+		// the old code, so the agent tries a re-Open and Go refuses. That is
+		// the one case that genuinely needs an agent restart, so the message
+		// must say so instead of looking like a generic failure.
+		return "already_loaded", "このモジュールは既に読み込まれています。.so を差し替えた場合は Agent の再起動が必要です。"
 	case strings.Contains(msg, "no such file or directory"):
 		return "no_such_file", ".so ファイルが見つかりません。パスを確認してください。"
 	case strings.Contains(msg, "different version of package"):
@@ -596,46 +605,54 @@ func loadAndRegisterPlugin(
 	lg *logger.Logger,
 	policy config.PluginSecurityConfig,
 ) (string, error) {
-	// A-3: authenticate the .so before it is mapped into this process. This is
-	// the choke point for every load path (initial load and modules.json
-	// reload), so a plugin that never reached a verified state cannot execute
-	// even if the dashboard's upload checks were bypassed.
-	if err := verifyPluginSignature(path, policy, lg); err != nil {
-		return "", err
-	}
-
-	// Go plugins cannot be unloaded, so a path that plugin.Open has already
-	// opened cannot be opened again in this process. Refuse the doomed
-	// retry with a clear message instead of letting plugin.Open return
-	// "plugin already loaded" on every reload. The operator must restart the
-	// agent to retry after fixing the plugin (e.g. its config).
-	//
 	// NOTE: the caller (loadPluginsFromConfig) already holds loadedPlugins'
 	// lock, so this function must not take it again (sync.Mutex is not
 	// reentrant; doing so deadlocks the whole agent).
-	if loadedPlugins.openedPaths[path] {
-		return "", fmt.Errorf("プラグイン %s は既に一度ロードされています（設定変更などの再試行には Agent の再起動が必要です）", path)
+
+	// Resolve the constructor. plugin.Open can run only once per path per
+	// process, but the constructor it returns can be called repeatedly, so a
+	// disable→enable cycle reuses the cached constructor to build a fresh
+	// instance instead of failing with "already loaded".
+	//
+	// A changed .so (different mtime/size) invalidates the cached constructor:
+	// it points at the old code, and Go cannot Open the path again, so the
+	// load fails and the operator must restart the agent.
+	var mtime time.Time
+	var size int64
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mtime = fi.ModTime()
+		size = fi.Size()
 	}
 
-	p, err := plugin.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
+	var ctor func(module.Logger) module.PluginModule
+	if e, ok := loadedPlugins.cache[path]; ok && e.mtime.Equal(mtime) && e.size == size {
+		ctor = e.ctor
+	} else {
+		// A-3: authenticate the .so before it is mapped into this process.
+		// This is the choke point for every load path (initial load and
+		// modules.json reload), so a plugin that never reached a verified
+		// state cannot execute even if the dashboard's upload checks were
+		// bypassed.
+		if err := verifyPluginSignature(path, policy, lg); err != nil {
+			return "", err
+		}
+		p, err := plugin.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("plugin.Open 失敗 (%s): %w", path, err)
+		}
+		sym, err := p.Lookup("NewPluginModule")
+		if err != nil {
+			return "", fmt.Errorf("NewPluginModule が見つかりません: %w", err)
+		}
+		newFunc, ok := sym.(func(module.Logger) module.PluginModule)
+		if !ok {
+			return "", fmt.Errorf("NewPluginModule のシグネチャが不正です")
+		}
+		ctor = newFunc
+		loadedPlugins.cache[path] = &pluginCacheEntry{ctor: newFunc, mtime: mtime, size: size}
 	}
-	// plugin.Open succeeded: remember the path before any later step can
-	// fail, because this process can never open it again.
-	loadedPlugins.openedPaths[path] = true
 
-	sym, err := p.Lookup("NewPluginModule")
-	if err != nil {
-		return "", fmt.Errorf("NewPluginModule が見つかりません: %w", err)
-	}
-
-	newFunc, ok := sym.(func(module.Logger) module.PluginModule)
-	if !ok {
-		return "", fmt.Errorf("NewPluginModule のシグネチャが不正です")
-	}
-
-	pluginMod, err := constructPlugin(newFunc, lg)
+	pluginMod, err := constructPlugin(ctor, lg)
 	if err != nil {
 		return "", err
 	}
