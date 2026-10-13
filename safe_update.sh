@@ -85,7 +85,7 @@ restart_services || true
 # ヘルスチェック（最大30秒待つ）
 echo "▶ ヘルスチェック: $HEALTH_URL"
 ok=0
-for i in $(seq 1 30); do
+for _ in $(seq 1 30); do
     code="$(curl -s -o /dev/null -w '%{http_code}' "$HEALTH_URL" 2>/dev/null || echo 000)"
     if [ "$code" = "200" ]; then
         ok=1

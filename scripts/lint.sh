@@ -44,4 +44,17 @@ else
     echo "[lint] node 未検出のため i18n チェックをスキップ"
 fi
 
+# 4) フロントエンド XSS 静的検査（escape.js の一元化・属性補間・インラインハンドラ）
+#    check_xss.js は __dirname 基準で web/static を見るため、実行場所に依存しない。
+if command -v node >/dev/null 2>&1; then
+    if node scripts/check_xss.js; then
+        echo "[lint] xss: OK"
+    else
+        echo "[lint] xss: NG"
+        fail=1
+    fi
+else
+    echo "[lint] node 未検出のため XSS チェックをスキップ"
+fi
+
 exit "$fail"

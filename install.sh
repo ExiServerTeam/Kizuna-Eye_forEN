@@ -787,9 +787,18 @@ if [ "$INSTALL_SYSTEMD" -eq 1 ]; then
                     log "   ℹ️ agent unit は最新です"
                 else
                     # 手編集を失わないよう退避してから差し替える（migrate と同じ流儀）。
-                    $SUDO cp -a "$AGENT_DST" "/tmp/kizuna-eye-agent.service.bak-$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+                    # 退避先は mktemp で確保する。時刻ベースの予測可能な名前で root が
+                    # 書き込むと、同名の symlink を先に置かれた場合に書き込み先を
+                    # 誘導され得るため（CWE-59）、O_EXCL で新規作成される mktemp を使う。
+                    AGENT_BAK="$(mktemp /tmp/kizuna-eye-agent.service.bak-XXXXXXXX)" || AGENT_BAK=""
+                    if [ -n "$AGENT_BAK" ]; then
+                        $SUDO cp -a "$AGENT_DST" "$AGENT_BAK" 2>/dev/null || true
+                    fi
                     $SUDO install -m 0644 -o root -g root "$AGENT_TMP" "$AGENT_DST"
                     ok "agent unit を最新テンプレートで更新しました（旧版は /tmp に退避）"
+                    if [ -n "$AGENT_BAK" ]; then
+                        log "   ℹ️ 旧版の退避先: $AGENT_BAK"
+                    fi
                 fi
                 rm -f "$AGENT_TMP"
             fi

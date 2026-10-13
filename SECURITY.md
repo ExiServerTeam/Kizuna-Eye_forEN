@@ -101,7 +101,21 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
 - 設定ファイル（`agent_config.json` / `dashboard_config.json`）は 0600 を維持。
 - 認証を有効化し、`plugins_upload_enabled=true` と併用しない。
 - HTTPS 終端（リバースプロキシ）を前段に置き、`secure_cookies` を有効化。
+  （既定の `listen_addr` は全インターフェース `:8080` です。LAN に晒す前提が
+  無い場合は `127.0.0.1:8080` に変更するか、必ずリバースプロキシの背後で
+  動かしてください。）
 - agent を専用ユーザー（systemd）で動かす（`systemd/migrate-agent-user.sh`）。
+
+## リポジトリ衛生（公開前に必ず）
+
+- 秘密情報（鍵・パスワード・実設定ファイル）をコミットしない。push 前に
+  `scripts/check_secrets.sh` を実行し、公開対象（リモートブランチ + タグ）に
+  混入が無いことを確認する（CI でも同じチェックを実行します）。
+- ローカル専用 ref（`refs/cline/checkpoints/*` など）には作業中の一時的な秘密が
+  残ることがあります。`git push --mirror` は使わず、`git clone --single-branch`
+  した複製から push してください。
+- 一度でも push した秘密は「漏洩したもの」として扱い、値をローテーションして
+  から履歴を書き換えます（履歴の書き換えだけでは漏洩は取り消せません）。
 
 ## 謝辞
 
