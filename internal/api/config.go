@@ -107,16 +107,43 @@ func restoreSecrets(incoming, old interface{}) interface{} {
 	case []interface{}:
 		oldArr, _ := old.([]interface{})
 		for i, val := range t {
-			var oldVal interface{}
-			if i < len(oldArr) {
-				oldVal = oldArr[i]
-			}
+			// Match the old element to this one by type, scanning the whole old
+			// array. Matching by position would pair a masked value with the
+			// wrong element after a reorder/delete and silently assign another
+			// channel's secret. If no type match exists, the mask is dropped.
+			oldVal := matchOldElement(val, oldArr, i)
 			t[i] = restoreSecrets(val, oldVal)
 		}
 		return t
 	default:
 		return incoming
 	}
+}
+
+// matchOldElement finds the old array element that corresponds to incoming
+// element val. Objects with a "type" field (e.g. notification channels) are
+// matched by type, scanning the whole old array, so a reorder/delete does not
+// misassign secrets. Elements without a type fall back to positional matching.
+func matchOldElement(val interface{}, oldArr []interface{}, idx int) interface{} {
+	vm, vok := val.(map[string]interface{})
+	if vok {
+		if vt, ok := vm["type"].(string); ok {
+			for _, cand := range oldArr {
+				cm, cok := cand.(map[string]interface{})
+				if !cok {
+					continue
+				}
+				if ct, ok := cm["type"].(string); ok && ct == vt {
+					return cand
+				}
+			}
+			return nil // no same-type element: drop the mask
+		}
+	}
+	if idx < len(oldArr) {
+		return oldArr[idx]
+	}
+	return nil
 }
 
 // restoreSecretsFromFile loads the on-disk config and restores any secret

@@ -69,6 +69,57 @@ func TestRestoreSecretsKeepsRealValue(t *testing.T) {
 	}
 }
 
+// Regression: when channels are reordered, a masked value must not borrow a
+// different channel's secret. The old channel order was [discord, telegram];
+// the new order is [telegram, discord]. Without the type check, the masked
+// telegram token would be filled with the discord webhook and vice versa.
+func TestRestoreSecretsArrayReorderDoesNotMisassign(t *testing.T) {
+	old := map[string]interface{}{
+		"notifications": map[string]interface{}{
+			"channels": []interface{}{
+				map[string]interface{}{"type": "discord", "webhook_url": "https://discord-real"},
+				map[string]interface{}{"type": "telegram", "bot_token": "telegram-real"},
+			},
+		},
+	}
+	incoming := map[string]interface{}{
+		"notifications": map[string]interface{}{
+			"channels": []interface{}{
+				map[string]interface{}{"type": "telegram", "bot_token": maskedValue},
+				map[string]interface{}{"type": "discord", "webhook_url": maskedValue},
+			},
+		},
+	}
+
+	out := restoreSecrets(incoming, old).(map[string]interface{})
+	chans := out["notifications"].(map[string]interface{})["channels"].([]interface{})
+
+	telegram := chans[0].(map[string]interface{})
+	if telegram["bot_token"] != "telegram-real" {
+		t.Errorf("telegram bot_token must restore its own secret, got %v", telegram["bot_token"])
+	}
+	discord := chans[1].(map[string]interface{})
+	if discord["webhook_url"] != "https://discord-real" {
+		t.Errorf("discord webhook_url must restore its own secret, got %v", discord["webhook_url"])
+	}
+}
+
+// When the element at a position changes type, the masked placeholder must be
+// dropped rather than filled with the wrong type's secret.
+func TestRestoreSecretsTypeChangeDropsMask(t *testing.T) {
+	old := []interface{}{
+		map[string]interface{}{"type": "discord", "webhook_url": "https://discord-real"},
+	}
+	incoming := []interface{}{
+		map[string]interface{}{"type": "telegram", "bot_token": maskedValue},
+	}
+	out := restoreSecrets(incoming, old).([]interface{})
+	tg := out[0].(map[string]interface{})
+	if tg["bot_token"] != "" {
+		t.Errorf("a masked value with no matching old entry must become empty, got %v", tg["bot_token"])
+	}
+}
+
 func TestRestoreSecretsNested(t *testing.T) {
 	old := map[string]interface{}{
 		"notifications": map[string]interface{}{
