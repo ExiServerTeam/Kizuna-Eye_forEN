@@ -244,7 +244,54 @@
 
 ---
 
-## 付記: このセッションで変更したファイル
+## 重要: 既存の再発性クラッシュ（今回の作業中に発見・未解決）
+
+### 症状
+
+- agent / dashboard が `SIGSEGV` で落ちる。ログ上の signature:
+
+  ```
+  runtime: g 1: unexpected return pc for runtime.sigpanic called from 0x77acd19867b3
+  ...
+  ^ <encoding/json/v2.makeStructArshaler.func2+0xdb3>
+  ^ <runtime.mallocgc+0x76>
+  ```
+
+  - 返り先 `0x77ac...` は Go のコード領域外（libc 相当）＝**不正な関数ポインタ／ポインタ破壊**。
+  - `encoding/json/v2` は Go 1.27 の `encoding/json` 内部実装（本リポジトリは `encoding/json` を使用、
+    json/v2 の直接 import も `GOEXPERIMENT` も無し）＝**標準ライブラリの JSON 経路で表面化**している。
+
+### 発生状況（実測カウント）
+
+| ログ | `unexpected return pc` の回数 |
+|---|---|
+| `logs/agent.log`（現行） | 3（直近: 2026-10-03 18:36 以降） |
+| `logs/agent.log.1` | 31 |
+| `logs/agent.log.2` | 6 |
+| `logs/agent.log.3` | 1 |
+| `logs/dashboard.log` | 2 |
+
+- 直近の例: 18:15〜18:36 稼働後に落ち、02:15 の再配備時点で**旧 agent は既に死亡**していた
+  （`pgrep` 不該当）。今回の A-1/A-2 変更とは無関係（`agent.log.3`＝10/1 にも記録あり）。
+- 影響: agent が落ちると FIM / SSH ログイン / ポート / SUID / cron 監視が**静かに停止**し、
+  通知も届かない（自動再起動の仕組みが無い。systemd 未使用・手動起動のため）。
+
+### 推奨する次の対応（優先度: A-1〜A-4 より高い）
+
+1. **supervisor 化（A-4 と同時作業）**: systemd unit に `Restart=on-failure` / `RestartSec=5` を入れ、
+   監視断を最小化（A-4 の unit 案に既に含めた）。
+2. **コアダンプ採取**（要 sudo）: `ulimit -c unlimited`、
+   `/proc/sys/kernel/core_pattern` を見直し、`GOTRACEBACK=crash` で起動して再現時の情報を確保。
+3. **発生時刻の相関分析**: 直前の「セキュリティイベント送信」との関係（JSON 直列化の直後に落ちる傾向）を
+   時系列で確認。
+4. **再現手順の確立**: 同一イベント（SSH ログイン急増など）を流し、`json.Marshal` 経路で再現するか確認。
+   再現すれば Go 1.27.1 の JSON 実装起因の可能性を切り分けられる（ツールチェーンの切替で比較）。
+5. 暫定監視: ユーザー cron での死活監視＋再起動（sudo 不要）。
+
+> 今回の再起動後: 新 agent（PID 545918）は `Agent 認証済み接続`（02:15:41）を取り、
+> Kizuna-Security も `configured` を記録。権限不足の再通知は無く（`.so` のスロットル＋永続化が有効）、
+> 集約版 `.so`（`unreadable.multi` メッセージを含む）が稼働中。
+
 
 - `web/static/escape.js`（`cssClass` 追加）
 - `web/static/app.js` / `web/static/modules.js`（属性値の無害化統一・セレクタ連結の排除）
