@@ -256,3 +256,44 @@ gcc が無い環境では race 検証は自動的にスキップされる。Linu
       sudo chgrp kizuna-eye /opt/kizuna-eye/bin/agent_linux && sudo chmod 0750 /opt/kizuna-eye/bin/agent_linux
 
   `install.sh` / `systemd/migrate-agent-user.sh` はディレクトリのモードを明示的に正規化するようになったため、再実行で同じ状態には戻らない。
+
+---
+
+## 9. HMAC 鍵のローテーション
+
+改ざん検知用の HMAC 鍵は「1鍵1用途」で分離している。用途ごとに独立してローテーションできる。
+
+| 鍵 | 既定パス | 用途 | 書き手 / 読み手 |
+|---|---|---|---|
+| chain.key | /var/lib/kizuna-eye/keys/chain.key | セキュリティログのハッシュチェーン | agent / agent |
+| alert_history.key | <data>/keys/alert_history.key | アラート履歴の行単位署名 | dashboard / dashboard + agent |
+
+### 9.1 セキュリティログのチェーン鍵（chain.key）
+
+ローテーションは「鍵を差し替えると、プラグインが既存チェーンの不一致を検出して旧ログを退避し、新鍵で新チェーンを開始する」動作を利用する。
+
+1. 旧ログを保全する（証跡のため任意の場所へコピー）。
+2. 新しい鍵に差し替える:
+
+       sudo rm -f /var/lib/kizuna-eye/keys/chain.key
+       sudo systemctl restart kizuna-eye-agent   # 起動時に 32B を再生成（0600）
+
+3. agent ログで `chain_quarantined`（WARN）と、旧ログの退避（`kizuna-security.log.legacy-<ts>`、0600）を確認する。以降の検証は新チェーンで継続する。
+
+   補足: 鍵を失った場合も同じ経路で復旧する（旧ログは「検証不能な旧ログ」として退避され、新チェーンが始まる）。
+
+### 9.2 アラート履歴の署名鍵（alert_history.key）
+
+1. 鍵を退避して差し替える:
+
+       sudo mv <data>/keys/alert_history.key <data>/keys/alert_history.key.old-$(date +%Y%m%d)
+       sudo systemctl restart kizuna-dashboard   # 起動時に 0640 で再生成
+
+2. 以降に追記される行は新鍵で署名される。**既存行は旧鍵の署名のまま**なので、プラグインの行検証では「旧鍵で署名された行」を不一致として警告し得る。証跡を残したい場合は旧鍵を保管し、必要に応じて検証側で両鍵を試す運用とする（現状は単一鍵）。
+
+   注意: 鍵は dashboard と agent が共有する（dashboard が書き、agent が検証する）。差し替え後は両方の再起動、またはグループ kizuna-eye の読み取り（0640）が維持されていることを確認する。
+
+### 9.3 鍵のバックアップ
+
+- 鍵は 0600/0640 のまま、アクセス制御された別ストレージ（Samba 共有外）へ退避する。
+- Samba 共有（guest 許可）には置かない。漏洩は改ざん検知の無効化に直結する。
