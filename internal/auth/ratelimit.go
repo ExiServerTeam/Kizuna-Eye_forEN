@@ -7,11 +7,17 @@ import (
 	"time"
 )
 
+// maxLimiterEntries は IP 単位の試行マップを制限する。ログイン試行は多数の
+// （偽装され得る）送信元アドレスから到着し得るため、無制限のマップは緩やかな
+// メモリ枯渇の経路になる（G-5）。
 // maxLimiterEntries bounds the per-IP attempt map. Login attempts can arrive
 // from many (possibly spoofed) source addresses, so an unbounded map is a slow
 // memory-exhaustion vector (G-5).
 const maxLimiterEntries = 10000
 
+// loginLimiter はクライアント IP ごとに失敗したログイン試行を抑制する。
+// 単純なインメモリのスライディングウィンドウだ。window 内に maxFailures 回の
+// 失敗があると、その IP は lockDuration の間ロックアウトされる。
 // loginLimiter throttles failed login attempts per client IP.
 // It is a simple in-memory sliding window: after maxFailures failures
 // within window, the IP is locked out for lockDuration.
@@ -53,11 +59,18 @@ func newLoginLimiter(max int, window, lockout time.Duration) *loginLimiter {
 	return l
 }
 
+// Stop は reaper ゴルーチンを終了する。冪等だ。
 // Stop terminates the reaper goroutine. It is idempotent.
 func (l *loginLimiter) Stop() {
 	l.stopOn.Do(func() { close(l.stopCh) })
 }
 
+// clientIP はレート制限用のクライアント IP を抽出する。
+//
+// X-Forwarded-For は、リクエストがループバックアドレス（同一ホスト上の
+// リバースプロキシ）から到着した場合にのみ尊重する。任意のピアからの XFF を
+// 信頼すると、攻撃者がリクエストごとに異なる X-Forwarded-For 値を送って
+// ログインレート制限を回避できてしまう。
 // clientIP extracts the client IP for rate limiting.
 //
 // X-Forwarded-For is only honored when the request arrives from a loopback
@@ -70,9 +83,12 @@ func clientIP(r *http.Request) string {
 		host = r.RemoteAddr
 	}
 
+	// ループバックのピア（ローカルリバースプロキシ）だけが X-Forwarded-For を
+	// 設定できる。
 	// Only a loopback peer (local reverse proxy) may set X-Forwarded-For.
 	if isLoopback(host) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// X-Forwarded-For はカンマ区切りのリストになり得る。最初がクライアントだ。
 			// X-Forwarded-For may be a comma-separated list; the first is the client.
 			for i := 0; i < len(xff); i++ {
 				if xff[i] == ',' {
@@ -88,6 +104,7 @@ func clientIP(r *http.Request) string {
 	return host
 }
 
+// isLoopback は host がループバックアドレス（127.0.0.0/8 または ::1）かを返す。
 // isLoopback reports whether host is a loopback address (127.0.0.0/8 or ::1).
 func isLoopback(host string) bool {
 	if host == "localhost" {
@@ -109,6 +126,7 @@ func trimSpace(s string) string {
 	return s[start:end]
 }
 
+// Allow は ip からのログイン試行を続行してよいかを返す。
 // Allow reports whether a login attempt from ip may proceed.
 func (l *loginLimiter) Allow(ip string) bool {
 	now := time.Now()
@@ -122,6 +140,8 @@ func (l *loginLimiter) Allow(ip string) bool {
 	if now.Before(info.lockedTill) {
 		return false
 	}
+	// ロックアウトが切れた。失敗カウンタをクリアし、後日の 1 回の失敗が古い
+	// ウィンドウがまだ開いている間にすぐ閾値へ達しないようにする。
 	// Lockout expired: clear the failure counter so one later failure does
 	// not immediately hit the threshold again while the old window is still
 	// open.
@@ -131,6 +151,7 @@ func (l *loginLimiter) Allow(ip string) bool {
 		info.lockedTill = time.Time{}
 		return true
 	}
+	// ウィンドウが切れた。カウンタをリセットする。
 	// Window expired: reset the counter.
 	if now.Sub(info.firstAt) > l.window {
 		delete(l.attempts, ip)
@@ -139,6 +160,7 @@ func (l *loginLimiter) Allow(ip string) bool {
 	return true
 }
 
+// RecordFailure は失敗カウンタを増やし、閾値に達したらロックアウトする。
 // RecordFailure increments the failure count and locks out when the
 // threshold is reached.
 func (l *loginLimiter) RecordFailure(ip string) {
@@ -160,6 +182,8 @@ func (l *loginLimiter) RecordFailure(ip string) {
 	}
 }
 
+// evictLocked は期限切れエントリを落とし、それでもマップが大きすぎれば最も古い
+// ものを落とす。これにより、異なる送信元アドレスの洪水下でもサイズが有界に保たれる（G-5）。
 // evictLocked drops expired entries and, if the map is still too large, the
 // oldest ones, so its size stays bounded even under a flood of distinct source
 // addresses (G-5).
@@ -187,6 +211,9 @@ func (l *loginLimiter) evictLocked(now time.Time) {
 	}
 }
 
+// Hit は ip への試行を 1 回記録し、上限に達したらロックアウトする。
+// これは RecordFailure だが、成功したが濫用的な呼び出し（例: ゲストログインの
+// スパム）にも合う名前で、依然レート制限すべきものだ。
 // Hit records one attempt against ip and locks out when the limit is reached.
 // It is RecordFailure under a name that also fits successful-but-abusive
 // calls (e.g. guest-login spam) that should still be rate limited.
@@ -194,6 +221,7 @@ func (l *loginLimiter) Hit(ip string) {
 	l.RecordFailure(ip)
 }
 
+// Reset はログイン成功後に ip の失敗記録をクリアする。
 // Reset clears the failure record for ip after a successful login.
 func (l *loginLimiter) Reset(ip string) {
 	l.mu.Lock()
@@ -201,6 +229,7 @@ func (l *loginLimiter) Reset(ip string) {
 	l.mu.Unlock()
 }
 
+// reaper は Stop が呼ばれるまで定期的に古いエントリを除去する。
 // reaper periodically removes stale entries until Stop is called.
 func (l *loginLimiter) reaper() {
 	ticker := time.NewTicker(10 * time.Minute)
