@@ -61,11 +61,53 @@
     let editingName = null;
     let deleteTarget = null;
 
+    // 現在のロール。auth 無効時は「全開放（信頼ネットワーク）」として扱う。
+    let currentRole = null;   // 'admin' | 'operator' | 'viewer' | null
+    let authEnabled = false;
+
+    // Go 側 internal/api/modules.go の adminOnlyConfigFields と同じ集合。
+    // ここに挙げたフィールドは admin のみ変更できる。UI では admin 以外には
+    // 非表示にする（保存時は既存値をマージするため値は失われない）。
+    // 変更時は modules.go と本リストの両方を揃えること（二重管理）。
+    const ADMIN_ONLY_CONFIG_FIELDS = new Set([
+        'block_duration_sec', 'block_mode', 'block_state_path', 'block_whitelist',
+        'chain_key_path', 'cron_check', 'cron_paths', 'fim_watch',
+        'fim_watch_baseline_path', 'fim_watch_paths', 'firewall_backend',
+        'integrity_baseline_path', 'integrity_files', 'listen_port_check',
+        'log_path', 'notify_min_level', 'plugin_path', 'suid_check',
+        'suid_fast_check', 'suid_fast_paths', 'suid_paths', 'suid_watch',
+        'suid_watch_paths', 'sudo_ignore_commands', 'watch_files',
+    ]);
+
+    // 認証無効時は全開放（ミドルウェアと同じ扱い）。
+    function isAdmin() {
+        return !authEnabled || currentRole === 'admin';
+    }
+    function canUploadPlugin() {
+        // アップロードは常に認証必須（未認証RCE防止）なので admin のみ。
+        return authEnabled && currentRole === 'admin';
+    }
+    function canDeleteModule() {
+        return isAdmin();
+    }
+    function canEditModule() {
+        return !authEnabled || currentRole === 'admin' || currentRole === 'operator';
+    }
+    // admin 以外には admin 限定フィールドを出さない。
+    function visibleFields(fields) {
+        if (isAdmin()) return fields || [];
+        return (fields || []).filter(f => !ADMIN_ONLY_CONFIG_FIELDS.has(f.key));
+    }
+
     // Latest backup status per plugin, updated from WS backup_result events.
     const moduleStatus = new Map();
 
     // Phase 8-6: プラグインメタのキャッシュ（name → PluginMeta）
     let pluginMetas = new Map();
+    // Agent が報告したモジュールのロード結果（name → {status, reason, reason_code}）。
+    // Agent だけが「実際にロードできたか」を観測できるため、これが無いと
+    // ロードに失敗したモジュールも「監視中」に見えてしまう。
+    let pluginRuntime = new Map();
     // 現在編集中のプラグイン名（動的フォーム用）
     let editingPluginName = null;
 
@@ -100,6 +142,15 @@
         ws.addEventListener('message', (event) => {
             let data;
             try { data = JSON.parse(event.data); } catch { return; }
+
+            if (data.event === 'module_status') {
+                // Agent が実際にロードできたかどうかを反映する。
+                pluginRuntime = new Map();
+                const statuses = data.statuses || {};
+                Object.keys(statuses).forEach(k => pluginRuntime.set(k, statuses[k]));
+                renderModules();
+                return;
+            }
 
             if (data.event === 'backup_result') {
                 console.log('[WS] backup_result', data);
@@ -214,8 +265,24 @@
     // トースト
     // ============================================================
     function showToast(message, type = 'info') {
+        if (!toastContainer) return;
+        // 連打などで同じ内容のトーストが積み上がらないよう、既存の同一トーストは
+        // 先に消してから出し直す。
+        const key = type + '\u0000' + message;
+        Array.from(toastContainer.children).forEach((c) => {
+            if (c.dataset.toastKey === key) c.remove();
+        });
+        // 表示は最大 MAX_TOASTS 件まで。あふれた分は古い順に消す。
+        const MAX_TOASTS = 4;
+        while (toastContainer.children.length >= MAX_TOASTS) {
+            toastContainer.removeChild(toastContainer.firstChild);
+        }
         const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
+        // 設定エディタと同じクラス構成（toast + 種別）にする。
+        // 「toast-success」形式だと style.css の旧互換ルール
+        // (.toast-success { background:#22c55e }) がマッチして緑ベタ塗りになる。
+        toast.className = `toast ${type}`;
+        toast.dataset.toastKey = key;
         toast.textContent = message;
         toastContainer.appendChild(toast);
 
@@ -368,6 +435,33 @@
         }
     }
 
+    // Agent が報告したモジュールのロード結果を取得する。
+    async function fetchPluginRuntime() {
+        try {
+            const res = await fetch('/api/plugin-runtime');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const map = new Map();
+            const mods = data.modules || {};
+            Object.keys(mods).forEach(k => map.set(k, mods[k]));
+            return map;
+        } catch (err) {
+            console.error('Failed to fetch plugin runtime:', err);
+            return new Map();
+        }
+    }
+
+    // 現在のロールと認証有効/無効を取得する。
+    async function fetchAuthStatus() {
+        try {
+            const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch (err) {
+            return null;
+        }
+    }
+
     // Phase 8-6: プラグインメタを取得
     async function fetchPluginMetas() {
         try {
@@ -514,9 +608,9 @@
                 <div class="empty-state">
                     <h3>${t('modules.empty_title')}</h3>
                     <p>${t('modules.empty_desc')}</p>
-                    <button type="button" class="btn-primary empty-cta" id="emptyAddBtn">
+                    ${canUploadPlugin() ? `<button type="button" class="btn-primary empty-cta" id="emptyAddBtn">
                         <span class="btn-icon">＋</span> ${t('modules.add_plugin_empty')}
-                    </button>
+                    </button>` : ''}
                 </div>
             `;
             totalCount.textContent = '0';
@@ -536,6 +630,10 @@
         let total = 0;
         let enabled = 0;
         let disabled = 0;
+
+        // 権限で使えない操作（プラグイン追加＝.soアップロード）は UI ごと隠す。
+        const pluginLabel = document.querySelector('label[for="pluginInput"]');
+        if (pluginLabel) pluginLabel.style.display = canUploadPlugin() ? '' : 'none';
 
         modules.forEach(mod => {
             total++;
@@ -602,6 +700,25 @@
             // バックアップ系（is_backup=true）以外のプラグインは常時監視タイプとして扱う。
             const isSecurityPlugin = mod.type === 'plugin' && meta && meta.is_backup !== true;
 
+            // Agent のロード結果。失敗していれば「監視中」ではなく「読み込み失敗」
+            // として表示し、理由を UI 言語へ翻訳して出す。
+            const runtime = pluginRuntime.get(mod.name);
+            const runtimeFailed = runtime && runtime.status === 'failed';
+            const failReason = (() => {
+                if (!runtimeFailed) return '';
+                if (runtime.reason_code) {
+                    const key = 'modules.fail.' + runtime.reason_code;
+                    const translated = t(key);
+                    if (translated !== key) return translated;
+                    return t('modules.fail.unknown');
+                }
+                // reason_code を持たない旧 Agent。生の理由は日本語の可能性が
+                // あるため、UI が日本語のときだけ表示する。
+                const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
+                if (lang === 'ja' && runtime.reason) return runtime.reason;
+                return t('modules.fail.unknown');
+            })();
+
             const lastRun = status.last_run ? new Date(status.last_run).toLocaleString() : '--';
             const size = Number(status.size) > 0 ? formatBytes(status.size) : '--';
             const mode = status.mode || mod.config?.mode || '--';
@@ -626,8 +743,11 @@
             // 状態が一目で分かるよう、ボタン色を有効/無効で変える。
             //   有効 → 「無効化」（赤系・注意）
             //   無効 → 「有効化」（緑系・前向き）
+            // 有効/無効の切り替えは監視の停止/開始に直結するため admin のみ。
             const toggleClass = mod.enabled ? 'btn-toggle on' : 'btn-toggle off';
-            const toggleButton = `<button class="${toggleClass}" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`;
+            const toggleButton = isAdmin()
+                ? `<button class="${toggleClass}" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`
+                : '';
 
             // カード本文。セキュリティ等の監視プラグインは専用の項目を表示する。
             const cfg = mod.config || {};
@@ -640,7 +760,32 @@
                 : '--';
             const monitorState = mod.enabled ? t('security.state_active') : t('security.state_inactive');
 
-            const bodyHtml = isSecurityPlugin
+            const failBody = `
+                    <div class="module-info-row">
+                        <span class="label">${t('security.label_state')}</span>
+                        <span class="value"><span class="status-dot failed"></span>${t('modules.badge_load_failed')}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label">${t('modules.label_fail_reason')}</span>
+                        <span class="value" title="${escapeAttr(failReason)}">${escapeHtml(failReason)}</span>
+                    </div>
+                    <div class="module-info-row">
+                        <span class="label"></span>
+                        <span class="value">${escapeHtml(t('modules.fail_hint'))}</span>
+                    </div>
+                `;
+
+            // 権限のない操作はボタンを出さない（押して 403 になる UX を避ける）。
+            const editButton = canEditModule()
+                ? `<button class="btn-edit" data-name="${escapeAttr(mod.name)}">${t('modules.btn_edit')}</button>`
+                : '';
+            const deleteButton = canDeleteModule()
+                ? `<button class="btn-delete" data-name="${escapeAttr(mod.name)}">${t('modules.btn_delete')}</button>`
+                : '';
+
+            const bodyHtml = runtimeFailed
+                ? failBody
+                : isSecurityPlugin
                 ? `
                     <div class="module-info-row">
                         <span class="label">${t('security.label_state')}</span>
@@ -700,17 +845,19 @@
                         <div class="module-card-row">
                             <span class="badge ${cssClass(versionBadge)}">${escapeHtml(versionLabel)}</span>
                             <span class="module-name" title="${escapeAttr(displayLabel)}">${escapeHtml(displayLabel)}</span>
-                            <span class="badge ${mod.enabled ? 'badge-enabled' : 'badge-disabled'}">
+                            ${runtimeFailed
+                                ? `<span class="badge badge-failed">${t('modules.badge_load_failed')}</span>`
+                                : `<span class="badge ${mod.enabled ? 'badge-enabled' : 'badge-disabled'}">
                                 ${mod.enabled ? t('modules.badge_enabled') : t('modules.badge_disabled')}
-                            </span>
+                            </span>`}
                         </div>
                         <div class="module-card-actions">
                             ${openButton}
                             ${runButton}
                             ${toggleButton}
                             ${labelButton}
-                            <button class="btn-edit" data-name="${escapeAttr(mod.name)}">${t('modules.btn_edit')}</button>
-                            <button class="btn-delete" data-name="${escapeAttr(mod.name)}">${t('modules.btn_delete')}</button>
+                            ${editButton}
+                            ${deleteButton}
                             <button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>
                         </div>
                     </div>
@@ -936,13 +1083,21 @@
         try {
             moduleGrid.innerHTML = `<div class="loading-spinner">${t('modules.loading')}</div>`;
 
-            const [mods, metas] = await Promise.all([
+            const [mods, metas, runtime, auth] = await Promise.all([
                 fetchModules(),
                 fetchPluginMetas(),
+                fetchPluginRuntime(),
+                fetchAuthStatus(),
             ]);
+
+            if (auth) {
+                authEnabled = auth.auth_enabled === true;
+                currentRole = auth.authenticated ? auth.role : null;
+            }
 
             modules = mods;
             pluginMetas = metas;
+            pluginRuntime = runtime;
             renderModules();
         } catch (err) {
             showToast(t('toast.modules_load_fail_msg', err.message), 'error');
@@ -1002,31 +1157,6 @@
         }
     }
 
-    // ============================================================
-    // JSON読み込み
-    // ============================================================
-    function loadConfigFile(file) {
-        const reader = new FileReader();
-        reader.onload = function(e) {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (!Array.isArray(data)) {
-                    showToast(t('toast.json_invalid'), 'error');
-                    return;
-                }
-                modules = data;
-                renderModules();
-                showToast(t('toast.json_loaded', modules.length), 'success');
-            } catch (err) {
-                showToast(t('toast.json_parse_error', err.message), 'error');
-            }
-        };
-        reader.onerror = function() {
-            showToast(t('toast.file_read_error'), 'error');
-        };
-        reader.readAsText(file);
-    }
-
     function exportConfigFile() {
         if (modules.length === 0) {
             showToast(t('toast.no_modules'), 'warning');
@@ -1046,13 +1176,28 @@
         showToast(t('toast.export_done'), 'success');
     }
 
-    if (fileInput) {
-        fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                loadConfigFile(e.target.files[0]);
-                e.target.value = '';
+    // JSON読み込み: ローカルの modules.json を読み、画面表示を置き換える。
+    // 注意: サーバーへは保存しない（保存は「保存」操作で行う）。表示確認用。
+    function loadConfigFile(file) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            try {
+                const data = JSON.parse(e.target.result);
+                if (!Array.isArray(data)) {
+                    showToast(t('toast.json_invalid'), 'error');
+                    return;
+                }
+                modules = data;
+                renderModules();
+                showToast(t('toast.json_loaded', modules.length), 'success');
+            } catch (err) {
+                showToast(t('toast.json_parse_error', err.message), 'error');
             }
-        });
+        };
+        reader.onerror = function () {
+            showToast(t('toast.file_read_error'), 'error');
+        };
+        reader.readAsText(file);
     }
 
     // ============================================================
@@ -1222,7 +1367,8 @@
             pluginConfigTitle.textContent = t('modules.plugin_config_title', meta.name);
         }
         if (pluginConfigBody) {
-            pluginConfigBody.innerHTML = renderConfigForm(meta.fields || [], currentConfig || {});
+            // admin 以外には admin 限定フィールドを表示しない。
+            pluginConfigBody.innerHTML = renderConfigForm(visibleFields(meta.fields), currentConfig || {});
         }
         if (pluginConfigModal) {
             pluginConfigModal.style.display = 'flex';
@@ -1381,7 +1527,9 @@
 
         const config = collectFormValues(meta.fields);
 
-        for (const f of (meta.fields || [])) {
+        // 表示していない（admin 限定）フィールドは必須検証の対象外にする。
+        // 表示フィールドは collectFormValues と同じ集合で判定する。
+        for (const f of visibleFields(meta.fields)) {
             if (!f.required) continue;
             const v = config[f.key];
             if (v === '' || v === undefined || v === null) {
@@ -1446,6 +1594,15 @@
         const units = ['B', 'KB', 'MB', 'GB', 'TB'];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
         return (bytes / Math.pow(k, i)).toFixed(2) + ' ' + units[i];
+    }
+
+    if (fileInput) {
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                loadConfigFile(e.target.files[0]);
+                e.target.value = '';
+            }
+        });
     }
 
     if (exportFileBtn) {

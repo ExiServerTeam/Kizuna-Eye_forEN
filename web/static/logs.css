@@ -153,8 +153,9 @@
     color: var(--text-primary);
 }
 
+/* 再読み込みボタン(btn-primary)と同じ青紫グラデーションに統一。 */
 .log-type-buttons .btn-secondary.active {
-    background: var(--primary-color);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: #fff;
     font-weight: 600;
 }
@@ -203,6 +204,12 @@
     border-color: #15803d;
     color: #fff;
     font-weight: 600;
+    /* 緑ドットと文字を確実に中央揃えにする。inline-block +
+       vertical-align: middle はテキストのベースライン基準でずれるため、
+       ボタンを flex コンテナにして中央揃えにする。 */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 #logFollowBtn.follow-on:hover {
@@ -212,13 +219,14 @@
 
 #logFollowBtn.follow-on::before {
     content: '';
-    display: inline-block;
+    /* flex アイテムとして常に中央に並ぶ。vertical-align は flex では
+       効果がなく、かえってずれの原因になるため使わない。 */
+    flex: 0 0 auto;
     width: 8px;
     height: 8px;
     border-radius: 50%;
     background: #86efac;
     margin-right: 6px;
-    vertical-align: middle;
     animation: log-live-pulse 1.4s ease-in-out infinite;
 }
 
@@ -229,6 +237,22 @@
 
 /* 横幅が足りないときは操作群を次の行に回し、左寄せで押しやすく。 */
 @media (max-width: 700px) {
+    /* 種類セグメントは縦積みにせず、1行のまま横スクロールさせる。
+       折り返すと各ボタンが全幅になり、種類の数だけ縦に伸びて画面を
+       占領する（実機のスマホで発生）。指でスワイプして選ばせる。 */
+    .log-toolbar-label {
+        flex: 0 0 auto;
+    }
+    .log-type-buttons {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        max-width: 100%;
+    }
+    .log-type-buttons .btn-secondary {
+        flex: 0 0 auto;
+    }
+
     .log-toolbar-ops {
         margin-left: 0;
         width: 100%;

@@ -65,8 +65,9 @@ body.config-editor-page .app,
     transform: translateX(4px);
 }
 
+/* 再読み込みボタン(btn-primary)と同じ青紫グラデーションに統一。 */
 .config-file-btn.active {
-    background: var(--primary-color);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
     border-color: var(--primary-color);
 }
@@ -162,15 +163,16 @@ body.config-editor-page .app,
     background: var(--border-color);
 }
 
+/* style.css の btn-primary と同じグラデーション背景に統一。
+   hover は背景を変えず、浮き上がりと影だけにする。 */
 .btn-primary {
-    background: var(--primary-color);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: white;
 }
 
 .btn-primary:hover {
-    background: var(--primary-hover);
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+    box-shadow: 0 8px 24px rgba(102, 126, 234, 0.4);
 }
 
 /* エディタ本体 */
@@ -235,12 +237,55 @@ body.config-editor-page .app,
 /* トースト */
 .toast-container {
     position: fixed;
-    bottom: 24px;
+    top: 100px;
     right: 24px;
     z-index: 1000;
     display: flex;
     flex-direction: column;
     gap: 12px;
+    width: 360px;
+    max-width: calc(100vw - 48px);
+}
+
+/* モジュール管理のトーストと同じ位置（コンテンツ領域 .app の右上）に
+   揃える。style.css の #toastContainer（ID セレクタ・right:24px）を
+   上書きするため、ここでも ID セレクタで指定する。
+   max() 非対応の古いブラウザでは right:24px のまま。 */
+#toastContainer {
+    right: max(24px, calc((100vw - 1280px) / 2 + 24px));
+}
+
+/* ============================================================
+   スマホ最適化: エディタのツールバー
+   900px 以下では toolbar が縦積みになるが、そのままだと GUI/JSON と
+   4つの操作ボタンが不揃いに折り返す。モード切替は全幅で2分割、
+   操作は2×2グリッドに揃えて、どの幅でも整然と並べる。
+   ============================================================ */
+@media (max-width: 600px) {
+    .editor-mode {
+        width: 100%;
+        display: flex;
+        margin-right: 0;
+    }
+
+    .mode-btn {
+        flex: 1 1 0;
+        text-align: center;
+        padding: 8px 6px;
+    }
+
+    .editor-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        width: 100%;
+    }
+
+    .editor-actions button {
+        width: 100%;
+        padding: 10px 6px;
+        font-size: 0.82rem;
+    }
 }
 
 .toast {
@@ -251,7 +296,9 @@ body.config-editor-page .app,
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
     font-size: 0.9rem;
     animation: slideIn 0.3s ease-out;
-    max-width: 300px;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .toast.success {
@@ -264,6 +311,10 @@ body.config-editor-page .app,
 
 .toast.info {
     border-left: 4px solid #3b82f6;
+}
+
+.toast.warning {
+    border-left: 4px solid #f59e0b;
 }
 
 @keyframes slideIn {
@@ -434,8 +485,9 @@ body.config-editor-page .app,
     transition: background 0.2s, color 0.2s;
 }
 
+/* 再読み込みボタン(btn-primary)と同じ青紫グラデーションに統一。 */
 .mode-btn.active {
-    background: var(--primary-color);
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: #fff;
 }
 
@@ -452,13 +504,6 @@ body.config-editor-page .app,
     display: flex;
     flex-direction: column;
     gap: 4px;
-}
-
-.gui-footer {
-    padding: 12px 20px;
-    border-top: 1px solid var(--border-color);
-    background: var(--bg-secondary);
-    text-align: right;
 }
 
 .gui-group {

@@ -955,42 +955,50 @@ body.card-dragging {
 }
 
 /* ============================================================
-   トースト
+   トースト（設定エディタと統一）
    ============================================================ */
+/* 位置は「コンテンツ領域（.app は max-width:1280px・中央寄せ）の右上」に
+   合わせる。広い画面では、右側にできる余白の中に通知が出るように、
+   右端の余白ぶんだけ内側に寄せる。狭いときは画面右端から 24px。
+   （max() 非対応の古いブラウザでは style.css の right:24px に戻る） */
 #toastContainer {
     position: fixed;
-    top: 24px;
-    right: 24px;
+    top: 100px;
+    right: max(24px, calc((100vw - 1280px) / 2 + 24px));
     z-index: 2000;
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    max-width: 400px;
-}
-
-.toast {
-    padding: 14px 20px;
-    border-radius: 12px;
-    font-size: 0.9rem;
-    font-weight: 500;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-    animation: slideInRight 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    display: flex;
-    align-items: center;
     gap: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #fff;
+    width: 360px;
+    max-width: calc(100vw - 48px);
 }
 
-@keyframes slideInRight {
-    from { transform: translateX(100px); opacity: 0; }
+/* 設定エディタと完全に同じ見た目にする。クラス名も config-editor と
+   同じ「.toast」「.toast.<type>」に揃え、style.css の旧 .toast-success
+   （背景色ベタ塗り）が混ざらないようにする。 */
+.toast {
+    padding: 12px 20px;
+    border-radius: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    animation: slideIn 0.3s ease-out;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
     to   { transform: translateX(0); opacity: 1; }
 }
 
-.toast-success { background: #22c55e; }
-.toast-error   { background: #ef4444; }
-.toast-warning { background: #f59e0b; }
-.toast-info    { background: #3b82f6; }
+.toast.success { border-left: 4px solid #22c55e; }
+.toast.error   { border-left: 4px solid #ef4444; }
+.toast.warning { border-left: 4px solid #f59e0b; }
+.toast.info    { border-left: 4px solid #3b82f6; }
 
 /* ============================================================
    レスポンシブ（768px 以下）
@@ -1005,22 +1013,22 @@ body.card-dragging {
         width: 100%;
     }
 
+    /* flex + flex:1 1 40% にすると、2個なら2列、3個なら3個目が
+       自動で全幅に伸びる（grid の「書き出しだけ全幅」より自然で、
+       admin/operator どちらのボタン数でも余白が出ない）。 */
     .file-actions {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
+        flex-wrap: wrap;
         gap: 8px;
         width: 100%;
     }
 
     .file-actions .btn-secondary,
     label.btn-secondary {
-        width: 100%;
+        flex: 1 1 40%;
+        width: auto;
         padding: 12px 8px;
         font-size: 0.8rem;
-    }
-
-    .file-actions #exportFileBtn {
-        grid-column: 1 / -1;
     }
 
     .module-stats {
@@ -1060,17 +1068,31 @@ body.card-dragging {
         word-break: break-word;
     }
 
+    /* 5つの操作（無効化/名前変更/編集/削除/並べ替え）を等幅グリッドに
+       収める。flex の横並びのままだと幅が足りず「名前変更」などが
+       途中で折れて縦書きのように崩れる。 */
     .module-card-actions {
-        justify-content: flex-end;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(4.5em, 1fr));
+        gap: 6px;
+        width: 100%;
         border-top: 1px dashed var(--border-color);
         padding-top: 8px;
     }
 
     .module-card-actions button {
-        padding: 6px 16px;
-        font-size: 0.8rem;
+        width: 100%;
+        text-align: center;
+        white-space: nowrap;
+        padding: 8px 4px;
+        font-size: 0.78rem;
         background: var(--bg-card);
         border-radius: 8px;
+    }
+
+    /* 並べ替えハンドルも同じグリッドセルに収める。 */
+    .module-card .module-card-actions .drag-handle {
+        width: 100%;
     }
 
     .module-info-row {
@@ -1129,11 +1151,14 @@ body.card-dragging {
         padding: 12px 14px;
     }
 
+    /* スマホでも横長のバーにしない。設定エディタと同じく右寄せの
+       カード型のまま、はみ出さない幅に収める。 */
     #toastContainer {
-        top: 12px;
+        top: 140px;
         right: 12px;
-        left: 12px;
-        max-width: 100%;
+        left: auto;
+        width: 360px;
+        max-width: calc(100vw - 24px);
     }
 }
 

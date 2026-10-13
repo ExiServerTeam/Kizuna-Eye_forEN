@@ -20,11 +20,13 @@ document.addEventListener('DOMContentLoaded', function () {
     const modeJsonBtn = document.getElementById('modeJsonBtn');
     const guiPanel = document.getElementById('guiPanel');
     const guiBody = document.getElementById('guiBody');
-    const guiSaveBtn = document.getElementById('guiSaveBtn');
+    // 保存ボタンはヘッダー上部の #saveBtn（GUI/JSON 用）と、アラートパネル
+    // 内の #alertConfigSaveBtn（アラートはヘッダー操作群を隠すため）の2つ。
 
     // アラート閾値エディタ
     const alertConfigPanel = document.getElementById('alertConfigPanel');
     const alertConfigSaveBtn = document.getElementById('alertConfigSaveBtn');
+
 
     const acFields = {
         acMemWarn: document.getElementById('acMemWarn'),
@@ -434,17 +436,17 @@ document.addEventListener('DOMContentLoaded', function () {
                 throw new Error(err.error || `HTTP ${res.status}`);
             }
             loadedConfig = payload;
+            dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (err) {
             showToast(t('config.save_failed') + ': ' + err.message, 'error');
         }
     }
 
-    if (guiSaveBtn) guiSaveBtn.addEventListener('click', () => guardedSave(saveGui));
-    // GUI フォームの変更で自動保存。
+    // GUI フォームの変更は「離脱時保存」の対象として記録するだけ。
     if (guiBody) {
-        guiBody.addEventListener('input', scheduleAutosave);
-        guiBody.addEventListener('change', scheduleAutosave);
+        guiBody.addEventListener('input', markDirty);
+        guiBody.addEventListener('change', markDirty);
     }
 
     // ============================================================
@@ -455,11 +457,32 @@ document.addEventListener('DOMContentLoaded', function () {
         modeJsonBtn.classList.toggle('active', currentMode === 'json');
     }
 
+    // モードに応じてツールバーのボタンを出し分ける。
+    //   - 保存       : 全モード共通（常に表示）
+    //   - ひな形挿入 : JSON モード専用（JSON テキストを置き換えるため）
+    //   - フォーマット / 検証 : JSON モード専用（JSON テキストへの操作）
+    // GUI モードでは JSON 専用ボタンを隠し、操作を分かりやすくする。
+    function applyActionVisibility() {
+        const isAlerts = currentConfigType === 'alerts';
+        const showJsonActions = !isAlerts && currentMode === 'json';
+        const set = (el, visible) => {
+            if (el) el.style.display = visible ? '' : 'none';
+        };
+        set(templateBtn, showJsonActions);
+        set(formatBtn, showJsonActions);
+        set(validateBtn, showJsonActions);
+        // 保存ボタンは常に表示する（GUI/JSON どちらの保存手段。アラート時は
+        // editorActions 全体が隠れるため、ここで個別に触る必要はない）。
+    }
+
     function applyMode() {
         const isAlerts = currentConfigType === 'alerts';
-        // アラートは専用パネルなので GUI/JSON 切替と操作ボタンを隠す。
+        // アラートは専用パネルなので GUI/JSON 切替を隠す。操作ボタン群は
+        // applyActionVisibility が出し分けを担当する。
         if (editorMode) editorMode.style.display = isAlerts ? 'none' : 'inline-flex';
         if (editorActions) editorActions.style.display = isAlerts ? 'none' : 'flex';
+
+        applyActionVisibility();
 
         if (isAlerts) {
             showAlertPanel();
@@ -491,6 +514,8 @@ document.addEventListener('DOMContentLoaded', function () {
     function showAlertPanel() {
         setPanels({ alerts: true });
         editorTitle.textContent = t('config.alerts_title');
+        // アラートは専用パネルなので JSON 専用ボタンを隠す。
+        applyActionVisibility();
         loadAlertConfig();
     }
 
@@ -581,8 +606,9 @@ document.addEventListener('DOMContentLoaded', function () {
         return el ? Number(el.value) : 0;
     }
 
-    async function saveAlertConfig() {
-        const payload = {
+    // アラート閾値の入力値を集める。保存と離脱時保存の両方で使う。
+    function collectAlertPayload() {
+        return {
             memory_warn_pct: numVal('acMemWarn'),
             memory_critical_pct: numVal('acMemCrit'),
             disk_free_warn_pct: numVal('acDiskWarn'),
@@ -591,6 +617,10 @@ document.addEventListener('DOMContentLoaded', function () {
             cpu_temp_critical_c: numVal('acTempCrit'),
             notify_recovery: !!(acFields.acNotifyRecovery && acFields.acNotifyRecovery.checked),
         };
+    }
+
+    async function saveAlertConfig() {
+        const payload = collectAlertPayload();
         try {
             const res = await fetch('/api/alert-config', {
                 method: 'PUT',
@@ -601,15 +631,19 @@ document.addEventListener('DOMContentLoaded', function () {
                 const err = await res.json().catch(() => ({}));
                 throw new Error(err.error || `HTTP ${res.status}`);
             }
+            dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (err) {
             showToast(t('config.save_failed'), 'error');
         }
     }
-    if (alertConfigSaveBtn) alertConfigSaveBtn.addEventListener('click', () => guardedSave(saveAlertConfig));
+    if (alertConfigSaveBtn) {
+        alertConfigSaveBtn.addEventListener('click', () => guardedSave(saveAlertConfig));
+    }
+    // アラートの入力変更は「離脱時保存」の対象として記録するだけ。
     if (alertConfigPanel) {
-        alertConfigPanel.addEventListener('input', scheduleAutosave);
-        alertConfigPanel.addEventListener('change', scheduleAutosave);
+        alertConfigPanel.addEventListener('input', markDirty);
+        alertConfigPanel.addEventListener('change', markDirty);
     }
 
 
@@ -672,6 +706,7 @@ document.addEventListener('DOMContentLoaded', function () {
             });
             if (!response.ok) throw new Error(`Failed to save config: ${response.statusText}`);
             await response.json();
+            dirty = false;
             showToast(t('config.saved'), 'success');
         } catch (error) {
             console.error('Failed to save config:', error);
@@ -697,16 +732,17 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // ============================================================
-    // 自動保存（デバウンス）
+    // 保存（手動 + 離脱時）
     // ============================================================
-    // 入力が止まって AUTOSAVE_DELAY 経過したら自動で保存する。
-    // - JSON モード: 構文が有効なときだけ保存（壊れた JSON を送らない）。
-    // - GUI / アラート: フォーム変更時に保存。
-    // 手動保存（ボタン / Ctrl+S）と競合しないよう、保存中は予約を1つに畳む。
-    const AUTOSAVE_DELAY = 1500; // ms
-    let autosaveTimer = null;
+    // 入力のたびに自動保存すると、編集中の途中状態が何度も保存されて
+    // 意図しない値が確定してしまう。そこで自動保存は「ページを離れる
+    // 瞬間」にだけ行い、通常は保存ボタン / Ctrl+S で明示的に保存する。
+    // 離脱時は fetch の keepalive でページ遷移後も送信を継続させる。
     let saving = false;
     let saveQueued = false;
+    // dirty は「保存していない変更があるか」。離脱時に保存するかの判断に使う。
+    let dirty = false;
+    function markDirty() { dirty = true; }
 
     function setSavingLabel(on) {
         // フッターの文字数表示の隣に「保存中… / 自動保存済み」を出す（任意）。
@@ -722,15 +758,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // scheduleAutosave は自動保存を予約する。連続入力では最後の1回だけ走る。
-    function scheduleAutosave() {
-        if (autosaveTimer) clearTimeout(autosaveTimer);
-        autosaveTimer = setTimeout(() => {
-            autosaveTimer = null;
-            runAutosave();
-        }, AUTOSAVE_DELAY);
-    }
-
     // 現在の設定タイプに応じて保存関数を選ぶ。
     async function currentSaveFn() {
         if (currentConfigType === 'alerts') return saveAlertConfig;
@@ -738,19 +765,46 @@ document.addEventListener('DOMContentLoaded', function () {
         return saveConfig;
     }
 
-    // 自動保存の可否。JSON モードで構文が壊れているときは保存しない。
-    function autosaveAllowed() {
-        if (currentConfigType === 'alerts') return true;
-        if (currentMode === 'gui') return true;
-        try { JSON.parse(configEditor.value); return true; }
-        catch (e) { return false; }
+    // 離脱時に保存すべき内容（URL と本文）を組み立てる。保存不可なら null。
+    function buildLeaveSave() {
+        const type = currentConfigType;
+        if (type === 'alerts') {
+            return { url: '/api/alert-config', body: JSON.stringify(collectAlertPayload()) };
+        }
+        if (currentMode === 'gui') {
+            return { url: `/api/config/${type}`, body: JSON.stringify(collectGui()) };
+        }
+        // JSON モード: 構文が壊れているときは送らない。
+        try { JSON.parse(configEditor.value); } catch (e) { return null; }
+        return { url: `/api/config/${type}`, body: configEditor.value };
     }
 
-    async function runAutosave() {
-        if (!autosaveAllowed()) return; // 壊れた JSON は自動保存しない
-        const fn = await currentSaveFn();
-        await guardedSave(fn, true);
+    // saveOnLeave はページ離脱の瞬間にだけ保存する。fetch の keepalive を
+    // 使うと、ページがアンロードされた後もリクエストが送信される。
+    // （sendBeacon は POST のみで PUT の API に使えないため fetch を使う。）
+    function saveOnLeave() {
+        if (!dirty || saving) return;
+        const req = buildLeaveSave();
+        if (!req) return;
+        try {
+            fetch(req.url, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: req.body,
+                keepalive: true,
+            });
+            dirty = false;
+        } catch (e) { /* 離脱時は失敗しても通知できない */ }
     }
+
+    // pagehide はアンロード/バックフォワードキャッシュ退避の両方で発火し、
+    // beforeunload より確実（モバイル Safari では beforeunload が来ない）。
+    // visibilitychange(hidden) はタブ切替・アプリ切替でも保存でき、離脱前に
+    // 確実に走る最後の砦。両方から呼ぶが dirty フラグで二重送信を防ぐ。
+    window.addEventListener('pagehide', saveOnLeave);
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'hidden') saveOnLeave();
+    });
 
     // guardedSave は保存の多重実行を防ぐ。手動保存は saving 中でも予約して
     // 最後に1回実行される（入力の取りこぼしを防ぐ）。
@@ -766,16 +820,30 @@ document.addEventListener('DOMContentLoaded', function () {
             if (saveQueued) {
                 saveQueued = false;
                 // 予約分を1回だけ実行（無限ループ防止のため直接呼ぶ）。
-                await runAutosave();
+                try { await fn(); } catch (e) { /* 各 save 関数は内部で通知する */ }
             }
         }
     }
 
     function showToast(message, type = 'info') {
+        const container = document.getElementById('toastContainer');
+        if (!container) return;
+        // 連打などで同じ内容のトーストが積み上がらないよう、既存の同一トーストは
+        // 先に消してから出し直す。
+        const key = type + '\u0000' + message;
+        Array.from(container.children).forEach((c) => {
+            if (c.dataset.toastKey === key) c.remove();
+        });
+        // 表示は最大 MAX_TOASTS 件まで。あふれた分は古い順に消す。
+        const MAX_TOASTS = 4;
+        while (container.children.length >= MAX_TOASTS) {
+            container.removeChild(container.firstChild);
+        }
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
+        toast.dataset.toastKey = key;
         toast.textContent = message;
-        document.getElementById('toastContainer').appendChild(toast);
+        container.appendChild(toast);
         setTimeout(() => toast.remove(), 3000);
     }
 
@@ -806,8 +874,8 @@ document.addEventListener('DOMContentLoaded', function () {
         updateCharCount();
         try { JSON.parse(configEditor.value); updateValidationStatus(true); }
         catch (error) { updateValidationStatus(false); }
-        // 入力が落ち着いたら自動保存（構文が有効なときのみ実際に送る）。
-        scheduleAutosave();
+        // 変更を記録するだけ（実際の保存は保存ボタン / Ctrl+S / 離脱時）。
+        markDirty();
     });
 
     // Ctrl/Cmd+S はグローバルに効かせる（エディタ外にフォーカスがあっても保存）。

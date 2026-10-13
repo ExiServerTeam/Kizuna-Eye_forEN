@@ -1411,6 +1411,9 @@ body.card-dragging {
     gap: 10px;
 }
 
+/* アラート履歴のクリアは監査証跡を消す危険操作のため、赤系で
+   注意を促す（青紫の通常操作とは区別する）。押す前に window.confirm
+   で確認する。 */
 .alerts-clear-btn {
     padding: 6px 14px;
     border-radius: 10px;
@@ -1659,6 +1662,9 @@ body.card-dragging {
 .plugin-card.enabled.tag-lite   { border-left-color: #22c55e; }
 .plugin-card.enabled.tag-pro    { border-left-color: #ef4444; }
 .plugin-card.enabled.tag-plugin { border-left-color: #a855f7; }
+
+/* ロード失敗はタグ色より優先する。監視が動いていないことが最も重要。 */
+.plugin-card.load-failed { border-left-color: #ef4444 !important; }
 
 .plugin-card-header {
     display: flex;
@@ -2429,13 +2435,14 @@ body.card-dragging {
 /* ===== トースト（ダッシュボード用） ===== */
 #toastContainer {
     position: fixed;
-    top: 80px;
+    top: 100px;
     right: 24px;
     z-index: 2000;
     display: flex;
     flex-direction: column;
     gap: 10px;
-    max-width: 400px;
+    width: 360px;
+    max-width: calc(100vw - 48px);
     pointer-events: none;
 }
 
@@ -2453,6 +2460,8 @@ body.card-dragging {
     pointer-events: auto;
     border: 1px solid rgba(255, 255, 255, 0.1);
     max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .dashboard-toast .toast-icon { font-size: 1.2rem; flex-shrink: 0; }
@@ -2870,11 +2879,13 @@ body.card-dragging {
     .radio-group { flex-direction: column; gap: 8px; }
     .radio-label { padding: 12px 14px; }
 
+    /* スマホでも横長のバーにしない。右寄せのカード型のまま収める。 */
     #toastContainer {
-        top: 60px;
+        top: 140px;
         right: 12px;
-        left: 12px;
-        max-width: 100%;
+        left: auto;
+        width: 360px;
+        max-width: calc(100vw - 24px);
     }
 
     /* プロセスモーダル */
@@ -3755,4 +3766,38 @@ html {
 .alert-source-badge.untrusted {
     background: rgba(234, 179, 8, 0.20);
     color: #eab308;
+}
+
+/* ============================================================
+   スマホ最適化: アラート履歴カード
+   1行構成（バッジ＋本文＋時刻）のままだと、min-width:0 の本文が
+   狭い画面で極端に細くなり、日本語が1文字ずつ縦に折れて読めない。
+   バッジ・出所・時刻を1行目、本文を2行目に積んで全文幅で読ませる。
+   ============================================================ */
+@media (max-width: 600px) {
+    .alert-item {
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 8px;
+        padding: 12px 14px;
+    }
+
+    /* DOM 順は バッジ→出所→本文→時刻 なので order で並べ替える。 */
+    .alert-item .alert-level-badge { order: 0; }
+    .alert-item .alert-source-badge { order: 1; }
+    .alert-item-time {
+        order: 2;
+        margin-left: auto;
+        font-size: 0.72rem;
+    }
+    .alert-item-body {
+        order: 3;
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+    .alert-item-title { font-size: 0.92rem; }
+    .alert-item-message { font-size: 0.82rem; line-height: 1.5; }
+
+    /* 履歴リストの左右パディングを詰めて本文幅を稼ぐ。 */
+    .alert-list { padding: 0 14px 16px 14px; }
 }

@@ -92,10 +92,10 @@
 
                     <!-- GUI 設定フォーム -->
                     <div class="gui-panel" id="guiPanel" style="display:none;">
+                        <!-- 保存ボタンはヘッダー上部の #saveBtn に一本化した（下部の
+                             重複ボタンを削除）。#saveBtn は currentSaveFn() 経由で
+                             GUI/JSON/アラートの各モードに応じた保存処理を呼ぶ。 -->
                         <div class="gui-body" id="guiBody"></div>
-                        <div class="gui-footer">
-                            <button class="btn-primary" id="guiSaveBtn" data-i18n="config.save">保存</button>
-                        </div>
                     </div>
 
                     <!-- アラート閾値エディタ -->
@@ -133,6 +133,8 @@
                                 </label>
                             </div>
                         </div>
+                        <!-- アラートは GUI/JSON 切替が無くヘッダーの操作群を
+                             隠すため、専用の保存ボタンをここに置く。 -->
                         <div class="alert-config-footer">
                             <button class="btn-primary" id="alertConfigSaveBtn" data-i18n="config.save">保存</button>
                         </div>

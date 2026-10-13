@@ -285,12 +285,26 @@
     // ============================================================
     function showToast(message, type = 'info') {
         if (!elements.toastContainer) return;
+        const container = elements.toastContainer;
+        // 連打などで同じ内容のトーストが積み上がらないよう、既存の同一トーストは
+        // 先に消してから出し直す。
+        const key = type + '\u0000' + message;
+        Array.from(container.children).forEach((c) => {
+            if (c.dataset.toastKey === key) c.remove();
+        });
+        // 画面を埋め尽くさないよう、表示は最大 MAX_TOASTS 件まで。
+        // あふれた分は古い順に消す。
+        const MAX_TOASTS = 4;
+        while (container.children.length >= MAX_TOASTS) {
+            container.removeChild(container.firstChild);
+        }
         const el = document.createElement('div');
         el.className = `dashboard-toast ${type}`;
+        el.dataset.toastKey = key;
         el.innerHTML = `
             <span class="toast-message">${escapeHtml(message)}</span>
         `;
-        elements.toastContainer.appendChild(el);
+        container.appendChild(el);
 
         setTimeout(() => {
             el.style.opacity = '0';
@@ -1048,6 +1062,11 @@
     let lastModules = [];
     // プラグインメタ（name → meta）。表示名や種別判定に使う。
     let pluginMetaMap = new Map();
+    // Agent が報告したモジュールのロード結果（name → {status, reason}）。
+    // カードの状態表示に使う。Agent が唯一「実際にロードできたか」を
+    // 観測できるため、この情報がないと失敗したモジュールも「監視中」に
+    // 見えてしまう。
+    let moduleRuntimeMap = new Map();
 
     // 実行ステータスを「ラベル・色クラス」に正規化する。
     function normalizeStatus(status) {
@@ -1139,11 +1158,43 @@
         //   監視系（セキュリティ等）で有効 → 監視中（常時動作）
         //   バックアップ系で実行中 → 実行中/成功/失敗
         //   バックアップ系で待機 → 待機中
+        // Agent のロード結果。stateCls/stateLabel を実際の状態で上書き
+        // するために先に取り出す。runtime が無い（旧 agent）なら未取得と
+        // して扱い、従来の簡易表示にフォールバックする。
+        const runtime = moduleRuntimeMap.get(mod.name);
+        const runtimeFailed = runtime && runtime.status === 'failed';
+        // 失敗理由は agent がコードで送る。UI 言語に応じて翻訳する。
+        // 古い agent は Reason しか送らないので、その場合は日本語のまま。
+        const failReason = (() => {
+            if (!runtimeFailed || !runtime) return '';
+            if (runtime.reason_code) {
+                const key = 'plugin.fail.' + runtime.reason_code;
+                const translated = t(key);
+                // 既知のコードは UI 言語へ翻訳する。
+                if (translated !== key) return translated;
+                // 未知のコード（"unknown" や将来追加されたコード）は t() が
+                // キーを返す。生の理由は Agent 側の日本語であることが多く、
+                // 英語 UI に日本語が混ざる原因になるため、翻訳済みの汎用
+                // メッセージに置き換える。
+                return t('plugin.fail.unknown');
+            }
+            // reason_code を持たない旧 Agent。生の理由は日本語の可能性が
+            // あるので、UI が日本語のときだけそのまま表示し、それ以外は
+            // 汎用の英語メッセージにする。
+            const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
+            if (lang === 'ja' && runtime.reason) return runtime.reason;
+            return t('plugin.fail.unknown');
+        })();
+
         let stateCls;
         let stateLabel;
         if (!enabled) {
             stateCls = 'disabled';
             stateLabel = t('plugin.disabled');
+        } else if (runtimeFailed) {
+            // ロード失敗。監視中ではなく、理由をツールチップに出す。
+            stateCls = 'failed';
+            stateLabel = t('plugin.load_failed');
         } else if (!isBackup) {
             stateCls = 'success';
             stateLabel = t('security.state_active');
@@ -1221,12 +1272,16 @@
             : '/modules.html';
         const target = meta.has_web_ui ? ' target="_blank" rel="noopener"' : '';
 
+        // ロード失敗の理由をカード全体の title に載せる（state バッジに
+        // カーソルを乗せると理由が読める）。
+        const failTitle = failReason ? escapeAttr(failReason) : '';
+
         return `
-            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''} ${cssClass(cardTagClass)}" href="${escapeAttr(href)}"${target}>
+            <a class="plugin-card ${enabled ? 'enabled' : 'disabled'} ${isActive ? 'active' : ''} ${runtimeFailed ? 'load-failed' : ''} ${cssClass(cardTagClass)}" href="${escapeAttr(href)}"${target}>
                 <div class="plugin-card-header">
                     <span class="plugin-card-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</span>
                     <span class="plugin-row-type${tagClass ? ' ' + cssClass(tagClass) : ''}">${escapeHtml(declaredTag || type)}</span>
-                    <span class="plugin-row-state ${cssClass(stateCls)}">${escapeHtml(stateLabel)}</span>
+                    <span class="plugin-row-state ${cssClass(stateCls)}"${failTitle ? ` title="${failTitle}"` : ''}>${escapeHtml(stateLabel)}</span>
                 </div>
                 <div class="plugin-card-body">
                     ${body}
@@ -1235,6 +1290,12 @@
         `;
     }
 
+    // 直前に書き込んだプラグイン一覧の HTML。毎秒の status 更新のたびに
+    // innerHTML を差し替えると、カードの DOM が作り直されて CSS アニメーション
+    // （pulse 等）や描画がリセットされ、点滅して見える。内容が変わったときだけ
+    // 書き換えることで、点滅を防ぎつつホバー等の見た目はそのまま保つ。
+    let lastPluginListHtml = null;
+
     function renderPluginList(modules) {
         if (!elements.pluginList) return;
 
@@ -1242,19 +1303,24 @@
         lastModules = list;
         if (elements.moduleCount) elements.moduleCount.textContent = String(list.length);
 
+        let html;
         if (list.length === 0) {
-            elements.pluginList.innerHTML = `<div class="plugin-list-empty">${escapeHtml(t('plugin.none'))}</div>`;
-            return;
+            html = `<div class="plugin-list-empty">${escapeHtml(t('plugin.none'))}</div>`;
+        } else {
+            html = list.map(buildPluginCard).join('');
         }
 
-        elements.pluginList.innerHTML = list.map(buildPluginCard).join('');
+        if (html === lastPluginListHtml) return;
+        lastPluginListHtml = html;
+        elements.pluginList.innerHTML = html;
     }
 
     async function loadPluginList() {
         try {
-            const [res, metaRes] = await Promise.all([
+            const [res, metaRes, runtimeRes] = await Promise.all([
                 fetch('/api/modules'),
                 fetch('/api/plugins').catch(() => null),
+                fetch('/api/plugin-runtime').catch(() => null),
             ]);
             if (res && res.ok) {
                 const data = await res.json();
@@ -1265,6 +1331,14 @@
                 const metaData = await metaRes.json();
                 pluginMetaMap = new Map();
                 (metaData.plugins || []).forEach(m => pluginMetaMap.set(m.name, m));
+                renderPluginList(lastModules);
+            }
+            // Agent のロード結果を取得して再描画する。
+            if (runtimeRes && runtimeRes.ok) {
+                const runtimeData = await runtimeRes.json();
+                moduleRuntimeMap = new Map();
+                const mods = runtimeData.modules || {};
+                Object.keys(mods).forEach(k => moduleRuntimeMap.set(k, mods[k]));
                 renderPluginList(lastModules);
             }
         } catch (e) {
@@ -1450,6 +1524,18 @@
                         size: data.size,
                         last_run: data.timestamp,
                     }));
+                    return;
+                }
+                if (data.event === 'module_status') {
+                    // Agent が実際にロードできたかどうかを反映する。
+                    // 失敗したモジュールを「監視中」と誤表示しないため。
+                    moduleRuntimeMap = new Map();
+                    const statuses = data.statuses || {};
+                    Object.keys(statuses).forEach(k => {
+                        moduleRuntimeMap.set(k, statuses[k]);
+                    });
+                    // 保持済みの statuses はそのまま使う。翻訳は表示時に行う。
+                    renderPluginList(lastModules);
                     return;
                 }
                 if (data.event) return;
@@ -2044,6 +2130,9 @@
         if (rank < 2) {
             // viewer（ゲスト含む）: operator 以上の機能を隠す。
             if (elements.backupSection) elements.backupSection.style.display = 'none';
+        }
+        if (rank < 3) {
+            // アラート履歴のクリアは監査証跡を消す操作のため admin のみ。
             if (elements.alertsClearBtn) elements.alertsClearBtn.style.display = 'none';
         }
     }
