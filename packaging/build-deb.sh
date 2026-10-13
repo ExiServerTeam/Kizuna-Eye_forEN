@@ -78,6 +78,17 @@ for u in "$STAGE/usr/share/kizuna-eye/systemd/"*.service; do
     sed -i -E 's|^Documentation=.*|Documentation=file:///usr/share/doc/kizuna-eye/README.md|' "$u"
 done
 
+# ダッシュボードのプラグインアップロード先は書き込み可能でなければならない。
+# postinst は dashboard_config.json の plugins_dir を $BIN_DIR/plugins に設定する
+# ので、そのパスを ReadWritePaths に追記する（ProtectSystem=strict のままだと
+# アップロードが EROFS で失敗する）。存在しない可能性を考慮し、先頭に "-" を付ける。
+DASH_UNIT="$STAGE/usr/share/kizuna-eye/systemd/kizuna-dashboard.service"
+if [ -f "$DASH_UNIT" ]; then
+    if grep -q '^ReadWritePaths=' "$DASH_UNIT"; then
+        sed -i -E "s|^ReadWritePaths=(.*)$|ReadWritePaths=\1 -$BIN_DIR/plugins|" "$DASH_UNIT"
+    fi
+fi
+
 # 権限の正規化。共有(SMB)上では 777/664 等になっているため、パッケージ内は
 # ディレクトリ 0755 / ファイル 0644 に統一する（バイナリは後段で 0755）。
 find "$STAGE/usr/share/kizuna-eye" -type d -exec chmod 0755 {} +

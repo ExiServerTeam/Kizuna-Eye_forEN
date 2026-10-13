@@ -59,6 +59,28 @@ LimitCORE=infinity
 # ログ (logs/dashboard.log) は WorkingDirectory 基準になる。
 ExecStart=__BIN__/dashboard_linux -config __DATA__/dashboard_config.json
 
+# ---- 権限分離（agent unit と同じ保護を dashboard にも適用）----
+# dashboard は Web を公開し、アップロードされた .so を扱うため、侵害時に
+# 被害が広がらないよう filesystem を読み取り専用にし、権限昇格を禁止する。
+# 書き込めるのは下の ReadWritePaths だけ。
+#
+# 注意: プラグインのアップロード先 (dashboard_config.json の plugins_dir、
+# 既定 /opt/kizuna-eye/bin/plugins) は書き込み可能でなければならない。
+# deb の postinst は ReadWritePaths を /var/lib/kizuna-eye だけに絞るため、
+# 既定の plugins_dir を使うパッケージでは下の追記が必要（build-deb.sh が
+# 既定 plugins_dir を検出して追記する）。
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+NoNewPrivileges=yes
+# 設定・ログ・セッション・アップロード済みプラグインのみ書き込みを許可する。
+# 先頭の "-" は「パスが無くても起動を失敗させない」指定。
+ReadWritePaths=/var/lib/kizuna-eye -__BIN__/plugins
+
 # クラッシュ時のみ自動再起動（正常終了や手動 stop では再起動しない）。
 Restart=on-failure
 RestartSec=5

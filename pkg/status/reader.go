@@ -54,14 +54,24 @@ func ReadFromFileWithDefault(path string, defaultStatus *SystemStatus) (*SystemS
 	return s, nil
 }
 
-// Validate performs simple range checks on the SystemStatus.
+// Validate performs range checks on the SystemStatus before it is stored,
+// broadcast, or exported as Prometheus metrics.
+//
+// A status with an unusable value must be rejected wholesale: the dashboard
+// treats it as the latest state, appends it to the metrics history, and feeds
+// it to the alert engine, so one poisoned field would corrupt all three. The
+// checks cover every numeric field a client can render.
 func (s *SystemStatus) Validate() error {
 	if s == nil {
 		return fmt.Errorf("ステータスが nil です")
 	}
-	if s.Timestamp < 0 {
+	// A non-positive timestamp is not a usable sample (the dashboard uses
+	// "timestamp > 0" to tell a real status from arbitrary JSON), and a
+	// negative one would place the sample before the epoch.
+	if s.Timestamp <= 0 {
 		return fmt.Errorf("timestamp が不正です: %d", s.Timestamp)
 	}
+
 	// NaN/Inf would pass a naive range check (all comparisons are false).
 	// Reject them explicitly so a buggy/hostile agent cannot poison metrics.
 	for _, f := range []struct {
@@ -78,6 +88,48 @@ func (s *SystemStatus) Validate() error {
 		if f.val < 0 || f.val > 100 {
 			return fmt.Errorf("%s が範囲外です: %.2f", f.name, f.val)
 		}
+	}
+
+	// Per-core CPU.
+	for i, v := range s.CPUPerCore {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 || v > 100 {
+			return fmt.Errorf("CPUPerCore[%d] が不正です: %.2f", i, v)
+		}
+	}
+	// Load average (non-negative, finite).
+	for i, v := range s.LoadAverage {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+			return fmt.Errorf("LoadAverage[%d] が不正です: %.2f", i, v)
+		}
+	}
+	// CPU temperature: 0 means "sensor unavailable"; otherwise a plausible
+	// range (the alert threshold validator uses the same 0..150 bound).
+	if math.IsNaN(s.CPUTemp) || math.IsInf(s.CPUTemp, 0) || s.CPUTemp < 0 || s.CPUTemp > 150 {
+		return fmt.Errorf("CPUTemp が不正です: %.1f", s.CPUTemp)
+	}
+	// Per-disk usage and S.M.A.R.T values.
+	for i, d := range s.Disks {
+		if math.IsNaN(d.Percent) || math.IsInf(d.Percent, 0) || d.Percent < 0 || d.Percent > 100 {
+			return fmt.Errorf("Disks[%d].Percent が不正です: %.2f", i, d.Percent)
+		}
+		if math.IsNaN(d.Temp) || math.IsInf(d.Temp, 0) || d.Temp < 0 || d.Temp > 150 {
+			return fmt.Errorf("Disks[%d].Temp が不正です: %.1f", i, d.Temp)
+		}
+	}
+	// Processes (rendered in the Top-N table).
+	for i, p := range s.Processes {
+		if p.PID < 0 {
+			return fmt.Errorf("Processes[%d].PID が不正です: %d", i, p.PID)
+		}
+		if math.IsNaN(p.CPU) || math.IsInf(p.CPU, 0) || p.CPU < 0 {
+			return fmt.Errorf("Processes[%d].CPU が不正です: %.2f", i, p.CPU)
+		}
+		if math.IsNaN(p.MemMB) || math.IsInf(p.MemMB, 0) || p.MemMB < 0 {
+			return fmt.Errorf("Processes[%d].MemMB が不正です: %.2f", i, p.MemMB)
+		}
+	}
+	if s.CPUErrorCount < 0 {
+		return fmt.Errorf("CPUErrorCount が不正です: %d", s.CPUErrorCount)
 	}
 	return nil
 }

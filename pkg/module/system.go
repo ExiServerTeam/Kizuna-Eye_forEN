@@ -120,12 +120,39 @@ func (s *smartCache) recordResult(ok bool) (warn bool) {
 	return false
 }
 
+// smartctlBin/sudoBin are resolved to absolute paths at package init. The
+// service PATH is normally trustworthy, but resolving an absolute path first
+// removes any chance of a PATH entry shadowing the real binary (the security
+// plugin already does this for the firewall binaries).
+var (
+	smartctlBin = resolveSystemBin("smartctl",
+		"/usr/sbin/smartctl", "/sbin/smartctl", "/usr/bin/smartctl", "/bin/smartctl",
+		"/usr/local/sbin/smartctl", "/usr/local/bin/smartctl")
+	sudoBin = resolveSystemBin("sudo",
+		"/usr/bin/sudo", "/bin/sudo", "/usr/sbin/sudo", "/sbin/sudo")
+)
+
+// resolveSystemBin returns the first existing absolute candidate, falling back
+// to exec.LookPath(name) only when none exists. It returns "" when the binary
+// cannot be found at all.
+func resolveSystemBin(name string, candidates ...string) string {
+	for _, c := range candidates {
+		if fi, err := os.Stat(c); err == nil && !fi.IsDir() {
+			return c
+		}
+	}
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	return ""
+}
+
 // smartctlOnce/smartctlPrefix memoize how to invoke smartctl.
 // Preference order:
-//  1. passwordless sudo ("sudo -n smartctl") when a sudoers drop-in grants
-//     NOPASSWD for smartctl only. This lets S.M.A.R.T work while the agent
-//     runs as a non-root user (least privilege).
-//  2. the plain binary in PATH.
+//  1. passwordless sudo for smartctl only (legacy pre-A-4 path). NOTE: under
+//     the A-4 unit (NoNewPrivileges=yes) sudo always fails, so this branch is
+//     inert there; S.M.A.R.T then relies on CAP_SYS_RAWIO + the plain binary.
+//  2. the plain binary, resolved to an absolute path.
 var (
 	smartctlOnce   sync.Once
 	smartctlPrefix []string
@@ -134,10 +161,10 @@ var (
 // smartctlCommand builds an exec.Cmd for smartctl, choosing sudo when usable.
 func smartctlCommand(args ...string) *exec.Cmd {
 	smartctlOnce.Do(func() {
-		if _, err := exec.LookPath("sudo"); err == nil {
+		if sudoBin != "" && smartctlBin != "" {
 			// Non-interactive probe; succeeds only if the NOPASSWD rule exists.
-			if err := exec.Command("sudo", "-n", "smartctl", "--version").Run(); err == nil {
-				smartctlPrefix = []string{"sudo", "-n", "smartctl"}
+			if err := exec.Command(sudoBin, "-n", smartctlBin, "--version").Run(); err == nil {
+				smartctlPrefix = []string{sudoBin, "-n", smartctlBin}
 			}
 		}
 	})
@@ -145,7 +172,11 @@ func smartctlCommand(args ...string) *exec.Cmd {
 		full := append(append([]string{}, smartctlPrefix[1:]...), args...)
 		return exec.Command(smartctlPrefix[0], full...)
 	}
-	return exec.Command("smartctl", args...)
+	bin := smartctlBin
+	if bin == "" {
+		bin = "smartctl" // not found; let exec fail loudly
+	}
+	return exec.Command(bin, args...)
 }
 
 // smartctlAvailable reports whether S.M.A.R.T can actually be queried.
@@ -153,11 +184,9 @@ func smartctlCommand(args ...string) *exec.Cmd {
 // rule would find smartctl but every read would fail. So probe a real query
 // (smartctl --scan) through the chosen invocation path and require success.
 func smartctlAvailable() bool {
-	if _, err := exec.LookPath("smartctl"); err != nil {
-		// Not in PATH; only the sudo path can still work.
-		if _, err := exec.LookPath("sudo"); err != nil {
-			return false
-		}
+	if smartctlBin == "" {
+		// No smartctl anywhere; the sudo path cannot help either.
+		return false
 	}
 	// `smartctl --scan` lists devices and exits 0 without needing raw disk
 	// access to a specific device; it confirms the binary runs via the chosen

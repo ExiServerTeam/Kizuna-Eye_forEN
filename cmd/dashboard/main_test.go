@@ -101,7 +101,9 @@ func TestHubSetLastStatusIgnoresNil(t *testing.T) {
 		t.Fatalf("expected nil status after SetLastStatus(nil), got %#v", got)
 	}
 
-	statusSample := &status.SystemStatus{DiskTotal: 100, DiskUsed: 20}
+	// A real status always carries a positive timestamp (the WS handler
+	// treats timestamp<=0 as "not a status"), and Validate now rejects 0.
+	statusSample := &status.SystemStatus{Timestamp: 1, DiskTotal: 100, DiskUsed: 20}
 	hub.SetLastStatus(statusSample)
 	if got := hub.GetLastStatus(); got == nil || got.DiskTotal != 100 || got.DiskUsed != 20 {
 		t.Fatalf("expected status to be stored, got %#v", got)
