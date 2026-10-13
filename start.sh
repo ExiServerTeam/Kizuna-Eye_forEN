@@ -11,6 +11,19 @@
 #   - nohup + stdin=/dev/null でセッション終了に耐える
 #   - PID ファイルを書いて stop.sh から確実に停止できる
 # ようにする。
+#
+# A-4（agent を専用ユーザー kizuna-agent で動かす）以降は agent だけ systemd
+# 管理になる。その状態でここから agent を起動すると、systemd 管理下の agent と
+# 二重に動き、state / chain.key（/var/lib/kizuna-eye、0700 kizuna-agent）を
+# 書けない側が失敗し続ける（ダッシュボードには両方が見える）。よって agent が
+# systemd 管理下（active または enabled）のときは agent を起動しない。
+#
+# 使い方:
+#   ./start.sh            # dashboard + agent（agent が systemd 管理なら dashboard のみ）
+#   ./start.sh dashboard  # dashboard のみ
+#   ./start.sh agent      # agent のみ（systemd 管理下なら何もしない）
+#   KIZUNA_FORCE_MANUAL=1 ./start.sh
+#                         # systemd 管理下でも手動起動する（二重起動注意）
 # ============================================================
 set -u
 umask 077  # New files/dirs: 0600/0700 (secrets, pid, logs)
@@ -26,6 +39,20 @@ resolve_run_dir() {
     echo "/tmp"
 }
 RUN_DIR="$(resolve_run_dir)"
+
+# 起動対象（all | dashboard | agent）。既定は all（従来どおり）。
+WANT="${1:-all}"
+case "$WANT" in
+    all|dashboard|agent) ;;
+    -h|--help)
+        echo "usage: $0 [all|dashboard|agent]"
+        echo "  agent が systemd (kizuna-agent) 管理下のときは agent を起動しません。"
+        echo "  agent の再起動: sudo systemctl restart kizuna-agent"
+        exit 0 ;;
+    *)
+        echo "usage: $0 [all|dashboard|agent]" >&2
+        exit 2 ;;
+esac
 
 # 設定・秘密・鍵の置き場。共有上（./）から共有外（移行後）へ切り替える。
 #   SMB 共有は force user=user で uid 1000 になるため chmod 600 では守れない。
@@ -87,16 +114,43 @@ start_one() {
     return 0
 }
 
+# agent が systemd (kizuna-agent.service) の管理下か。
+#   active : 今まさに systemd が動かしている
+#   enabled: systemd が起動時に立ち上げる（= 手動管理から外れている）
+# どちらの場合も手動起動は二重管理になるため避ける。
+systemd_manages_agent() {
+    [ "${KIZUNA_FORCE_MANUAL:-0}" = "1" ] && return 1
+    command -v systemctl >/dev/null 2>&1 || return 1
+    systemctl is-active --quiet kizuna-agent 2>/dev/null && return 0
+    systemctl is-enabled --quiet kizuna-agent 2>/dev/null && return 0
+    return 1
+}
+
 new_started=0
 already_running=0
-start_one dashboard_linux "$DATA_DIR/dashboard_config.json" logs/dashboard.log && new_started=1 || already_running=1
-sleep 1
-start_one agent_linux "$DATA_DIR/agent_config.json" logs/agent.log -modules "$DATA_DIR/modules.json" && new_started=1 || already_running=1
+skipped_systemd=0
+
+if [ "$WANT" != "agent" ]; then
+    start_one dashboard_linux "$DATA_DIR/dashboard_config.json" logs/dashboard.log && new_started=1 || already_running=1
+    sleep 1
+fi
+
+if [ "$WANT" != "dashboard" ]; then
+    if systemd_manages_agent; then
+        skipped_systemd=1
+    else
+        start_one agent_linux "$DATA_DIR/agent_config.json" logs/agent.log -modules "$DATA_DIR/modules.json" && new_started=1 || already_running=1
+    fi
+fi
 
 echo ""
+if [ "$skipped_systemd" -eq 1 ]; then
+    echo "ℹ️  agent は systemd (kizuna-agent) が管理中です。手動起動はしません。"
+    echo "    状態: systemctl status kizuna-agent / 再起動: sudo systemctl restart kizuna-agent"
+fi
 if [ "$new_started" -eq 1 ]; then
     echo "✅ Kizuna-Eyeを起動しました。"
-else
+elif [ "$already_running" -eq 1 ]; then
     echo "ℹ️  Kizuna-Eyeは既に起動しています。"
 fi
 echo ""

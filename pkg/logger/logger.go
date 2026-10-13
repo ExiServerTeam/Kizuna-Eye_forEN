@@ -66,7 +66,11 @@ type rotatingWriter struct {
 }
 
 func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWriter, error) {
-	// Logs contain usernames/IPs; keep the directory owner-only.
+	// Logs contain usernames/IPs; keep the directory owner-only when we create
+	// it. The A-4 migration relaxes the *shared* log directory
+	// (/samba/share/Kizuna-Eye/logs) to setgid + group kizuna-eye so the
+	// isolated agent can keep writing there; that is a migration decision, not
+	// something this process should broaden on its own.
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, err
 	}
@@ -79,14 +83,20 @@ func newRotatingWriter(path string, maxSize int64, maxBackups int) (*rotatingWri
 		return nil, err
 	}
 	// Tighten an existing file that may have been created world-readable.
-	_ = os.Chmod(path, 0600)
+	// 0640 keeps a deliberate group-read bit: A-4 runs the agent as its own
+	// user, and the operator (plus the dashboard's log viewer, which reads the
+	// agent log) must still be able to read logs written by kizuna-agent.
+	// Which group that is decided by the containing directory's setgid bit.
+	_ = os.Chmod(path, 0640)
 	return w, nil
 }
 
 func (w *rotatingWriter) open() error {
 	// Log files may contain usernames, IPs, and other sensitive data, so
-	// create them 0600 (owner only).
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	// create them 0640: owner-only for writing, group-read for the shared
+	// kizuna-eye group (see newRotatingWriter). The process umask can only
+	// make this stricter, never wider.
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0640)
 	if err != nil {
 		return err
 	}

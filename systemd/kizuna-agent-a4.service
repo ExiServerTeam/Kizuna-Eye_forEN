@@ -9,8 +9,15 @@
 #
 # 前提（systemd/migrate-agent-user.sh が作る）:
 #   - ユーザー kizuna-agent (system/nologin, home /var/lib/kizuna-eye)
-#   - /var/lib/kizuna-eye/{state,keys,logs} (0700, kizuna-agent 所有)
-#   - state/ に agent_config.json / modules.json と各状態ファイル・chain.key
+#   - /var/lib/kizuna-eye/{state,keys,logs} (state/keys は 0700, kizuna-agent 所有)
+#   - state/ に各状態ファイル (FIM/ports/SUID/cron/logins/blocks/alertstate) と
+#     chain.key は keys/ に移設済み
+#   - 共有グループ kizuna-eye (kizuna-agent + 運用ユーザー) に所属
+#   - 設定 (agent_config.json / modules.json) は *移設しない*。ダッシュボードが
+#     保存のたびに書き換える唯一のファイルであり、UI のプラグイン設定・
+#     チェック間隔・トークン変更を agent に届けるには同じファイルを読む必要が
+#     あるため、__DATA__ のまま 0640 (group kizuna-eye) で共有する。
+#     状態ファイルの絶対パスは modules.json 側に書き込まれている。
 #
 # インストール:
 #   sudo systemd/migrate-agent-user.sh user
@@ -33,7 +40,12 @@ Environment=GOTRACEBACK=crash
 
 LimitCORE=infinity
 
-ExecStart=__BIN__/agent_linux -config /var/lib/kizuna-eye/state/agent_config.json -modules /var/lib/kizuna-eye/state/modules.json
+# 新規ファイルは 0640 (group read) を既定にする。書き込み権は変えず、
+# 運用ユーザー/ダッシュボードが agent の書くログを読めるようにするため。
+UMask=0027
+
+# 設定は __DATA__ の共有ファイルをそのまま読む（上のコメント参照）。
+ExecStart=__BIN__/agent_linux -config __DATA__/agent_config.json -modules __DATA__/modules.json
 
 # ---- 権限分離 ----
 # /etc/shadow 等を読みつつ、agent プロセス自体は非 root のまま。
@@ -42,14 +54,16 @@ CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 NoNewPrivileges=yes
 # ファイルシステムを読み取り専用化。書き込めるのは下の ReadWritePaths のみ。
 ProtectSystem=strict
-# ホームは読み取り専用（状態・鍵は /var/lib/kizuna-eye に移設済み）。
+# ホームは読み取り専用。共有設定 (__DATA__/agent_config.json, modules.json) は
+# 読むだけ、状態・鍵は /var/lib/kizuna-eye 側にある。
 ProtectHome=read-only
 PrivateTmp=yes
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
-# 書き込み許可: 状態/鍵/ログ、共有ログ、バックアップ先。
+# 書き込み許可: 状態/鍵/ログ、共有ログ (agent 自身と backup プラグインのログ)、
+# バックアップ先。__DATA__ は読み取りのみ（意図的に含めない）。
 ReadWritePaths=/var/lib/kizuna-eye /samba/share/Kizuna-Eye/logs /samba/share/CD
 
 Restart=on-failure

@@ -140,6 +140,7 @@ fi
 - これを忘れると鍵を見つけられず **鍵なし運用（SHA-256）に静かに縮退**する。
 - プラグイン自身のログ・ベースライン（`./logs/kizuna-security-*.json`）は cwd 相対のまま（`logs/` は 700）。
   共有外へ移す場合は `log_path` / `integrity_baseline_path` / `alert_history_path` / `suid_baseline_path`
+  / `suid_fast_baseline_path`（高リスク領域 `/tmp` 等の専用ベースライン）
   等も同じ書式で指定する。ただし `alert_history_path` はダッシュボード側の設定と**同じパス**にすること。
 
 ### 2-4 ロールバック

@@ -58,7 +58,12 @@ func (s *ModulesStorage) Load() error {
 
 	// Tighten the mode: modules.json can embed plugin paths and settings.
 	// Best-effort; ignore failure on filesystems without chmod support.
-	_ = os.Chmod(s.path, 0600)
+	//
+	// A-4: the agent (kizuna-agent) reads this same file, which the dashboard
+	// rewrites on every save. A deliberate group-read bit (0640, shared
+	// kizuna-eye group) is preserved, otherwise the agent would lose access
+	// after the next save and the UI's plugin settings would stop applying.
+	fsutil.TightenSharedConfigMode(s.path)
 
 	// Treat an empty file as an empty list.
 	if len(data) == 0 {

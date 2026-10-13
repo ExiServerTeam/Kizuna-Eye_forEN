@@ -126,8 +126,11 @@ func NewPluginManager(storage *ModulesStorage, cfg *config.DashboardConfig, logg
 		}
 		uploadEnabled = cfg.IsUploadEnabled()
 	}
-	// The directory holds executable .so files; keep it owner-only.
-	if err := os.MkdirAll(pluginsDir, 0o700); err != nil {
+	// The directory holds executable .so files. It must stay owner-writable
+	// (only the dashboard user may place plugins) while remaining readable and
+	// traversable by the agent: with A-4 the agent runs as a separate user
+	// (kizuna-agent) and could not load plugins out of a 0700 directory.
+	if err := os.MkdirAll(pluginsDir, 0o755); err != nil {
 		return nil, fmt.Errorf("plugins ディレクトリ作成失敗: %w", err)
 	}
 
@@ -631,9 +634,21 @@ func (p *PluginManager) handleUpload(w http.ResponseWriter, r *http.Request) {
 	// verifies <plugin>.so.sig before plugin.Open, so a signed upload stays
 	// loadable, and turning on require_signature later does not force every
 	// plugin to be re-uploaded.
+	//
+	// A-4: os.CreateTemp() produced the .so as 0600 and the uploader is the
+	// dashboard user while the agent runs as kizuna-agent, so the installed
+	// files must be made world-readable. Otherwise the signature check fails
+	// closed and every plugin silently stops loading after the migration.
+	// Read-only for others: only the owner (the dashboard user) can write,
+	// replace or delete them.
 	sigPath := pluginsig.SigPath(soPath)
+	if err := os.Chmod(soPath, 0o644); err != nil {
+		_ = os.Remove(soPath)
+		writeJSONError(w, http.StatusInternalServerError, "配置した .so のパーミッション設定失敗: "+err.Error())
+		return
+	}
 	if len(sigBytes) > 0 {
-		if err := os.WriteFile(sigPath, sigBytes, 0o600); err != nil {
+		if err := os.WriteFile(sigPath, sigBytes, 0o644); err != nil {
 			_ = os.Remove(soPath)
 			writeJSONError(w, http.StatusInternalServerError, "署名ファイルの書き込み失敗: "+err.Error())
 			return

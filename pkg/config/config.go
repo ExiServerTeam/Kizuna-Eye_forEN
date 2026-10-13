@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // AgentConfig is the agent configuration.
@@ -312,10 +314,13 @@ func (c *DashboardConfig) ResolvePluginsDir() string {
 }
 
 // EnsurePluginsDir creates the plugins directory if needed.
-// The directory holds executable .so files, so keep it owner-only.
+// The directory holds executable .so files: it must stay owner-writable so
+// only the dashboard user can place plugins, but the agent has to traverse and
+// read it. With A-4 the agent runs as a separate user (kizuna-agent), so 0755
+// is used instead of the previous owner-only 0700.
 func (c *DashboardConfig) EnsurePluginsDir() (string, error) {
 	dir := c.ResolvePluginsDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("plugins ディレクトリの作成に失敗: %w", err)
 	}
 	return dir, nil
@@ -384,8 +389,14 @@ func LoadAgentConfig(path string) (*AgentConfig, error) {
 
 	// The agent config holds the shared agent token; tighten the mode on
 	// load so a file created world-readable is not left exposed.
+	//
+	// A-4: the agent runs as kizuna-agent while the dashboard (and the
+	// operator who owns this file) runs as the login user, so the migration
+	// grants the shared kizuna-eye group read (0640). Tightening to 0600
+	// here would make the config unreadable for the agent as soon as the
+	// dashboard restarted, so a deliberate group-read bit is preserved.
 	// Best-effort: ignore failure on filesystems that do not honour chmod.
-	_ = os.Chmod(path, 0600)
+	fsutil.TightenSharedConfigMode(path)
 
 	// Anchor relative paths (log_file, plugins_dir) at the config file's
 	// directory instead of the process working directory (Medium-10).
@@ -439,8 +450,9 @@ func LoadDashboardConfig(path string) (*DashboardConfig, error) {
 	fmt.Printf("[CONFIG] 設定ファイル %s を読み込みました\n", path)
 
 	// The dashboard config holds secrets (agent_token, webhook URLs, SMTP
-	// password); tighten the mode on load. Best-effort.
-	_ = os.Chmod(path, 0600)
+	// password); tighten the mode on load. Best-effort. Group read is kept
+	// if explicitly granted (see LoadAgentConfig / fsutil.TightenSharedConfigMode).
+	fsutil.TightenSharedConfigMode(path)
 
 	applyNotificationDefaults(&cfg.Notifications)
 

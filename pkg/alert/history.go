@@ -80,9 +80,10 @@ func (h *History) SetPersistence(path string) {
 	defer h.mu.Unlock()
 	h.path = path
 	_ = os.MkdirAll(filepath.Dir(path), 0700)
-	if _, err := os.Stat(path); err == nil {
-		_ = os.Chmod(path, 0600)
-	}
+	// 0600 へ締めるが、A-4 の移行が与えた group read (0640) は残す。このファイルは
+	// ダッシュボードが書き、agent (kizuna-agent) が V2-B の整合性検証で読むため、
+	// 無条件の 0600 は agent に「open failed」の警告を出させ続ける。
+	fsutil.TightenSharedConfigMode(path)
 }
 
 // Add appends one record with no source information.
@@ -122,7 +123,9 @@ func (h *History) AddSourced(a *notify.Alert, source string, trusted bool) {
 	h.trimLocked()
 
 	if h.path != "" {
-		f, err := openAppendNoFollow(h.path)
+		// 新規作成時は fsutil.SharedFileMode（既存ファイルの group read 保持、
+		// 共有ディレクトリでの再作成は 0640）を O_CREATE のモードに使う。
+		f, err := openAppendNoFollow(h.path, fsutil.SharedFileMode(h.path, 0600))
 		if err != nil {
 			logf("アラート履歴の永続化: open に失敗 (%s): %v", h.path, err)
 		} else {
@@ -208,7 +211,9 @@ func (h *History) compactLocked() {
 	}
 	// fsutil.WriteFileAtomic: 同一ディレクトリの一時ファイルに書き、fsync して
 	// から rename する。同じ処理が10箇所に散っていたので共通化した（L-12）。
-	if err := fsutil.WriteFileAtomic(h.path, out, 0600); err != nil {
+	// モードは rename 前に決まるため、group read の保持は fsutil.SharedFileMode で
+	// 先に解決する（A-4: agent が読むファイルを 0600 へ戻さない）。
+	if err := fsutil.WriteFileAtomic(h.path, out, fsutil.SharedFileMode(h.path, 0600)); err != nil {
 		return
 	}
 }

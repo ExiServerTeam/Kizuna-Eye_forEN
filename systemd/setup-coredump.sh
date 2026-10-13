@@ -36,7 +36,24 @@ TS="$(date +%Y%m%d_%H%M%S)"
 [ -f "$CONF_SRC" ] || { echo "❌ $CONF_SRC が見つかりません"; exit 1; }
 
 echo "▶ 1. コア置き場を作成: $CORE_DIR"
-install -d -m 700 "$CORE_DIR"
+# コアを書くのはカーネルで、その権限は「クラッシュしたプロセス」のもの。
+# root:root 0700 のままだと agent(kizuna-agent) も dashboard(user) も
+# 書き込めず、core_pattern を変えた意味が消えてコアが 1 つも残らない。
+# そこで sticky + 書き込み可（他者読み取り不可）のドロップボックスにする:
+#   1733 = 所有者は読み書き、他は「作成のみ」（一覧・読み取りは不可）
+# コア自身は 0600 で作られるため、内容は root しか読めない。
+install -d -m 1733 "$CORE_DIR"
+
+# 親ディレクトリは「通り抜け」だけ許可する。agent の home は HOME_MODE
+# (既定 0750) で作られるため、そのままだと dashboard(user) が $CORE_DIR に
+# 到達できず、ダッシュボード側のコアだけ取りこぼす。state/keys/logs は
+# 0700 のままなので、中身は変わらず保護される（o+x は一覧も読み取りも
+# 許可しない）。
+PARENT="$(dirname "$CORE_DIR")"
+if [ -d "$PARENT" ]; then
+    chmod o+x "$PARENT"
+    echo "   親を通り抜け可能に: $PARENT ($(stat -c '%a %U:%G' "$PARENT"))"
+fi
 
 echo "▶ 2. sysctl 設定を導入: $CONF_DST"
 if [ -f "$CONF_DST" ]; then
