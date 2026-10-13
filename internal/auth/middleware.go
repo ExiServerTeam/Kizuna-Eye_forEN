@@ -29,10 +29,11 @@ var protectedRules = []routeRule{
 	{"POST", "/api/alerts", RoleAdmin},
 
 	// Destructive operations that share a path with a read-only endpoint
-	// must come first. Clearing the alert history is state-changing and
-	// destroys the audit trail, so it needs operator. A viewer is read-only
-	// and must never be able to delete it.
-	{"DELETE", "/api/alerts", RoleOperator},
+	// must come first. Clearing the alert history destroys the audit trail
+	// (which may be needed to investigate an incident), so it is admin-only.
+	// A viewer/operator is read-only for history and must never be able to
+	// delete it.
+	{"DELETE", "/api/alerts", RoleAdmin},
 
 	// Plugin upload and deletion are admin-only. Listing plugin metadata and
 	// running a backup are needed by the modules page, which operators may
@@ -81,6 +82,12 @@ var protectedRules = []routeRule{
 	{"", "/api/history", RoleViewer},
 	{"", "/api/alerts", RoleViewer},
 	{"", "/api/version", RoleViewer},
+	// Module load results (loaded/failed/disabled). The dashboard shows
+	// them on the module card; without the rule they would fall through to
+	// the viewer default, but the empty-rule case is explicit here so a
+	// future change to that default does not silently hide the runtime
+	// state from viewers.
+	{"", "/api/plugin-runtime", RoleViewer},
 	{"", "/ws", RoleViewer},
 }
 

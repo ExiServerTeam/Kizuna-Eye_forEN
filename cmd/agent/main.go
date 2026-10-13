@@ -94,6 +94,32 @@ var loadedPlugins = struct {
 	openedPaths: make(map[string]bool),
 }
 
+// moduleRuntime holds the outcome of the last load attempt for every module,
+// keyed by its modules.json entry name. The dashboard shows this on the
+// module card so a plugin that failed to load is not silently displayed as
+// "active" (it is not). The agent is the only component that can observe the
+// actual load result, so it publishes the map over the WebSocket that already
+// carries status and security events.
+var moduleRuntime = struct {
+	sync.Mutex
+	states   map[string]moduleRuntimeState
+	lastSent string
+}{
+	states: make(map[string]moduleRuntimeState),
+}
+
+type moduleRuntimeState struct {
+	// Status is one of "loaded", "failed", or "disabled".
+	Status string `json:"status"`
+	// ReasonCode is a stable identifier for the failure cause. The frontend
+	// translates it, so the message shown to the operator follows the UI
+	// language instead of being stuck in the agent's own language.
+	ReasonCode string `json:"reason_code,omitempty"`
+	// Reason is a Japanese human-readable cause when Status is "failed".
+	// It is the fallback used by older dashboards and the agent's own logs.
+	Reason string `json:"reason,omitempty"`
+}
+
 // wsWriter serializes writes to a WebSocket connection.
 // gorilla/websocket allows only one concurrent writer per connection,
 // but the agent writes from the status loop, the ping loop, and
@@ -319,6 +345,11 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 	// so a plugin that was deleted from the file can be stopped below.
 	present := make(map[string]bool, len(configs))
 
+	// Runtime status for this load pass, keyed by the modules.json entry
+	// name. Published to the dashboard so a plugin that failed to load is
+	// not shown as "active" on its card.
+	runtime := make(map[string]moduleRuntimeState, len(configs))
+
 	for _, cfg := range configs {
 		if cfg.Type != "plugin" {
 			continue
@@ -348,6 +379,7 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			} else {
 				lg.InfoT("agent.plugin_skip", cfg.Name)
 			}
+			runtime[cfg.Name] = moduleRuntimeState{Status: "disabled"}
 			continue
 		}
 		// Resolve the name this plugin actually registered under (its own
@@ -371,24 +403,30 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 					}
 				}
 			}
+			runtime[cfg.Name] = moduleRuntimeState{Status: "loaded"}
 			continue
 		}
 
 		pluginPath, ok := cfg.Config["plugin_path"].(string)
 		if !ok || pluginPath == "" {
 			lg.ErrorT("agent.plugin_path_invalid", cfg.Name)
+			runtime[cfg.Name] = moduleRuntimeState{Status: "failed", ReasonCode: "invalid_plugin_path", Reason: "plugin_path が不正です"}
 			continue
 		}
 
 		safePath, err := resolveAndCheckPluginPath(pluginPath, pluginsDir)
 		if err != nil {
 			lg.ErrorT("agent.plugin_rejected", cfg.Name, err)
+			code, msg := classifyLoadError(err)
+			runtime[cfg.Name] = moduleRuntimeState{Status: "failed", ReasonCode: code, Reason: msg}
 			continue
 		}
 
 		registeredName, err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg, policy)
 		if err != nil {
 			lg.ErrorT("agent.plugin_load_failed", cfg.Name, err)
+			code, msg := classifyLoadError(err)
+			runtime[cfg.Name] = moduleRuntimeState{Status: "failed", ReasonCode: code, Reason: msg}
 			continue
 		}
 		if registeredName == "" {
@@ -407,7 +445,14 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 		}
 		loadedPlugins.names[registeredName] = true
 		lg.InfoT("agent.plugin_registered", registeredName)
+		runtime[cfg.Name] = moduleRuntimeState{Status: "loaded"}
 	}
+
+	// Publish the runtime view. The status loop sends it on change, so a
+	// module that failed to load is visible on the dashboard card.
+	moduleRuntime.Lock()
+	moduleRuntime.states = runtime
+	moduleRuntime.Unlock()
 
 	// Stop plugins that are still loaded but no longer present in modules.json
 	// (e.g. deleted from the dashboard). Without this a removed plugin keeps
@@ -472,6 +517,45 @@ func verifyPluginSignature(soPath string, policy config.PluginSecurityConfig, lg
 		lg.InfoT("agent.plugin_sig_ok", soPath+" ("+source+")")
 	}
 	return nil
+}
+
+// classifyLoadError returns a stable code and a Japanese fallback message for
+// a plugin load error. The code is what the dashboard translates to the UI
+// language; the message is the fallback used by older dashboards and the
+// agent's own logs. Unknown errors use code "unknown" with the raw text
+// (redundant plugin.Open prefix stripped and length capped) as the message.
+func classifyLoadError(err error) (code, message string) {
+	if err == nil {
+		return "", ""
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "plugin already loaded"):
+		return "already_loaded", "このモジュールは既に読み込まれています。設定を変えた場合は Agent の再起動が必要です。"
+	case strings.Contains(msg, "no such file or directory"):
+		return "no_such_file", ".so ファイルが見つかりません。パスを確認してください。"
+	case strings.Contains(msg, "different version of package"):
+		return "version_mismatch", "本体とビルドバージョンが一致しません。モジュールを再ビルドしてください。"
+	case strings.Contains(msg, "未署名のプラグインを拒否"):
+		return "unsigned_rejected", "署名がなく、承認記録もないため拒否しました。"
+	case strings.Contains(msg, "署名の検証に失敗"):
+		return "signature_mismatch", "署名の検証に失敗しました（改ざん、または鍵不一致の可能性）。"
+	case strings.Contains(msg, "NewPluginModule が見つかりません"):
+		return "missing_entrypoint", "プラグインの形式が不正です（NewPluginModule がありません）。"
+	case strings.Contains(msg, "NewPluginModule のシグネチャが不正"):
+		return "bad_entrypoint", "プラグインの形式が不正です（シグネチャ不一致）。"
+	case strings.Contains(msg, "plugins ディレクトリ外"):
+		return "outside_plugins_dir", ".so が plugins ディレクトリの外にあります。"
+	case strings.Contains(msg, ".so である必要"):
+		return "not_so", "対象ファイルが .so ではありません。"
+	}
+	if i := strings.LastIndex(msg, "): "); i >= 0 && i+3 < len(msg) {
+		msg = msg[i+3:]
+	}
+	if runes := []rune(msg); len(runes) > 140 {
+		msg = string(runes[:140]) + "…"
+	}
+	return "unknown", msg
 }
 
 // isThirdPartyApproved reports whether the plugin's .meta.json records that
@@ -598,10 +682,32 @@ func configurePlugin(configurable interface{ Configure(interface{}) error }, con
 
 // watchModulesFile watches modules.json for changes and reloads.
 func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string, policy config.PluginSecurityConfig) {
-	var lastMod time.Time
+	// modules.json の変更検知は mtime だけに頼らない。mtime は
+	// ファイルシステムの秒精度に丸められるため、同一秒内の書き換え
+	// （保存 → すぐ別の保存）を取りこぼす。サイズと inode も併用し、
+	// 「前回と違う状態になったか」で判定する。
+	type modFileState struct {
+		modTime time.Time
+		size    int64
+		inode   uint64
+	}
+	readState := func(p string) (modFileState, bool) {
+		var st modFileState
+		info, err := os.Stat(p)
+		if err != nil {
+			return st, false
+		}
+		st.modTime = info.ModTime()
+		st.size = info.Size()
+		if fi, ok := info.Sys().(*syscall.Stat_t); ok {
+			st.inode = fi.Ino
+		}
+		return st, true
+	}
 
-	if info, err := os.Stat(path); err == nil {
-		lastMod = info.ModTime()
+	var lastState modFileState
+	if st, ok := readState(path); ok {
+		lastState = st
 	}
 
 	ticker := time.NewTicker(30 * time.Second)
@@ -612,15 +718,15 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			info, err := os.Stat(path)
-			if err != nil {
+			st, err := readState(path)
+			if !err {
 				continue
 			}
-			if !info.ModTime().After(lastMod) {
+			if st == lastState {
 				continue
 			}
 
-			lastMod = info.ModTime()
+			lastState = st
 			lg.InfoT("agent.modules_changed")
 
 			if err := loadPluginsFromConfig(ctx, path, manager, lg, pluginsDir, policy); err != nil {
@@ -638,10 +744,11 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 		HandshakeTimeout: 5 * time.Second,
 	}
 
-	// Send the shared agent token as both a header and a query parameter.
-	// The dashboard prefers the header; the query parameter exists only for
-	// environments where a proxy strips custom headers. When the token is
-	// empty, the dashboard falls back to heuristic detection (legacy).
+	// Send the shared agent token in the X-Kizuna-Agent-Token header ONLY.
+	// The dashboard accepts it there and deliberately ignores a ?token=
+	// query parameter, because a query string leaks into access logs,
+	// Referer headers and browser history (G-2). When the token is empty,
+	// the dashboard falls back to heuristic detection (legacy).
 	dialURL := cfg.DashboardURL
 	header := http.Header{}
 	// Always declare role=agent. The dashboard only considers a connection
@@ -737,6 +844,12 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Send the initial module runtime view (and its status snapshot) so the
+	// dashboard card shows the real load result from the first render.
+	if err := sendModuleRuntime(writer, lg); err != nil {
+		lg.DebugT("agent.module_status_failed", err)
+	}
+
 	lastSent, err := sendStatus(writer, manager, lg)
 	if err != nil {
 		return err
@@ -750,6 +863,12 @@ func runAgent(ctx context.Context, cfg *config.AgentConfig, lg *logger.Logger, m
 			// Security events are flushed every tick so their delivery latency
 			// is not tied to the status collection interval.
 			sendSecurityEvents(writer, manager, lg)
+
+			// Module load results change only when modules.json changes or a
+			// load fails; the function itself skips unchanged sets.
+			if err := sendModuleRuntime(writer, lg); err != nil {
+				lg.DebugT("agent.module_status_failed", err)
+			}
 
 			// The send interval can be shorter than the collection interval
 			// (e.g. interval=0.2s while the system module samples every 1s).
@@ -921,6 +1040,55 @@ func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) (i
 
 	lg.DebugT("agent.status_sent")
 	return s.Timestamp, nil
+}
+
+// sendModuleRuntime sends the module load results to the dashboard as a
+// "module_status" event, but only when the set changed since the last send.
+// Without the change check it would be re-sent every tick and the browser
+// would re-render the module list for no reason. The comparison uses the
+// canonical JSON of the map, which is stable for the same content.
+func sendModuleRuntime(w *wsWriter, lg *logger.Logger) error {
+	moduleRuntime.Lock()
+	states := make(map[string]moduleRuntimeState, len(moduleRuntime.states))
+	for k, v := range moduleRuntime.states {
+		states[k] = v
+	}
+	moduleRuntime.Unlock()
+
+	data, err := json.Marshal(states)
+	if err != nil {
+		return err
+	}
+
+	moduleRuntime.Lock()
+	same := string(data) == moduleRuntime.lastSent
+	if !same {
+		moduleRuntime.lastSent = string(data)
+	}
+	moduleRuntime.Unlock()
+	if same {
+		return nil
+	}
+
+	payload := map[string]interface{}{
+		"event":    "module_status",
+		"statuses": states,
+	}
+	buf := bufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufferPool.Put(buf)
+	enc := json.NewEncoder(buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(payload); err != nil {
+		return err
+	}
+	if err := w.WriteMessage(websocket.TextMessage, buf.Bytes()); err != nil {
+		return err
+	}
+	if lg != nil {
+		lg.DebugT("agent.module_status_sent")
+	}
+	return nil
 }
 
 // ============================================================

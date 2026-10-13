@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- operator の権限範囲を明確化（コード実行境界を除く）。`docs/PROCEDURE.md` / `README.md` / `README.ja.md` に operator と admin の境界（コード実行境界を越えるか）を明記
+- モジュール設定のうち保護・復旧・コード実行境界に直結するフィールドの変更を admin 限定に（fail-closed）。対象: `plugin_path` / `chain_key_path` / `integrity_baseline_path` / `integrity_files` / `watch_files` / `block_mode` / `fim_watch` / `fim_watch_paths` / `fim_watch_baseline_path` / `suid_check` / `suid_paths` / `suid_watch` / `suid_watch_paths` / `suid_fast_check` / `suid_fast_paths` / `cron_check` / `cron_paths` / `listen_port_check` / `firewall_backend` / `block_state_path` / `block_whitelist` / `block_duration_sec` / `sudo_ignore_commands` / `notify_min_level` / `log_path`。`PUT /api/modules/{name}` で現在値と異なる場合に admin を要求（`internal/api/modules.go`）。admin 判定は `auth.Handler.IsAdmin` を注入（api は auth に非依存）。しきい値・間隔・除外などの運用調整は operator のまま
+- アラート履歴のクリア（`DELETE /api/alerts`）を operator から **admin** に引き上げ（監査証跡を消す操作のため）
+
+### Changed
+- プラグイン（モジュール）を本体リポジトリに同梱しない方針に変更。Kizuna-Security のソースは本体リポジトリ内 `plugins/Kizuna-Security/` から撤去し、各モジュール側（`/samba/share/Kizuna-Security` 等）で管理する。`install.sh` / `update.sh` / `scripts/build-plugin.sh` のプラグインソース既定パスを廃止し、`KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` を指定したときのみ扱う opt-in に統一（マシン固有の絶対パスを埋め込まない）。`go.work` のプラグイン参照と `.gitignore` の plugins 固有行も削除
+
+### Fixed
+- EN モードでアラート履歴が日本語のままだった問題を修正。ダッシュボード自身が生成するアラート（メモリ/ストレージ/CPU温度/ディスクS.M.A.R.T/Agent切断・復帰・未接続、プラグイン監査、認証イベント）に英語文言が無く、`title_en`/`message_en` が空だった。`notify.Alert` に `TitleEN`/`MessageEN` を追加し、履歴保存時に詳細または Alert 本体の EN を採用（`firstNonEmpty`）。監査/認証フックも EN 詳細を渡すよう拡張。これで UI 言語に応じて `pickLocalized` が英語を表示する（Kizuna-Security のイベントは元々 EN 付き）
+- ダッシュボードのモジュールステータス（プラグインカード）が点滅して見える問題を修正。毎秒の status 更新のたびに `renderPluginList` が `innerHTML` を差し替えてカード DOM を作り直し、CSS アニメーション（pulse 等）がリセットされていた。生成 HTML が前回と同一なら書き換えないようにし、ホバー（`translateY(-2px)`）などの見た目は維持する
+- モジュール管理画面がロード失敗を反映していなかった問題を修正。Agent の `/api/plugin-runtime`（および WS `module_status`）を読み、`status=failed` のモジュールは「有効」ではなく赤い「読み込み失敗」バッジと失敗理由を表示する（従来は is_backup=false を「監視中」と誤表示していた）
+- ダッシュボードのモジュールカードで、ロード失敗理由のツールチップが英語 UI でも日本語のままだった問題を修正。既知の `reason_code` は `plugin.fail.*` で翻訳し、未知コード／旧 Agent の生メッセージは UI が日本語のときだけ表示、それ以外は翻訳済みの汎用メッセージに置換
+- Agent が `plugin_path` 不正時に `reason_code` を送っていなかった問題を修正（`invalid_plugin_path` を付与し UI で翻訳可能に）
+
 ## [0.7.0] - 2026-10-06
 
 ### Added

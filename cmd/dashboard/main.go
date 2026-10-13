@@ -97,6 +97,59 @@ func writeDashboardJSON(w http.ResponseWriter, status int, data interface{}) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
+// runtimeStore keeps the agent's module load results (from the
+// "module_status" event) and serves them as JSON. A plugin can fail to load
+// on the agent (missing config, signature error, ...), and only the agent can
+// observe that; the dashboard otherwise has no way to tell a running plugin
+// from one that was silently dropped.
+type runtimeStore struct {
+	mu     sync.RWMutex
+	states map[string]runtimeState
+}
+
+type runtimeState struct {
+	Status     string `json:"status"`
+	Reason     string `json:"reason,omitempty"`
+	ReasonCode string `json:"reason_code,omitempty"`
+}
+
+func newRuntimeStore() *runtimeStore {
+	return &runtimeStore{states: make(map[string]runtimeState)}
+}
+
+// observe reads an agent message and, when it is a module_status event,
+// replaces the stored view. Any other message is ignored.
+func (s *runtimeStore) observe(msg []byte) {
+	var env struct {
+		Event    string                  `json:"event"`
+		Statuses map[string]runtimeState `json:"statuses"`
+	}
+	if err := json.Unmarshal(msg, &env); err != nil {
+		return
+	}
+	if env.Event != "module_status" {
+		return
+	}
+	s.mu.Lock()
+	s.states = env.Statuses
+	if s.states == nil {
+		s.states = make(map[string]runtimeState)
+	}
+	s.mu.Unlock()
+}
+
+func (s *runtimeStore) handle(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	out := make(map[string]runtimeState, len(s.states))
+	for k, v := range s.states {
+		out[k] = v
+	}
+	s.mu.RUnlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"modules": out})
+}
+
 // handleSecurityEvent turns an agent "security_alert" event into a
 // notification (Discord etc.) and an alert-history entry.
 func handleSecurityEvent(msg []byte, engine *alert.Engine, lg *logger.Logger) {
@@ -823,6 +876,8 @@ func main() {
 			Title:     "接続フラッドを検知",
 			Message:   fmt.Sprintf("短時間に %d 件の接続を拒否しました（%s）。接続枯渇型のDoS攻撃の可能性があります。", rejected, detail),
 			Timestamp: time.Now(),
+			TitleEN:   "Connection flood detected",
+			MessageEN: fmt.Sprintf("Rejected %d connections in a short time (%s). Possible connection-exhaustion DoS attack.", rejected, detail),
 		}, "dashboard", true)
 		lg.WarnT("dash.flood_detected", rejected, detail)
 	})
@@ -831,11 +886,14 @@ func main() {
 	// reach the operator instead of only the log.
 	hub.SetAuthRejectCallback(func(reason string, count int) {
 		title := "不正なAgent接続を検知"
+		titleEn := "Invalid Agent connection detected"
 		switch reason {
 		case "agent_token_mismatch":
 			title = "Agentトークン不一致（偽装の可能性）"
+			titleEn = "Agent token mismatch (possible spoofing)"
 		case "agent_duplicate":
 			title = "2つ目のAgent接続（乗っ取りの可能性）"
+			titleEn = "Second Agent connection (possible hijack)"
 		}
 		engine.ReportAlert(&notify.Alert{
 			Type:      reason,
@@ -844,6 +902,8 @@ func main() {
 			Title:     title,
 			Message:   fmt.Sprintf("短時間に %d 回の不正なAgent接続を拒否しました（%s）。", count, reason),
 			Timestamp: time.Now(),
+			TitleEN:   titleEn,
+			MessageEN: fmt.Sprintf("Rejected %d invalid Agent connections in a short time (%s).", count, reason),
 		}, "dashboard", true)
 		lg.WarnT("dash.auth_reject_detected", reason, count)
 	})
@@ -1051,6 +1111,20 @@ func main() {
 
 	// ---- Module management API ----
 	moduleHandler := api.NewModuleHandler(storage, cfg.ResolvePluginsDir())
+	// plugin_path (the .so the agent loads) is a code-execution boundary, so
+	// changing it requires admin. The path-based middleware rule cannot tell a
+	// settings edit from a path swap, so the handler asks auth directly. The
+	// closure resolves authHandler at request time (it is created later in
+	// startup); a nil handler means "not admin" (fail-closed).
+	moduleHandler.SetAdminChecker(func(r *http.Request) bool {
+		// Auth disabled means trusted-network mode: every request is
+		// effectively an admin, so admin-only field changes (and everything
+		// else except plugin upload) are allowed, matching the middleware.
+		if !cfg.Auth.Enabled {
+			return true
+		}
+		return authHandler != nil && authHandler.IsAdmin(r)
+	})
 	moduleHandler.RegisterRoutes(mux)
 
 	// collectPluginLogs builds {moduleName: logPath} from modules.json so the
@@ -1087,10 +1161,11 @@ func main() {
 	} else {
 		// Record plugin upload/delete (a code-execution boundary) in the
 		// alert history and notifications, not only the log.
-		pluginManager.SetAuditHook(func(kind, detail string) {
+		pluginManager.SetAuditHook(func(kind, detail, detailEN string) {
 			// kind ごとに自然なタイトルを選ぶ。"操作を検知" のような
 			// 汎用文言だと何が起きたのか一目で分からないため。
 			title, level, icon := "プラグイン操作を検知", notify.LevelCritical, "🚨"
+			titleEn := "Plugin operation detected"
 			// サードパーティー製は「未検証（untrusted）」として扱う。
 			// ダッシュボードが生成したアラートでも、外部由来のコード追加は
 			// 信頼済みバッジを付けるべきではない。
@@ -1101,6 +1176,7 @@ func main() {
 				// 純正は作者が作成したものなので危険度は低いが、追加自体は
 				// コード実行境界を越える操作なので警戒で通知する。
 				title = "プラグインが追加されました"
+				titleEn = "Plugin added"
 				if isThirdParty {
 					level, icon = notify.LevelCritical, "🚨"
 				} else {
@@ -1108,8 +1184,10 @@ func main() {
 				}
 			case "plugin_delete":
 				title, level, icon = "プラグインが削除されました", notify.LevelCritical, "🚨"
+				titleEn = "Plugin deleted"
 			case "plugin_upload_rejected":
 				title, level, icon = "プラグインの追加を拒否しました", notify.LevelWarning, "⚠️"
+				titleEn = "Plugin addition rejected"
 			}
 			engine.ReportAlert(&notify.Alert{
 				Type:      "audit_" + kind,
@@ -1118,18 +1196,27 @@ func main() {
 				Title:     title,
 				Message:   detail,
 				Timestamp: time.Now(),
+				TitleEN:   titleEn,
+				MessageEN: detailEN,
 			}, "dashboard", !isThirdParty)
 		})
 		pluginManager.RegisterRoutes(mux)
 		lg.InfoT("dash.api_plugins")
 	}
 
-	// Handle agent events: release the plugin run guard AND turn security
-	// events into notifications + alert history entries.
+	// moduleRuntime holds the last load result the agent reported for every
+	// module. The dashboard exposes it at /api/plugin-runtime so the module
+	// card can show "failed to load" instead of a misleading "active".
+	moduleRuntime := newRuntimeStore()
+	mux.HandleFunc("GET /api/plugin-runtime", moduleRuntime.handle)
+
+	// Handle agent events: release the plugin run guard, update module load
+	// results, and turn security events into notifications + alert history.
 	hub.SetOnAgentEvent(func(msg []byte) {
 		if pluginManager != nil {
 			pluginManager.HandleAgentEvent(msg)
 		}
+		moduleRuntime.observe(msg)
 		handleSecurityEvent(msg, engine, lg)
 	})
 
@@ -1306,26 +1393,33 @@ func main() {
 	defer authHandler.Stop()
 	// Record security-relevant auth events (login lockouts = likely brute
 	// force) in the alert history and notifications, not only the log.
-	authHandler.SetSecurityEventHook(func(kind, detail, ip string) {
+	authHandler.SetSecurityEventHook(func(kind, detail, detailEN, ip string) {
 		title := "セキュリティ操作を検知"
+		titleEn := "Security operation detected"
 		icon := "🔐"
 		switch kind {
 		case "login_lockout":
 			title = "ログイン試行のロックアウト"
+			titleEn = "Login attempts locked out"
 			icon = "🚨"
 		case "user_create":
 			title = "ユーザーを作成"
+			titleEn = "User created"
 			icon = "👤"
 		case "user_delete":
 			title = "ユーザーを削除"
+			titleEn = "User deleted"
 			icon = "🗑️"
 		case "role_change":
 			title = "ロールを変更"
+			titleEn = "Role changed"
 			icon = "🔑"
 		}
 		msg := detail
+		msgEn := detailEN
 		if ip != "" {
 			msg += "（接続元: " + ip + "）"
+			msgEn += " (from: " + ip + ")"
 		}
 		engine.ReportAlert(&notify.Alert{
 			Type:      "auth_" + kind,
@@ -1334,6 +1428,8 @@ func main() {
 			Title:     title,
 			Message:   msg,
 			Timestamp: time.Now(),
+			TitleEN:   titleEn,
+			MessageEN: msgEn,
 		}, "dashboard", true)
 	})
 	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))

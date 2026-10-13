@@ -81,7 +81,7 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 - `pkg/module`（プラグインの共通型・インターフェース。`Module` / `ConfigField` / `SecurityEvent` など）
 - `pkg/status`（`SystemStatus` などの共有型）
 
-手順: (1) `./build.sh` で本体を再ビルド。(2) 各プラグインを同一ソースで再ビルド（例: `cd plugins/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を `plugins/` へ配備し、agent を再起動。
+手順: (1) `./build.sh` で本体を再ビルド。(2) 各プラグインをそれぞれのソースツリーで再ビルド（プラグインは本体リポジトリには同梱されません。例: `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を plugins ディレクトリへ配備し、agent を再起動。`scripts/build-plugin.sh` はソースを `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` で指定するとビルド→署名→配備を1コマンドで行えます。
 
 ## インストール
 
@@ -242,9 +242,15 @@ Kizuna-Eye は認証あり・なしの両方で動作します。認証は**既�
 
 | ロール | アクセス範囲 |
 |---|---|
-| viewer | ダッシュボード・ログ（閲覧のみ） |
-| operator | ＋ モジュール管理・手動バックアップ実行・アラート閾値変更 |
-| admin | 全権（設定エディタ・プラグインアップロード・ユーザー管理） |
+| viewer | ダッシュボード・メトリクス・履歴・アラート履歴・バージョンの閲覧（読み取りのみ） |
+| operator | ＋ ログ閲覧・**既存モジュールの設定変更（コード実行境界を除く）**・モジュールの手動実行・アラート閾値変更・アラート履歴の閲覧 |
+| admin | ＋ **コード実行境界に関わる操作**（モジュールの追加・削除・reload、プラグインのアップロード・削除、**plugin_path の変更**）・設定エディタ・ユーザー管理・ワンクリック対処・アラート履歴のクリア |
+
+**operator と admin の境界は「コード実行境界を越えるか」で引きます。**
+
+- operator は**既存モジュールの設定値**（監視対象パス、閾値、間隔、除外リストなど）を変更できますが、**plugin_path（ロードする .so の指定）は変更できません**（admin のみ）。
+- operator は**モジュールの追加・削除・再読み込み**はできません（admin のみ）。
+- operator は**アラート履歴を閲覧**できますが、**クリア（削除）はできません**（admin のみ。監査証跡を消す操作のため）。
 
 管理者はヘッダーの「ユーザー」から追加・削除できます。パスワードは `users.json` に **bcrypt ハッシュ**で保存され、最後の管理者は削除・降格できません。
 

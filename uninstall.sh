@@ -35,6 +35,8 @@ ETC_DIR="/etc/kizuna-eye"
 SYSCTL_CONF="/etc/sysctl.d/60-kizuna-core.conf"
 NEW_USER="kizuna-eye"
 REPO_LOGS="$PWD/logs"
+# 旧・同梱時代の残骸掃除用。現在はプラグインを本体リポジトリに同梱しないため、
+# 通常は空（glob がマッチせず空振りする）。
 REPO_PLUGINS="$PWD/plugins"
 
 PURGE=0

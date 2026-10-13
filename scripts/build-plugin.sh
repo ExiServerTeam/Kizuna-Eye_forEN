@@ -21,8 +21,10 @@ DEPLOY_DIR="$BIN_DIR/plugins"
 SIGN_BIN="$BIN_DIR/plugin-sign"
 SIGNING_KEY="${KIZUNA_SIGNING_KEY:-$HOME/.kizuna-eye/keys/plugin_signing/plugin_signing.key}"
 # 外部プラグイン（別リポジトリ）のソース位置。install.sh / update.sh と同じ変数名。
-# 未指定なら「そのプラグインは扱わない」（opt-in）。
+# 未指定なら「そのプラグインは扱わない」（opt-in）。Kizuna-Security も
+# 本体リポジトリには同梱しない方針のため、LITE と同じく opt-in とする。
 LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-}"
+SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-}"
 
 # Go が PATH に無い環境（cron 等）でも動くように。
 export PATH="$PATH:/usr/local/go/bin"
@@ -41,7 +43,12 @@ fi
 # プラグイン名 -> ソースディレクトリ。
 case "$NAME" in
     kizuna_security)
-        PLUGIN_DIR="$REPO_ROOT/plugins/Kizuna-Security/plugin"
+        if [ -z "$SEC_PLUGIN_DIR" ]; then
+            ng "kizuna_security は別リポジトリのプラグインです。"
+            ng "ソースの場所を指定してください: KIZUNA_SEC_PLUGIN_DIR=/path/to/Kizuna-Security/plugin $0 $NAME"
+            exit 1
+        fi
+        PLUGIN_DIR="$SEC_PLUGIN_DIR"
         ;;
     kizuna_backup_lite)
         if [ -z "$LITE_PLUGIN_DIR" ]; then
@@ -52,8 +59,14 @@ case "$NAME" in
         PLUGIN_DIR="$LITE_PLUGIN_DIR"
         ;;
     *)
-        # 未知の名前は <repo>/plugins/<name>/plugin を試す。
-        PLUGIN_DIR="$REPO_ROOT/plugins/$NAME/plugin"
+        # 未知の名前は環境変数でソースを指定する（本体リポジトリに同梱しない）。
+        ng "未知のプラグイン: $NAME"
+        ng "ソースの場所を指定してください: KIZUNA_PLUGIN_DIR=/path/to/$NAME/plugin $0 $NAME"
+        if [ -n "${KIZUNA_PLUGIN_DIR:-}" ]; then
+            PLUGIN_DIR="$KIZUNA_PLUGIN_DIR"
+        else
+            exit 1
+        fi
         ;;
 esac
 

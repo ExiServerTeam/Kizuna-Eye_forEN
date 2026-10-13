@@ -81,7 +81,7 @@ Go's `plugin` package requires the plugin and the host to agree on a **hash of e
 - `pkg/module` (shared plugin types / interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
 - `pkg/status` (shared types such as `SystemStatus`)
 
-Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from the same source, e.g. `cd plugins/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into `plugins/` and restart the agent.
+Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from its own source tree (plugins live outside this repository), e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into the plugins directory and restart the agent. `scripts/build-plugin.sh` can do build + sign + deploy in one step when the plugin source is given via `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR`.
 
 ## Installation
 
@@ -225,9 +225,15 @@ When enabled, the first visit redirects to `/setup.html` to create the first use
 
 | Role | Access |
 |---|---|
-| viewer | Dashboard and logs (read only) |
-| operator | + module management, manual backup runs, alert threshold changes |
-| admin | Everything (config editor, plugin upload, user management) |
+| viewer | Dashboard, metrics, history, alert history, version (read only) |
+| operator | + logs, **editing an existing module's settings (except code-execution boundaries)**, manual module runs, alert threshold changes, viewing alert history |
+| admin | + **code-execution boundary operations** (add/delete/reload a module, upload/delete a plugin, **changing `plugin_path`**), config editor, user management, one-click remediation, clearing the alert history |
+
+The boundary between operator and admin is **whether the action crosses the code-execution boundary**:
+
+- An operator may change an existing module's settings (watched paths, thresholds, intervals, ignore lists, ...) but **may not change `plugin_path`** (the `.so` that gets loaded) — admin only.
+- An operator may not add, delete, or reload modules — admin only.
+- An operator may **view** the alert history but **may not clear it** (deleting the audit trail is admin-only).
 
 Admins can add or remove users from the "Users" page in the header. Passwords are stored as **bcrypt hashes** in `users.json`, and the last admin cannot be deleted or demoted.
 

@@ -57,19 +57,21 @@ type Handler struct {
 	// on the alert engine, so the dashboard injects a callback that records
 	// the event in the alert history and notifications. Without this, a
 	// brute-force lockout was only a WARN line in the log.
-	onSecurityEvent func(kind, detail, ip string)
+	onSecurityEvent func(kind, detail, detailEN, ip string)
 }
 
 // SetSecurityEventHook installs the callback invoked for security-relevant
-// auth events (e.g. a login lockout). Call once during startup.
-func (h *Handler) SetSecurityEventHook(fn func(kind, detail, ip string)) {
+// auth events (e.g. a login lockout). detail is the Japanese rendering,
+// detailEN the English one (the alert history stores both). Call once during
+// startup.
+func (h *Handler) SetSecurityEventHook(fn func(kind, detail, detailEN, ip string)) {
 	h.onSecurityEvent = fn
 }
 
 // reportSecurityEvent invokes the hook, if any.
-func (h *Handler) reportSecurityEvent(kind, detail, ip string) {
+func (h *Handler) reportSecurityEvent(kind, detail, detailEN, ip string) {
 	if h.onSecurityEvent != nil {
-		h.onSecurityEvent(kind, detail, ip)
+		h.onSecurityEvent(kind, detail, detailEN, ip)
 	}
 }
 
@@ -202,6 +204,16 @@ func (h *Handler) Authenticated(r *http.Request) bool {
 	return ok
 }
 
+// IsAdmin reports whether the request carries a valid session with the admin
+// role. It is injected into the API layer (see api.ModuleHandler.SetAdminChecker)
+// so that operations the path-based middleware rule cannot distinguish from
+// routine settings edits — notably changing a module's plugin_path, which is a
+// code-execution boundary — can still require admin.
+func (h *Handler) IsAdmin(r *http.Request) bool {
+	s, ok := h.sessionFromRequest(r)
+	return ok && s.Role == RoleAdmin
+}
+
 // handleStatus reports whether setup is required and who is logged in.
 // This endpoint is intentionally unauthenticated.
 func (h *Handler) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -302,7 +314,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		// A lockout means the per-IP failure threshold was reached: report it
 		// as a security event so it lands in the alert history / notifications,
 		// not just the log.
-		h.reportSecurityEvent("login_lockout", "ログイン試行がロックアウトされました", ip)
+		h.reportSecurityEvent("login_lockout", "ログイン試行がロックアウトされました", "Login attempts were locked out", ip)
 		writeError(w, http.StatusTooManyRequests, "試行回数が多すぎます。しばらく待ってから再度お試しください")
 		return
 	}
@@ -497,7 +509,7 @@ func (h *Handler) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	// Audit: a new account (especially an admin) is a privilege change and
 	// must be recorded, not only logged.
-	h.reportSecurityEvent("user_create", "ユーザー '"+body.Username+"' を作成しました (role="+string(role)+")", clientIP(r))
+	h.reportSecurityEvent("user_create", "ユーザー '"+body.Username+"' を作成しました (role="+string(role)+")", "Created user '"+body.Username+"' (role="+string(role)+")", clientIP(r))
 	writeJSON(w, http.StatusCreated, map[string]string{"status": "created"})
 }
 
@@ -529,7 +541,7 @@ func (h *Handler) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if h.logger != nil {
 		kelog.LogInfo(h.logger, "auth.user_deleted", name)
 	}
-	h.reportSecurityEvent("user_delete", "ユーザー '"+name+"' を削除しました", clientIP(r))
+	h.reportSecurityEvent("user_delete", "ユーザー '"+name+"' を削除しました", "Deleted user '"+name+"'", clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -574,6 +586,6 @@ func (h *Handler) handleChangeRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.manager.DeleteUserSessions(name)
-	h.reportSecurityEvent("role_change", "ユーザー '"+name+"' のロールを '"+body.Role+"' に変更しました", clientIP(r))
+	h.reportSecurityEvent("role_change", "ユーザー '"+name+"' のロールを '"+body.Role+"' に変更しました", "Changed the role of user '"+name+"' to '"+body.Role+"'", clientIP(r))
 	writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 }

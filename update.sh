@@ -26,10 +26,11 @@ if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     [ -n "$RH" ] && RUN_HOME="$RH"
 fi
 SIGNING_KEY="${KIZUNA_SIGNING_KEY:-$RUN_HOME/.kizuna-eye/keys/plugin_signing/plugin_signing.key}"
-# プラグインのソース位置（install.sh と同じ規則）。Security はリポジトリ同梱、
-# Kizuna-Backup LITE は別リポジトリなので KIZUNA_LITE_PLUGIN_DIR 指定時のみ扱う。
+# プラグインのソース位置（install.sh と同じ規則）。Kizuna-Security も
+# Kizuna-Backup LITE も本体とは別の場所に置く独立モジュールのため、
+# 対応する環境変数を指定したときのみ扱う（opt-in）。
 LITE_PLUGIN_DIR="${KIZUNA_LITE_PLUGIN_DIR:-}"
-SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-$PWD/plugins/Kizuna-Security/plugin}"
+SEC_PLUGIN_DIR="${KIZUNA_SEC_PLUGIN_DIR:-}"
 
 DO_GIT=1; DO_RESTART=1; BUILD_PLUGINS=1; FORCE_REBUILD=0; DO_INSTALL=0
 for arg in "$@"; do
