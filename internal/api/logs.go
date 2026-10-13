@@ -303,6 +303,10 @@ func (l *LogHandler) handleLogStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	// Log lines can contain attacker-controlled text (usernames, paths). The
+	// non-streaming /api/logs handler sets nosniff for the same reason; SSE
+	// must too, so a log line can never be sniffed as a different type.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// Tell nginx (and similar proxies) not to buffer this response,
 	// otherwise log lines are delivered in bursts instead of live.
 	w.Header().Set("X-Accel-Buffering", "no")
