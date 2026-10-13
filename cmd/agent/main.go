@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"plugin"
 	"strings"
 	"sync"
@@ -40,8 +41,8 @@ var bufferPool = sync.Pool{
 func checkDependencies(lg *logger.Logger) {
 	// cmd -> what it is used for.
 	deps := []struct {
-		cmd  string
-		use  string
+		cmd string
+		use string
 	}{
 		{"rsync", "バックアッププラグイン"},
 		{"smartctl", "ディスクS.M.A.R.T（温度・健康状態・書込量）"},
@@ -174,13 +175,17 @@ func main() {
 	lg.Info("システムモジュール登録: 収集間隔=%d秒", sysInterval)
 
 	// ---- Load plugins ----
-	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg); err != nil {
+	// Only .so files inside the configured plugins directory are allowed,
+	// so a tampered modules.json cannot load an arbitrary library.
+	pluginsDir := cfg.ResolvePluginsDir()
+	lg.Info("プラグインディレクトリ: %s", pluginsDir)
+	if err := loadPluginsFromConfig(ctx, *modulesPath, manager, lg, pluginsDir); err != nil {
 		lg.Error("プラグイン読み込みエラー: %v", err)
 	}
 
 	manager.Start(ctx)
 
-	go watchModulesFile(ctx, *modulesPath, manager, lg)
+	go watchModulesFile(ctx, *modulesPath, manager, lg, pluginsDir)
 
 	go func() {
 		<-sigCh
@@ -203,8 +208,51 @@ func main() {
 	}
 }
 
+// resolveAndCheckPluginPath resolves pluginPath and rejects it unless it is
+// inside allowedDir. This stops a tampered modules.json (or a bug) from
+// loading an arbitrary .so from anywhere on the filesystem. Both paths are
+// resolved to their real (symlink-free) location so a symlink inside the
+// directory cannot be used to escape it.
+func resolveAndCheckPluginPath(pluginPath, allowedDir string) (string, error) {
+	if pluginPath == "" {
+		return "", fmt.Errorf("plugin_path が空です")
+	}
+	absPlugin, err := filepath.Abs(pluginPath)
+	if err != nil {
+		return "", fmt.Errorf("plugin_path の解決に失敗: %w", err)
+	}
+	absDir, err := filepath.Abs(allowedDir)
+	if err != nil {
+		return "", fmt.Errorf("plugins ディレクトリの解決に失敗: %w", err)
+	}
+
+	// Prefer real paths (resolve symlinks) so a symlink in the plugins dir
+	// pointing outside it is rejected. Fall back to the abs path when the
+	// file does not exist yet (plugin.Open will then fail with a clear error).
+	realPlugin, perr := filepath.EvalSymlinks(absPlugin)
+	if perr != nil {
+		realPlugin = absPlugin
+	}
+	realDir, derr := filepath.EvalSymlinks(absDir)
+	if derr != nil {
+		realDir = absDir
+	}
+
+	rel, err := filepath.Rel(realDir, realPlugin)
+	if err != nil {
+		return "", fmt.Errorf("plugin_path が plugins ディレクトリ外です: %s", pluginPath)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("plugin_path が plugins ディレクトリ外です: %s", pluginPath)
+	}
+	if !strings.HasSuffix(realPlugin, ".so") {
+		return "", fmt.Errorf("plugin_path は .so である必要があります: %s", pluginPath)
+	}
+	return realPlugin, nil
+}
+
 // loadPluginsFromConfig は modules.json を読み込んでプラグインを登録する
-func loadPluginsFromConfig(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger) error {
+func loadPluginsFromConfig(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -271,7 +319,13 @@ func loadPluginsFromConfig(ctx context.Context, path string, manager module.Modu
 			continue
 		}
 
-		if err := loadAndRegisterPlugin(ctx, pluginPath, cfg.Config, manager, lg); err != nil {
+		safePath, err := resolveAndCheckPluginPath(pluginPath, pluginsDir)
+		if err != nil {
+			lg.Error("プラグイン '%s' を拒否しました: %v", cfg.Name, err)
+			continue
+		}
+
+		if err := loadAndRegisterPlugin(ctx, safePath, cfg.Config, manager, lg); err != nil {
 			lg.Error("プラグイン '%s' の読み込み失敗: %v", cfg.Name, err)
 			continue
 		}
@@ -324,7 +378,7 @@ func loadAndRegisterPlugin(
 }
 
 // watchModulesFile watches modules.json for changes and reloads.
-func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger) {
+func watchModulesFile(ctx context.Context, path string, manager module.ModuleManager, lg *logger.Logger, pluginsDir string) {
 	var lastMod time.Time
 
 	if info, err := os.Stat(path); err == nil {
@@ -350,7 +404,7 @@ func watchModulesFile(ctx context.Context, path string, manager module.ModuleMan
 			lastMod = info.ModTime()
 			lg.Info("modules.json の変更を検知、再読み込みします")
 
-			if err := loadPluginsFromConfig(ctx, path, manager, lg); err != nil {
+			if err := loadPluginsFromConfig(ctx, path, manager, lg, pluginsDir); err != nil {
 				lg.Error("プラグイン再読み込み失敗: %v", err)
 			}
 		}

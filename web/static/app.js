@@ -1730,34 +1730,53 @@
     // アラートの各セクションや、権限が必要なナビは隠す。
     // データ自体はサーバー側ミドルウェアでも保護されている。
     // ============================================================
-    function applyPublicViewerMode() {
-        // 権限が必要なセクションを非表示にする。
-        [elements.historySection, elements.backupSection, elements.alertsSection]
-            .forEach(el => { if (el) el.style.display = 'none'; });
+    // 権限に応じて表示を切り替える。サーバー側ミドルウェアのロールと揃える。
+    //   role: 'admin' | 'operator' | 'viewer' | null（未ログインの公開ビューア）
+    //   - 公開ビューア(null): CPU/メモリ/ディスク/稼働時間のみ。
+    //   - viewer: 履歴・アラートは閲覧可（サーバーが viewer 以上に開放）。
+    //     モジュール/プラグイン(operator)とアラートのクリア(operator)は隠す。
+    //   - operator/admin: 全て表示。
+    function applyAccessMode(role) {
+        const rank = { viewer: 1, operator: 2, admin: 3 }[role] || 0;
 
-        // プロセス詳細（クリック）は viewer には公開されないため無効化する。
-        [elements.cpuCard, elements.memCard].forEach(card => {
-            if (!card) return;
-            card.removeAttribute('data-click');
-            card.removeAttribute('role');
-            card.removeAttribute('tabindex');
-            card.style.cursor = 'default';
-        });
+        if (rank === 0) {
+            // 公開ビューア（未ログイン）
+            [elements.historySection, elements.backupSection, elements.alertsSection]
+                .forEach(el => { if (el) el.style.display = 'none'; });
 
-        // 権限が必要なナビタブを隠す（data-role-min 付きは auth-guard が
-        // 処理するが、未ログイン時は auth-guard が何もしないためここで処理）。
-        document.querySelectorAll('.nav-tab[data-role-min]').forEach(el => {
-            el.style.display = 'none';
-        });
-        const usersTab = document.querySelector('.nav-tab[href="/users.html"]');
-        if (usersTab) usersTab.style.display = 'none';
+            // プロセス詳細（クリック）は公開しないため無効化する。
+            [elements.cpuCard, elements.memCard].forEach(card => {
+                if (!card) return;
+                card.removeAttribute('data-click');
+                card.removeAttribute('role');
+                card.removeAttribute('tabindex');
+                card.style.cursor = 'default';
+            });
+
+            document.querySelectorAll('.nav-tab[data-role-min]').forEach(el => {
+                el.style.display = 'none';
+            });
+            const usersTab = document.querySelector('.nav-tab[href="/users.html"]');
+            if (usersTab) usersTab.style.display = 'none';
+            return;
+        }
+
+        if (rank < 2) {
+            // viewer（ゲスト含む）: operator 以上の機能を隠す。
+            if (elements.backupSection) elements.backupSection.style.display = 'none';
+            if (elements.alertsClearBtn) elements.alertsClearBtn.style.display = 'none';
+        }
     }
 
-    function checkPublicViewer() {
-        fetch('/api/auth/me', { credentials: 'same-origin' })
-            .then(res => {
-                // 200 ならログイン済み（通常モード）。401/403 は未ログイン。
-                if (!res.ok) applyPublicViewerMode();
+    function checkAccessMode() {
+        // /api/auth/status は未認証でも 200 を返す。auth_enabled を見ないと、
+        // 認証無効時に誤って表示を絞ってしまう。
+        fetch('/api/auth/status', { credentials: 'same-origin' })
+            .then(res => res.ok ? res.json() : null)
+            .then(status => {
+                if (!status) return;                        // 判定失敗時は通常モードのまま
+                if (status.auth_enabled === false) return;  // 認証無効: 全開放
+                applyAccessMode(status.authenticated ? status.role : null);
             })
             .catch(() => { /* 判定失敗時は通常モードのまま */ });
     }
@@ -1769,7 +1788,7 @@
         setupProcessCardClicks();
         setupStorageCardClick();
         setupCardReorder();
-        checkPublicViewer();
+        checkAccessMode();
         connectWebSocket();
         loadAlerts();
         setInterval(loadAlerts, 30000);

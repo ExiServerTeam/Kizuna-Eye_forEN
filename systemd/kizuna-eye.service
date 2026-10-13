@@ -1,0 +1,34 @@
+# ============================================================
+# Kizuna-Eye systemd unit (system service)
+#
+# インストール（install.sh --systemd でも自動化される）:
+#   sudo sed "s/__USER__/$USER/g" systemd/kizuna-eye.service \
+#     | sudo tee /etc/systemd/system/kizuna-eye.service >/dev/null
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now kizuna-eye
+#
+# ポイント:
+#   - Type=oneshot + RemainAfterExit で「起動スクリプトが背景プロセスを
+#     立ち上げて戻る」start.sh の挙動を扱う。停止は ExecStop=stop.sh。
+#   - User は非 root（例: user）。S.M.A.R.T は smartctl だけに与えた
+#     sudoers 権限で取得するため、agent 全体を root にしなくてよい。
+# ============================================================
+[Unit]
+Description=Kizuna-Eye monitoring (dashboard + agent)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/samba/share/Kizuna-Eye
+ExecStart=/samba/share/Kizuna-Eye/start.sh
+ExecStop=/samba/share/Kizuna-Eye/stop.sh
+# agent がバックアッププラグイン実行中でも、途中で強制終了して
+# 中途半端なアーカイブを残さないよう、停止は十分待つ。
+TimeoutStopSec=60
+User=__USER__
+Group=__USER__
+
+[Install]
+WantedBy=multi-user.target

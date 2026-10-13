@@ -823,6 +823,14 @@ func main() {
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
 	sessionMgr := auth.NewSessionManager(sessionTTL, 0)
+	if err := sessionMgr.EnablePersistence(cfg.Auth.SessionFilePath(configDir), cfg.Auth.IsSessionIPBind()); err != nil {
+		lg.Warn("セッション永続化の読み込みに失敗（メモリのみで続行）: %v", err)
+	}
+	if p := cfg.Auth.SessionFilePath(configDir); p != "" {
+		lg.Info("セッション永続化: %s (IPバインド: %v)", p, cfg.Auth.IsSessionIPBind())
+	} else {
+		lg.Info("セッション永続化: 無効（再起動でログアウト）")
+	}
 	defer sessionMgr.Stop()
 	authHandler := auth.NewHandler(userStore, sessionMgr, lg, cfg.Auth.SecureCookies, cfg.Auth.Enabled, cfg.Auth.AgentToken)
 	authHandler.SetAvatarsDir(filepath.Join(configDir, "avatars"))

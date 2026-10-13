@@ -1,9 +1,10 @@
 // ============================================================
 // Kizuna-Eye - ロールに応じたナビ表示制御とアカウントメニュー
 // 各ページの </body> 直前で読み込む。
-// - /api/auth/me で現在のユーザーとロールを取得
-// - data-role-min を持つタブのうち、権限が足りないものを非表示
-// - ヘッダー右上にアバターを表示し、クリックでアカウントメニューを開く
+// - /api/auth/status で現在の状態を取得
+// - data-role-min を持つ要素のうち、権限が足りないものを非表示
+// - ログイン済み（ゲスト含む）: 右上にアバター + ログアウトメニュー
+// - 未ログイン（公開ビューア）: 右上に「ログイン」リンク
 // ============================================================
 (function () {
     'use strict';
@@ -14,21 +15,73 @@
         return ROLE_RANK[role] || 0;
     }
 
-    // If auth is disabled, /api/auth/me returns 401; in that case do nothing
-    // so the dashboard keeps working as before.
-    fetch('/api/auth/me', { credentials: 'same-origin' })
+    // i18n 翻訳ヘルパー
+    function t(key, fallback) {
+        if (window.KizunaI18n && window.KizunaI18n.t) {
+            const v = window.KizunaI18n.t(key);
+            if (v && v !== key) return v;
+        }
+        return fallback;
+    }
+
+    fetch('/api/auth/status', { credentials: 'same-origin' })
         .then(function (r) {
             if (!r.ok) return null;
             return r.json();
         })
-        .then(function (me) {
-            if (!me) return; // auth disabled or not logged in
-            applyRole(me);
+        .then(function (st) {
+            if (!st) return;                 // 判定失敗
+            if (st.auth_enabled === false) return; // 認証無効: 何もしない
+            if (!st.authenticated) {
+                // 公開ビューア（未ログイン）: ログイン導線を出す。
+                addLoginLink();
+                return;
+            }
+            applyRole({ username: st.username, role: st.role, avatar: st.avatar });
         })
         .catch(function () {});
 
+    function headerAnchor() {
+        return document.querySelector('.header-controls')
+            || document.getElementById('headerUser')
+            || document.querySelector('.header-right');
+    }
+
+    // insertIntoHeader places an element in the header. When a version badge
+    // exists, insert before it so the order is [lang][theme][user][version].
+    function insertIntoHeader(anchor, el) {
+        const badge = anchor.querySelector('.version-badge');
+        if (badge) {
+            anchor.insertBefore(el, badge);
+        } else {
+            anchor.appendChild(el);
+        }
+    }
+
+    // addLoginLink adds a login entry so a public viewer can reach the
+    // login page (and then guest-login / log out).
+    function addLoginLink() {
+        const anchor = headerAnchor();
+        if (!anchor) return;
+        if (document.getElementById('headerLoginLink')) return;
+        const a = document.createElement('a');
+        a.id = 'headerLoginLink';
+        a.className = 'header-login-link';
+        a.href = '/login.html';
+        a.textContent = t('nav.login', 'ログイン');
+        insertIntoHeader(anchor, a);
+    }
+
     function applyRole(me) {
         const myRank = rank(me.role);
+
+        // ページ全体に必要な権限（<body data-role-min>）を満たさない場合は
+        // ダッシュボードへ戻す。
+        const pageMin = document.body && document.body.getAttribute('data-role-min');
+        if (pageMin && myRank < rank(pageMin)) {
+            location.replace('/');
+            return;
+        }
 
         // Hide nav tabs the user cannot access.
         document.querySelectorAll('[data-role-min]').forEach(function (el) {
@@ -38,18 +91,16 @@
             }
         });
 
-        // Place the avatar menu in the first header row (right side), next to
-        // the other controls.
-        const anchor = document.querySelector('.header-controls')
-            || document.getElementById('headerUser')
-            || document.querySelector('.header-right');
+        const anchor = headerAnchor();
         if (!anchor) return;
         buildAvatarMenu(anchor, me);
     }
 
     // buildAvatarMenu renders an avatar button that opens a dropdown with
-    // account information and actions.
+    // account information and actions. Guest accounts only get logout.
     function buildAvatarMenu(anchor, me) {
+        const isGuest = me.username === 'guest';
+
         const wrap = document.createElement('div');
         wrap.className = 'account-menu';
 
@@ -76,7 +127,7 @@
         info.className = 'account-info';
         const nameEl = document.createElement('div');
         nameEl.className = 'account-name';
-        nameEl.textContent = me.username;
+        nameEl.textContent = isGuest ? t('account.guest', 'ゲスト') : me.username;
         const roleEl = document.createElement('div');
         roleEl.className = 'account-role';
         roleEl.textContent = me.role;
@@ -86,37 +137,40 @@
         dropdown.appendChild(head);
 
         // --- account settings (avatar upload / password) ---
-        const settings = document.createElement('div');
-        settings.className = 'account-section';
+        // ゲストは資格情報を持たないので、これらは表示しない。
+        if (!isGuest) {
+            const settings = document.createElement('div');
+            settings.className = 'account-section';
 
-        const fileInput = document.createElement('input');
-        fileInput.type = 'file';
-        fileInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
-        fileInput.hidden = true;
-        fileInput.addEventListener('change', function () {
-            if (fileInput.files && fileInput.files[0]) {
-                uploadAvatar(fileInput.files[0], wrap, me);
+            const fileInput = document.createElement('input');
+            fileInput.type = 'file';
+            fileInput.accept = 'image/png,image/jpeg,image/gif,image/webp';
+            fileInput.hidden = true;
+            fileInput.addEventListener('change', function () {
+                if (fileInput.files && fileInput.files[0]) {
+                    uploadAvatar(fileInput.files[0], wrap, me);
+                }
+                fileInput.value = '';
+            });
+
+            settings.appendChild(menuItem(t('account.change_icon', 'アイコンを変更'), function () { fileInput.click(); }));
+            settings.appendChild(menuItem(t('account.change_pw', 'パスワードを変更'), function () { changeOwnPassword(); }));
+            if (me.role === 'admin') {
+                const usersLink = document.createElement('a');
+                usersLink.className = 'account-item';
+                usersLink.href = '/users.html';
+                usersLink.textContent = t('nav.users', 'ユーザー管理');
+                settings.appendChild(usersLink);
             }
-            fileInput.value = '';
-        });
-
-        settings.appendChild(menuItem('アイコンを変更', function () { fileInput.click(); }));
-        settings.appendChild(menuItem('パスワードを変更', function () { changeOwnPassword(); }));
-        if (me.role === 'admin') {
-            const usersLink = document.createElement('a');
-            usersLink.className = 'account-item';
-            usersLink.href = '/users.html';
-            usersLink.textContent = 'ユーザー管理';
-            settings.appendChild(usersLink);
+            dropdown.appendChild(settings);
+            dropdown.appendChild(fileInput);
         }
-        dropdown.appendChild(settings);
-        dropdown.appendChild(fileInput);
 
         // --- logout ---
         const sep = document.createElement('div');
         sep.className = 'account-sep';
         dropdown.appendChild(sep);
-        dropdown.appendChild(menuItem('ログアウト', function () {
+        dropdown.appendChild(menuItem(t('account.logout', 'ログアウト'), function () {
             fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
                 .finally(function () { location.replace('/login.html'); });
         }));
@@ -131,7 +185,7 @@
 
         wrap.appendChild(btn);
         wrap.appendChild(dropdown);
-        anchor.appendChild(wrap);
+        insertIntoHeader(anchor, wrap);
     }
 
     // menuItem builds a dropdown row backed by a button.
@@ -145,8 +199,6 @@
     }
 
     // renderAvatar fills an element with the user's avatar image or initials.
-    // Cache-bust with the file name so a freshly uploaded avatar replaces the
-    // previous image immediately.
     function renderAvatar(el, me) {
         while (el.firstChild) el.removeChild(el.firstChild);
         if (me.avatar) {

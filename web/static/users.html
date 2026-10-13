@@ -4,25 +4,30 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Kizuna-Eye - ユーザー管理</title>
-    <link rel="stylesheet" href="/style.css?v=0.7.2">
+    <link rel="stylesheet" href="/style.css?v=0.7.1">
 </head>
-<body>
+<body data-role-min="admin">
     <div class="app">
         <header class="header">
             <div class="header-main">
                 <h1 class="logo">Kizuna-Eye</h1>
                 <span class="status-badge" id="connectionStatus">接続中</span>
                 <nav class="nav-tabs">
-                    <a href="/" class="nav-tab">ダッシュボード</a>
-                    <a href="/modules.html" class="nav-tab" data-role-min="operator">モジュール管理</a>
-                    <a href="/config-editor.html" class="nav-tab" data-role-min="admin">設定エディタ</a>
-                    <a href="/logs.html" class="nav-tab">ログ</a>
-                    <a href="/users.html" class="nav-tab active" data-role-min="admin">ユーザー</a>
+                    <a href="/" class="nav-tab" data-i18n="nav.dashboard">ダッシュボード</a>
+                    <a href="/modules.html" class="nav-tab" data-role-min="operator" data-i18n="nav.modules">モジュール管理</a>
+                    <a href="/config-editor.html" class="nav-tab" data-role-min="admin" data-i18n="nav.config">設定エディタ</a>
+                    <a href="/logs.html" class="nav-tab" data-role-min="operator" data-i18n="nav.logs">ログ</a>
+                    <a href="/users.html" class="nav-tab active" data-role-min="admin" data-i18n="nav.users">ユーザー</a>
                 </nav>
                 <div class="header-controls">
+                    <button id="langToggle" class="theme-toggle" aria-label="言語切り替え" data-i18n-aria-label="lang.toggle">
+                        <span class="theme-icon" id="langIcon">🌐</span>
+                        <span class="theme-label" id="langLabel" data-i18n="lang.label">JA</span>
+                    </button>
                     <button id="themeToggle" class="theme-toggle" aria-label="テーマ切り替え">
                         <span class="theme-icon" id="themeIcon">🌙</span>
                     </button>
+                    <span class="version-badge">v0.7.1</span>
                 </div>
             </div>
             <div class="header-user" id="headerUser"></div>
@@ -31,17 +36,17 @@
         <main class="main">
             <section class="panel">
             <div class="users-header">
-                <h2>ユーザー管理</h2>
-                <button class="btn-primary" id="addUserBtn">+ ユーザーを追加</button>
+                <h2 data-i18n="users.title">ユーザー管理</h2>
+                <button class="btn-primary" id="addUserBtn" data-i18n="users.add">+ ユーザーを追加</button>
             </div>
 
             <table class="users-table">
                 <thead>
                     <tr>
-                        <th>ユーザー名</th>
-                        <th>ロール</th>
-                        <th>作成日時</th>
-                        <th>操作</th>
+                        <th data-i18n="users.col_username">ユーザー名</th>
+                        <th data-i18n="users.col_role">ロール</th>
+                        <th data-i18n="users.col_created">作成日時</th>
+                        <th data-i18n="users.col_actions">操作</th>
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
@@ -55,33 +60,34 @@
     <!-- 追加モーダル -->
     <div class="modal-backdrop" id="addModal" hidden>
         <div class="auth-card">
-            <h3 class="auth-subtitle">ユーザーを追加</h3>
+            <h3 class="auth-subtitle" data-i18n="users.add_title">ユーザーを追加</h3>
             <form id="addUserForm" class="auth-form">
-                <label class="auth-label" for="newUsername">ユーザー名</label>
+                <label class="auth-label" for="newUsername" data-i18n="users.col_username">ユーザー名</label>
                 <input class="auth-input" type="text" id="newUsername" required>
-                <span class="auth-hint">英数字・_ . - の3〜32文字</span>
+                <span class="auth-hint" data-i18n="users.username_hint">英数字・_ . - の3〜32文字</span>
 
-                <label class="auth-label" for="newPassword">パスワード</label>
+                <label class="auth-label" for="newPassword" data-i18n="users.password">パスワード</label>
                 <input class="auth-input" type="password" id="newPassword" required>
-                <span class="auth-hint">8文字以上</span>
+                <span class="auth-hint" data-i18n="users.password_hint">8文字以上</span>
 
-                <label class="auth-label" for="newRole">ロール</label>
+                <label class="auth-label" for="newRole" data-i18n="users.role">ロール</label>
                 <select class="auth-input" id="newRole">
-                    <option value="viewer">viewer（閲覧のみ）</option>
-                    <option value="operator">operator（運用操作）</option>
-                    <option value="admin">admin（全権）</option>
+                    <option value="viewer" data-i18n="users.role_viewer">viewer（閲覧のみ）</option>
+                    <option value="operator" data-i18n="users.role_operator">operator（運用操作）</option>
+                    <option value="admin" data-i18n="users.role_admin">admin（全権）</option>
                 </select>
 
-                <button type="submit" class="auth-btn" id="createUserBtn">作成</button>
-                <button type="button" class="btn-sm modal-cancel" id="cancelAddBtn">キャンセル</button>
+                <button type="submit" class="auth-btn" id="createUserBtn" data-i18n="users.create">作成</button>
+                <button type="button" class="btn-sm modal-cancel" id="cancelAddBtn" data-i18n="common.cancel">キャンセル</button>
                 <p class="auth-error" id="addError" hidden></p>
             </form>
         </div>
     </div>
 
-    <script src="/i18n.js?v=0.7.2"></script>
-    <script src="/auth-guard.js?v=0.7.2"></script>
-    <script src="/connection.js?v=0.7.2"></script>
-    <script src="/users.js?v=0.7.2"></script>
+    <script src="/auth-theme.js?v=0.7.1"></script>
+    <script src="/i18n.js?v=0.7.1"></script>
+    <script src="/auth-guard.js?v=0.7.1"></script>
+    <script src="/connection.js?v=0.7.1"></script>
+    <script src="/users.js?v=0.7.1"></script>
 </body>
 </html>

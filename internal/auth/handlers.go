@@ -29,6 +29,10 @@ type Handler struct {
 	agentToken  string
 	setupMu     sync.Mutex
 	limiter     *loginLimiter
+	// guestLimiter throttles guest-login creation per IP. Guest login is
+	// unauthenticated (when public_viewer is on), so without a limit anyone
+	// could flood it to grow the session store.
+	guestLimiter *loginLimiter
 	// avatarsDir holds uploaded avatar images (default: "avatars").
 	avatarsDir string
 	// allowGuest enables the "login as guest" button, which grants a
@@ -45,13 +49,14 @@ type Handler struct {
 // agentToken is the shared secret the agent presents on /ws?role=agent.
 func NewHandler(store *Store, manager *SessionManager, logger Logger, secure, authEnabled bool, agentToken string) *Handler {
 	return &Handler{
-		store:       store,
-		manager:     manager,
-		logger:      logger,
-		secure:      secure,
-		authEnabled: authEnabled,
-		agentToken:  agentToken,
-		limiter:     newLoginLimiter(10, 5*time.Minute, 5*time.Minute),
+		store:        store,
+		manager:      manager,
+		logger:       logger,
+		secure:       secure,
+		authEnabled:  authEnabled,
+		agentToken:   agentToken,
+		limiter:      newLoginLimiter(10, 5*time.Minute, 5*time.Minute),
+		guestLimiter: newLoginLimiter(30, 10*time.Minute, 10*time.Minute),
 	}
 }
 
@@ -86,8 +91,13 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // writeJSON writes JSON with a Content-Type header.
+// Auth responses carry the caller's identity/session state, so they must never
+// be cached. Without no-store a browser may serve a stale "authenticated:true"
+// after the session was invalidated (e.g. server restart), making the UI show a
+// logged-in state that no longer exists.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(data)
 }
@@ -121,13 +131,21 @@ func (h *Handler) clearCookie(w http.ResponseWriter) {
 	})
 }
 
-// sessionFromRequest returns the current session, if any.
+// sessionFromRequest returns the current session, if any. When IP binding is
+// enabled, a session is only accepted from the IP that created it.
 func (h *Handler) sessionFromRequest(r *http.Request) (*Session, bool) {
 	c, err := r.Cookie(CookieName)
 	if err != nil {
 		return nil, false
 	}
-	return h.manager.Get(c.Value)
+	s, ok := h.manager.Get(c.Value)
+	if !ok {
+		return nil, false
+	}
+	if h.manager.IPBindEnabled() && s.IP != "" && s.IP != clientIP(r) {
+		return nil, false
+	}
+	return s, true
 }
 
 // handleStatus reports whether setup is required and who is logged in.
@@ -238,7 +256,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		h.manager.Delete(old.ID)
 	}
 
-	sess, err := h.manager.Create(u.Username, u.Role)
+	sess, err := h.manager.Create(u.Username, u.Role, clientIP(r))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "セッションの作成に失敗しました")
 		return
@@ -263,13 +281,28 @@ func (h *Handler) handleGuestLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Throttle per IP so the unauthenticated endpoint cannot be used to flood
+	// the session store.
+	if h.guestLimiter != nil {
+		ip := clientIP(r)
+		if !h.guestLimiter.Allow(ip) {
+			writeError(w, http.StatusTooManyRequests, "試行回数が多すぎます。しばらく待ってから再度お試しください")
+			return
+		}
+		h.guestLimiter.Hit(ip)
+	}
+
 	// Session fixation defense: drop any existing session first.
 	if old, ok := h.sessionFromRequest(r); ok {
 		h.manager.Delete(old.ID)
 	}
 
-	sess, err := h.manager.Create("guest", RoleViewer)
+	sess, err := h.manager.Create("guest", RoleViewer, clientIP(r))
 	if err != nil {
+		if errors.Is(err, ErrTooManySessions) {
+			writeError(w, http.StatusServiceUnavailable, "混雑しています。しばらく待ってから再度お試しください")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "セッションの作成に失敗しました")
 		return
 	}

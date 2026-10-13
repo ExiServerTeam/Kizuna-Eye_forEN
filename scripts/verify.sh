@@ -31,6 +31,23 @@ ok()   { echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 ng()   { echo "  [ NG ] $1"; FAIL=$((FAIL+1)); }
 head_() { echo ""; echo "============================================================"; echo " $1"; echo "============================================================"; }
 
+# kill_by_exe <path-to-binary>
+# コマンドライン文字列の部分一致（pkill -f）は、自分自身や無関係なプロセスを
+# 巻き込む恐れがある。ここでは /proc/PID/exe が対象バイナリの実体と一致する
+# プロセスだけを停止する（Linux 前提）。自分自身と親は除外する。
+kill_by_exe() {
+    local target="$1"
+    [ -d /proc ] || return 0
+    local self=$$ ppid="$PPID" pid exe
+    for pid in $(ls /proc 2>/dev/null | grep -E '^[0-9]+$'); do
+        [ "$pid" = "$self" ] && continue
+        [ "$pid" = "$ppid" ] && continue
+        exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+        [ "$exe" = "$target" ] || continue
+        kill "$pid" 2>/dev/null || true
+    done
+}
+
 # ------------------------------------------------------------
 # 1. 静的検証
 # ------------------------------------------------------------
@@ -112,8 +129,8 @@ build_one agent_linux     ./cmd/agent
 head_ "3. 起動 + API スモーク"
 
 mkdir -p logs plugins
-pkill -f dashboard_linux 2>/dev/null || true
-pkill -f agent_linux 2>/dev/null || true
+kill_by_exe "$BIN_DIR/dashboard_linux"
+kill_by_exe "$BIN_DIR/agent_linux"
 sleep 1
 
 "$BIN_DIR/dashboard_linux" -config dashboard_config.json > logs/dashboard.log 2>&1 &
@@ -124,8 +141,9 @@ echo "  dashboard PID=$DPID / agent PID=$APID"
 
 cleanup() {
     kill "$DPID" "$APID" 2>/dev/null || true
-    pkill -f dashboard_linux 2>/dev/null || true
-    pkill -f agent_linux 2>/dev/null || true
+    # 取りこぼしがあれば実体一致で確実に落とす（文字列一致は使わない）。
+    kill_by_exe "$BIN_DIR/dashboard_linux"
+    kill_by_exe "$BIN_DIR/agent_linux"
 }
 trap cleanup EXIT
 

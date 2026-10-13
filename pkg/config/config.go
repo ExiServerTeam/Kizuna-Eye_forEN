@@ -18,6 +18,12 @@ type AgentConfig struct {
 	// Empty disables agent authentication (backward compatible).
 	Token string `json:"token"`
 
+	// PluginsDir is the directory the agent may load plugin .so files from.
+	// A plugin_path in modules.json that resolves outside this directory is
+	// rejected, so a tampered modules.json cannot load an arbitrary .so.
+	// Empty defaults to plugins/ next to the executable.
+	PluginsDir string `json:"plugins_dir"`
+
 	// AutoUpdate controls the GitHub Releases version check. When enabled and
 	// a newer version is found, safe_update.sh is executed (which backs up the
 	// binaries, rebuilds host + plugins, and rolls back on failure).
@@ -84,6 +90,16 @@ type AuthConfig struct {
 	// the dashboard falls back to heuristic agent detection (legacy).
 	AgentToken string `json:"agent_token"`
 
+	// SessionFile persists browser sessions across restarts. Default:
+	// sessions.json next to the dashboard config. Set to "none" to keep
+	// sessions in memory only (logged out on every restart).
+	SessionFile string `json:"session_file"`
+	// SessionIPBind binds a session to the client IP that created it, so a
+	// stolen cookie cannot be replayed from another address. Off by default
+	// because a changing IP (DHCP, mobile) would log the user out. It is a
+	// *bool so an absent key means "default (off)".
+	SessionIPBind *bool `json:"session_ip_bind"`
+
 	// PublicViewer exposes the dashboard and the read-only monitoring
 	// endpoints (CPU/memory/disk usage) to unauthenticated clients.
 	// When true, a viewer can open the dashboard without logging in, but
@@ -95,6 +111,27 @@ type AuthConfig struct {
 	// silently disable the guest login on every existing config that
 	// predates this option.
 	PublicViewer *bool `json:"public_viewer"`
+}
+
+// SessionFilePath returns the absolute session persistence file. configDir is
+// the directory of dashboard_config.json. An empty result disables persistence.
+func (a AuthConfig) SessionFilePath(configDir string) string {
+	if strings.EqualFold(strings.TrimSpace(a.SessionFile), "none") {
+		return ""
+	}
+	if strings.TrimSpace(a.SessionFile) == "" {
+		return filepath.Join(configDir, "sessions.json")
+	}
+	return a.SessionFile
+}
+
+// IsSessionIPBind reports whether sessions are bound to their client IP.
+// Defaults to false when unset.
+func (a AuthConfig) IsSessionIPBind() bool {
+	if a.SessionIPBind == nil {
+		return false
+	}
+	return *a.SessionIPBind
 }
 
 // IsPublicViewer reports whether login-free viewer access is enabled.
@@ -302,6 +339,24 @@ func validateAgentConfig(cfg *AgentConfig) error {
 		return fmt.Errorf("DiskPath が空です（必須）")
 	}
 	return nil
+}
+
+// ResolvePluginsDir returns the absolute plugins directory for the agent.
+// Priority: 1. plugins_dir from agent_config.json (relative resolved with Abs)
+// 2. plugins/ next to the executable 3. ./plugins as a fallback.
+func (c *AgentConfig) ResolvePluginsDir() string {
+	if strings.TrimSpace(c.PluginsDir) != "" {
+		abs, err := filepath.Abs(c.PluginsDir)
+		if err == nil {
+			return abs
+		}
+		return c.PluginsDir
+	}
+	exePath, err := os.Executable()
+	if err != nil {
+		return "./plugins"
+	}
+	return filepath.Join(filepath.Dir(exePath), "plugins")
 }
 
 // validateDashboardConfig validates the dashboard config.

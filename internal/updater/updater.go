@@ -46,10 +46,10 @@ type Updater struct {
 	cfg Config
 	lg  *logger.Logger
 
-	mu              sync.Mutex
-	lastCheck       time.Time
-	lastVersion     string
-	lastErr         string
+	mu          sync.Mutex
+	lastCheck   time.Time
+	lastVersion string
+	lastErr     string
 }
 
 // New creates an updater. It returns nil when disabled or misconfigured.
@@ -172,12 +172,12 @@ func (u *Updater) Status() map[string]interface{} {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return map[string]interface{}{
-		"enabled":        true,
-		"current":        u.cfg.CurrentVersion,
-		"latest":         u.lastVersion,
-		"last_check":     u.lastCheck.Format(time.RFC3339),
-		"last_error":     u.lastErr,
-		"interval_sec":   int(u.cfg.Interval.Seconds()),
+		"enabled":      true,
+		"current":      u.cfg.CurrentVersion,
+		"latest":       u.lastVersion,
+		"last_check":   u.lastCheck.Format(time.RFC3339),
+		"last_error":   u.lastErr,
+		"interval_sec": int(u.cfg.Interval.Seconds()),
 	}
 }
 
