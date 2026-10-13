@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- プログラムのコメントを「日本語（常体・〜だ/〜である）→英語」の2行ペアに統一した（Go / シェル / JS / CSS / systemd unit）。参照実装は `pkg/config/config.go`。
+- 回帰防止チェッカー `scripts/check_comments.cjs` を追加した。`//`（Go）/`#`（sh）/`/* */`（JS/CSS）/`#`（systemd unit）に対応し、英語のみのコメントブロックを検出する（`--strict` で CI を落とせる）。CI（`.github/workflows/ci.yml`）に組み込み、Go / JS / シェル / systemd unit の4種を検査する。
+- バージョン・フォールバック文字列を `v0.7.0` から `v0.8.0`（VERSION と `internal/api/version.go` に一致）へ更新した（`build.sh` / `install.sh` / `update.sh` / `scripts/build.sh` / `scripts/verify.sh` / `packaging/build-deb.sh`）。
+- doc コメントの日英ブロック間に空行を入れ、`gofmt` を通した（`internal/api/plugins.go` / `internal/pluginsig/pluginsig.go` / `pkg/configsnap/configsnap.go` / `pkg/report/report.go`）。
+
+### Removed
+- 古いインストーラの残骸 `install.sh.bak-20261008` を削除し、`.gitignore` に `*.bak` / `install.sh.bak*` を追加した。あわせてローカル資料（`Kizunaシリーズ　資料/`）を `.gitignore` に追加した。
+
 ## [0.8.0] - 2026-10-12
 
 ### Fixed
