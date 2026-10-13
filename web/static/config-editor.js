@@ -54,98 +54,100 @@ document.addEventListener('DOMContentLoaded', function () {
     // ============================================================
     // スキーマ定義
     // ============================================================
+    // ラベル・ヒント・凡例は i18n キーで保持し、描画時に t() で翻訳する。
+    // これにより英語 UI でも設定エディタが英語になる。
     const AGENT_GROUPS = [
         {
-            legend: '接続先',
+            legendKey: 'config.g.agent.conn',
             fields: [
-                { key: 'dashboard_url', label: 'ダッシュボードのURL', type: 'text', required: true, placeholder: 'ws://localhost:8080/ws', hint: '監視サーバーのアドレス。通常は「ws://ホスト名:8080/ws」の形式です。' },
+                { key: 'dashboard_url', labelKey: 'config.f.dashboard_url', type: 'text', required: true, placeholder: 'ws://localhost:8080/ws', hintKey: 'config.h.dashboard_url' },
             ],
         },
         {
-            legend: '動作',
+            legendKey: 'config.g.agent.behavior',
             fields: [
-                { key: 'interval', label: 'データを送る間隔（秒）', type: 'number', min: 0.2, step: 0.1, hint: '小さくすると更新が細かくなります（0.2秒以上を推奨）。' },
+                { key: 'interval', labelKey: 'config.f.interval', type: 'number', min: 0.2, step: 0.1, hintKey: 'config.h.interval' },
             ],
         },
         {
-            legend: 'ログと監視対象',
+            legendKey: 'config.g.agent.log',
             fields: [
-                { key: 'log_file', label: 'ログの保存先', type: 'text', placeholder: 'logs/agent.log', hint: '空の場合は logs/agent.log に保存されます。' },
-                { key: 'disk_path', label: '監視するディスクのパス', type: 'text', placeholder: '/', required: true, hint: '空き容量を監視したいディスクのパス（例: / や D:\）。' },
+                { key: 'log_file', labelKey: 'config.f.agent_log_file', type: 'text', placeholder: 'logs/agent.log', hintKey: 'config.h.agent_log_file' },
+                { key: 'disk_path', labelKey: 'config.f.disk_path', type: 'text', placeholder: '/', required: true, hintKey: 'config.h.disk_path' },
             ],
         },
     ];
 
     const DASHBOARD_GROUPS = [
         {
-            legend: 'サーバー設定',
+            legendKey: 'config.g.dash.server',
             fields: [
-                { key: 'listen_addr', label: '待ち受けアドレス', type: 'text', required: true, placeholder: ':8080', hint: 'ダッシュボードが接続を受け付けるアドレス（例: :8080）。' },
-                { key: 'static_dir', label: '画面ファイルの場所', type: 'text', placeholder: './web/static', hint: '通常は変更不要です。' },
-                { key: 'plugins_dir', label: 'プラグインの保存先', type: 'text', placeholder: '（空欄で自動）', hint: '空の場合は実行ファイルと同じ場所の plugins フォルダを使用します。' },
+                { key: 'listen_addr', labelKey: 'config.f.listen_addr', type: 'text', required: true, placeholder: ':8080', hintKey: 'config.h.listen_addr' },
+                { key: 'static_dir', labelKey: 'config.f.static_dir', type: 'text', placeholder: './web/static', hintKey: 'config.h.static_dir' },
+                { key: 'plugins_dir', labelKey: 'config.f.plugins_dir', type: 'text', placeholder: '', hintKey: 'config.h.plugins_dir' },
             ],
             checks: [
-                { key: 'plugins_upload_enabled', label: '画面からプラグインをアップロードできるようにする' },
+                { key: 'plugins_upload_enabled', labelKey: 'config.c.plugins_upload_enabled' },
             ],
         },
         {
-            legend: '認証・公開ビューア',
+            legendKey: 'config.g.dash.auth',
             prefix: 'auth.',
             checks: [
                 // 未設定のときは有効（既定ON）。キーが無ければチェックを入れる。
-                { key: 'public_viewer', label: 'ゲストログインを許可する（ログインなしで CPU/メモリ/ディスク使用率を閲覧）', defaultChecked: true },
+                { key: 'public_viewer', labelKey: 'config.c.public_viewer', defaultChecked: true },
             ],
         },
         {
-            legend: 'ログ',
+            legendKey: 'config.g.dash.log',
             fields: [
-                { key: 'log_file', label: 'ログの保存先', type: 'text', placeholder: 'dashboard.log', hint: '空の場合は標準出力に表示されます。' },
-                { key: 'log_level', label: 'ログの詳しさ', type: 'select', options: ['debug', 'info', 'warn', 'error'], hint: 'debug が最も詳しく、error が最も少ない設定です。' },
+                { key: 'log_file', labelKey: 'config.f.dash_log_file', type: 'text', placeholder: 'dashboard.log', hintKey: 'config.h.dash_log_file' },
+                { key: 'log_level', labelKey: 'config.f.log_level', type: 'select', options: ['debug', 'info', 'warn', 'error'], hintKey: 'config.h.log_level' },
             ],
         },
         {
-            legend: 'アラート履歴',
+            legendKey: 'config.g.dash.history',
             fields: [
-                { key: 'alert_history_file', label: 'アラート履歴の保存先', type: 'text', placeholder: 'logs/alert_history.jsonl', hint: '空の場合は logs/alert_history.jsonl に保存されます。' },
+                { key: 'alert_history_file', labelKey: 'config.f.alert_history_file', type: 'text', placeholder: 'logs/alert_history.jsonl', hintKey: 'config.h.alert_history_file' },
             ],
         },
         {
-            legend: '通知のON/OFF',
+            legendKey: 'config.g.dash.notif_toggle',
             prefix: 'notifications.',
             checks: [
-                { key: 'enabled', label: 'アラートを通知する' },
+                { key: 'enabled', labelKey: 'config.c.notif_enabled' },
             ],
         },
         {
-            legend: '通知のタイミング',
+            legendKey: 'config.g.dash.notif_timing',
             prefix: 'notifications.',
             fields: [
-                { key: 'agent_timeout_sec', label: 'Agent の応答タイムアウト（秒）', type: 'number', min: 1, hint: 'この時間を超えて応答がないと「Agent 応答なし」と判定します。' },
-                { key: 'hold_sec', label: '異常が続いたら通知するまでの時間（秒）', type: 'number', min: 0, hint: '一時的な数値の跳ね上がりで通知しないための待ち時間です。' },
-                { key: 'cooldown_sec', label: '同じ通知を繰り返さない時間（秒）', type: 'number', min: 0, hint: '一度通知したあと、この時間は同じ通知を出しません。' },
-                { key: 'recovery_hold_sec', label: '復旧通知を出すまでの時間（秒）', type: 'number', min: 0 },
+                { key: 'agent_timeout_sec', labelKey: 'config.f.agent_timeout_sec', type: 'number', min: 1, hintKey: 'config.h.agent_timeout_sec' },
+                { key: 'hold_sec', labelKey: 'config.f.hold_sec', type: 'number', min: 0, hintKey: 'config.h.hold_sec' },
+                { key: 'cooldown_sec', labelKey: 'config.f.cooldown_sec', type: 'number', min: 0, hintKey: 'config.h.cooldown_sec' },
+                { key: 'recovery_hold_sec', labelKey: 'config.f.recovery_hold_sec', type: 'number', min: 0 },
             ],
         },
         {
-            legend: 'アラートのしきい値',
+            legendKey: 'config.g.dash.thresholds',
             prefix: 'notifications.',
             fields: [
-                { key: 'memory_warn_pct', label: 'メモリ使用率 警告（%）', type: 'number', min: 0, max: 100 },
-                { key: 'memory_critical_pct', label: 'メモリ使用率 危険（%）', type: 'number', min: 0, max: 100 },
-                { key: 'disk_free_warn_pct', label: 'ディスク空き容量 警告（%）', type: 'number', min: 0, max: 100, hint: '空き容量がこの割合を下回ると警告します。' },
-                { key: 'disk_free_critical_pct', label: 'ディスク空き容量 危険（%）', type: 'number', min: 0, max: 100 },
-                { key: 'cpu_temp_warn_c', label: 'CPU温度 警告（℃）', type: 'number', min: 0 },
-                { key: 'cpu_temp_critical_c', label: 'CPU温度 危険（℃）', type: 'number', min: 0 },
+                { key: 'memory_warn_pct', labelKey: 'config.f.memory_warn_pct', type: 'number', min: 0, max: 100 },
+                { key: 'memory_critical_pct', labelKey: 'config.f.memory_critical_pct', type: 'number', min: 0, max: 100 },
+                { key: 'disk_free_warn_pct', labelKey: 'config.f.disk_free_warn_pct', type: 'number', min: 0, max: 100, hintKey: 'config.h.disk_free_warn_pct' },
+                { key: 'disk_free_critical_pct', labelKey: 'config.f.disk_free_critical_pct', type: 'number', min: 0, max: 100 },
+                { key: 'cpu_temp_warn_c', labelKey: 'config.f.cpu_temp_warn_c', type: 'number', min: 0 },
+                { key: 'cpu_temp_critical_c', labelKey: 'config.f.cpu_temp_critical_c', type: 'number', min: 0 },
             ],
             checks: [
-                { key: 'notify_recovery', label: '復旧したときも通知する' },
+                { key: 'notify_recovery', labelKey: 'config.c.notify_recovery' },
             ],
         },
     ];
 
     // 通知チャンネルは Discord のみ対応
     const CHANNEL_TYPES = {
-        discord: { label: 'Discord', fields: [{ key: 'webhook_url', label: 'Discord の Webhook URL', type: 'text', placeholder: 'https://discord.com/api/webhooks/...', hint: 'Discord のサーバー設定 → 連携サービス → ウェブフック で取得した URL を貼り付けてください。' }] },
+        discord: { label: 'Discord', fields: [{ key: 'webhook_url', labelKey: 'config.f.webhook_url', type: 'text', placeholder: 'https://discord.com/api/webhooks/...', hintKey: 'config.h.webhook_url' }] },
     };
 
     // ============================================================
@@ -162,7 +164,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
         const label = document.createElement('label');
         label.setAttribute('for', id);
-        label.textContent = f.label;
+        label.textContent = f.labelKey ? t(f.labelKey) : (f.label || '');
         if (f.required) {
             const req = document.createElement('span');
             req.className = 'req';
@@ -199,7 +201,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (f.hint) {
             const hint = document.createElement('div');
             hint.className = 'field-hint';
-            hint.textContent = f.hint;
+            hint.textContent = f.hintKey ? t(f.hintKey) : (f.hint || '');
             wrap.appendChild(hint);
         }
         return wrap;
@@ -217,7 +219,7 @@ document.addEventListener('DOMContentLoaded', function () {
         input.dataset.kind = 'checkbox';
         input.checked = !!checked;
         const span = document.createElement('span');
-        span.textContent = c.label;
+        span.textContent = c.labelKey ? t(c.labelKey) : (c.label || '');
         label.appendChild(input);
         label.appendChild(span);
         wrap.appendChild(label);
@@ -326,7 +328,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const fs = document.createElement('fieldset');
             fs.className = 'config-group';
             const lg = document.createElement('legend');
-            lg.textContent = g.legend;
+            lg.textContent = g.legendKey ? t(g.legendKey) : (g.legend || '');
             fs.appendChild(lg);
 
             (g.fields || []).forEach(f => {

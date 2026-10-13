@@ -71,6 +71,7 @@ Kizuna-Eye is intended for use inside a trusted network / VPN. The following set
 - **Config files contain secrets.** Never commit `dashboard_config.json` (`agent_token` / `webhook_url`) or `agent_config.json` (`token`); keep them at mode 0600 (they are in `.gitignore`).
 - **`/api/config` masks secrets** when returning them. Saving the masked value (`***`) back preserves the existing secret, but treat these files like `users.json`.
 - **Only place trusted plugin `.so` files.** A Go plugin runs with the same privileges as the server itself.
+- **Automatic updates are a supply-chain risk.** When `auto_update.enabled` is true, the agent watches GitHub Releases and, on a newer version, runs `safe_update.sh` (git pull + rebuild + restart). If the GitHub repository or account is compromised, the server can be made to **build and run attacker code automatically (effective RCE)**. It is **disabled by default**; enable it only for a repository you fully trust, or update manually with `./update.sh`. The agent logs a warning at startup when it is enabled.
 - **Notification bodies contain externally derived values.** Every channel escapes and disables mentions.
 
 ## Plugin rebuild note (important)

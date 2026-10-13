@@ -124,7 +124,13 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// ---- 自動更新（GitHub Releases を監視し、新しければ safe_update.sh）----
+	// セキュリティ注意: 自動更新は GitHub リポジトリ/アカウントが侵害されると、
+	// サーバーが悪性コードを自動でビルド・実行する経路（実質 RCE）になる。
+	// 既定は無効。信頼できるリポジトリでのみ有効化すること。
 	if au := cfg.AutoUpdate; au.Enabled {
+		if lg != nil {
+			lg.Warn("自動更新が有効です。GitHub リポジトリが侵害されると任意コード実行につながります（%s）", au.RepositoryURL)
+		}
 		script := au.UpdateScript
 		if script == "" {
 			script = "safe_update.sh"
