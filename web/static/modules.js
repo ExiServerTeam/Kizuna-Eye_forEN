@@ -1,6 +1,8 @@
 // ============================================
 // Kizuna-Eye - モジュール管理 JavaScript
 // Phase 8-5: 手動実行ボタン追加
+// Kizuna-Eye - module management JavaScript
+// Phase 8-5: added the manual run button
 // ============================================
 
 (function() {
@@ -11,6 +13,9 @@
     // i18n 翻訳ヘルパー（i18n.js 未読込時はキーをそのまま返す）。
     // 他ページの JS と同じフォールバックを持たせ、グローバル t への
     // 暗黙依存をなくす。
+    // i18n translation helper (returns the key itself before i18n.js loads).
+    // Give it the same fallback as other pages' JS to remove the implicit
+    // dependency on a global t.
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
     const moduleGrid = $('#moduleGrid');
@@ -41,6 +46,7 @@
     const deleteCloseBtn = $('#deleteCloseBtn');
 
     // Phase 8-6: 動的プラグイン設定モーダル
+    // Phase 8-6: dynamic plugin config modal
     const pluginConfigModal = $('#pluginConfigModal');
     const pluginConfigTitle = $('#pluginConfigTitle');
     const pluginConfigBody = $('#pluginConfigBody');
@@ -62,6 +68,7 @@
     let deleteTarget = null;
 
     // 現在のロール。auth 無効時は「全開放（信頼ネットワーク）」として扱う。
+    // Current role. With auth disabled, treat it as "wide open (trusted network)".
     let currentRole = null;   // 'admin' | 'operator' | 'viewer' | null
     let authEnabled = false;
 
@@ -69,6 +76,11 @@
     // ここに挙げたフィールドは admin のみ変更できる。UI では admin 以外には
     // 非表示にする（保存時は既存値をマージするため値は失われない）。
     // 変更時は modules.go と本リストの両方を揃えること（二重管理）。
+    // Same set as adminOnlyConfigFields in the Go side
+    // internal/api/modules.go. The fields listed here can be changed by admin
+    // only. In the UI they are hidden from non-admins (save merges the
+    // existing values, so nothing is lost). When changing them, keep both
+    // modules.go and this list in step (duplicated management).
     const ADMIN_ONLY_CONFIG_FIELDS = new Set([
         'block_duration_sec', 'block_mode', 'block_state_path', 'block_whitelist',
         'chain_key_path', 'cron_check', 'cron_paths', 'fim_watch',
@@ -80,11 +92,14 @@
     ]);
 
     // 認証無効時は全開放（ミドルウェアと同じ扱い）。
+    // With auth disabled, everything is open (same handling as the middleware).
     function isAdmin() {
         return !authEnabled || currentRole === 'admin';
     }
     function canUploadPlugin() {
         // アップロードは常に認証必須（未認証RCE防止）なので admin のみ。
+        // Upload always requires auth (to prevent unauthenticated RCE), so
+        // admin only.
         return authEnabled && currentRole === 'admin';
     }
     function canDeleteModule() {
@@ -94,6 +109,7 @@
         return !authEnabled || currentRole === 'admin' || currentRole === 'operator';
     }
     // admin 以外には admin 限定フィールドを出さない。
+    // Do not show admin-only fields to non-admins.
     function visibleFields(fields) {
         if (isAdmin()) return fields || [];
         return (fields || []).filter(f => !ADMIN_ONLY_CONFIG_FIELDS.has(f.key));
@@ -103,27 +119,37 @@
     const moduleStatus = new Map();
 
     // Phase 8-6: プラグインメタのキャッシュ（name → PluginMeta）
+    // Phase 8-6: plugin meta cache (name -> PluginMeta)
     let pluginMetas = new Map();
     // Agent が報告したモジュールのロード結果（name → {status, reason, reason_code}）。
     // Agent だけが「実際にロードできたか」を観測できるため、これが無いと
     // ロードに失敗したモジュールも「監視中」に見えてしまう。
+    // Module load results reported by the Agent (name -> {status, reason,
+    // reason_code}). Only the Agent can observe whether a module actually
+    // loaded, so without this a module that failed to load would look like it
+    // is "being monitored".
     let pluginRuntime = new Map();
     // 現在編集中のプラグイン名（動的フォーム用）
+    // Name of the plugin currently being edited (for the dynamic form)
     let editingPluginName = null;
 
     // 実行中のプラグイン名。完了するまで再実行を受け付けない。
+    // Names of running plugins. No re-run is accepted until they finish.
     const runningPlugins = new Set();
     // 手動実行中のプラグイン名。backup_result が届くまで解除しない
     // （定期ステータスの古い値で誤って解除されるのを防ぐ）。
+    // Names of manually-running plugins. Not released until backup_result
+    // arrives (to prevent a stale periodic status from clearing it by mistake).
     const manualRunning = new Set();
 
     const API_BASE = '/api/modules';
 
     // ============================================================
     // ★ Phase 8-5: WebSocket 接続（backup_result 受信用）
+    // ★ Phase 8-5: WebSocket connection (to receive backup_result)
     // ============================================================
     let ws = null;
-    const backupResultHandlers = new Map(); // request_id → {resolve, reject, timer}
+    const backupResultHandlers = new Map(); // request_id → {resolve, reject, timer} / request_id -> {resolve, reject, timer}
 
     function connectWS() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -145,6 +171,7 @@
 
             if (data.event === 'module_status') {
                 // Agent が実際にロードできたかどうかを反映する。
+                // Reflect whether the Agent actually managed to load it.
                 pluginRuntime = new Map();
                 const statuses = data.statuses || {};
                 Object.keys(statuses).forEach(k => pluginRuntime.set(k, statuses[k]));
@@ -155,6 +182,7 @@
             if (data.event === 'backup_result') {
                 console.log('[WS] backup_result', data);
 
+                // 最新ステータスを記憶し、モジュールカードに反映する。
                 // Remember the latest status so the module card reflects it.
                 if (data.plugin) {
                     runningPlugins.delete(data.plugin);
@@ -178,6 +206,9 @@
             // 定期ステータス（毎秒）から自動実行の「実行中」を反映する。
             // 手動実行と違い自動実行には request_id が無いため、
             // backup_result だけでは開始を検知できない。
+            // Reflect "running" for automatic runs from the periodic status
+            // (every second). Unlike a manual run, an automatic run has no
+            // request_id, so backup_result alone cannot detect its start.
             if (data && data.backup && data.backup.name) {
                 const name = data.backup.name;
                 const st = String(data.backup.status || '').toLowerCase();
@@ -189,6 +220,8 @@
                     changed = true;
                 } else if (!isRunning && runningPlugins.has(name) && !manualRunning.has(name)) {
                     // 手動実行中は backup_result が届くまで解除しない。
+                    // While a manual run is in progress, do not release until
+                    // backup_result arrives.
                     runningPlugins.delete(name);
                     changed = true;
                 }
@@ -217,6 +250,7 @@
 
     // ============================================================
     // テーマ
+    // Theme
     // ============================================================
     function getTheme() {
         return document.documentElement.getAttribute('data-theme') || 'dark';
@@ -226,19 +260,24 @@
         document.documentElement.setAttribute('data-theme', theme);
         // localStorage はプライベートモード等で例外を投げる。失敗しても
         // 初期化 IIFE 全体を止めないよう握りつぶす。
+        // localStorage can throw (private mode, etc.). Swallow the failure so
+        // it does not stop the whole init IIFE.
         try { localStorage.setItem('kizuna-theme', theme); } catch (e) { /* ignore */ }
 
         // アイコンは CSS が data-theme に応じて出し分ける（SVG）。触らない。
+        // The icon is toggled by CSS based on data-theme (SVG). Do not touch it.
         if (themeLabel) themeLabel.textContent = theme === 'dark' ? t('theme.dark') : t('theme.light');
     }
 
     // Phase 9-2: OS設定に基づく自動テーマ切り替え
+    // Phase 9-2: automatic theme switching based on the OS setting
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)');
     let savedTheme = null;
     try { savedTheme = localStorage.getItem('kizuna-theme'); } catch (e) { /* ignore */ }
 
     // localStorageに保存がある場合はそれを使用
     // 保存がない場合はOS設定を使用
+    // Use the localStorage value when present; otherwise use the OS setting.
     if (savedTheme) {
         setTheme(savedTheme);
     } else {
@@ -246,6 +285,7 @@
     }
 
     // OS設定の変更を監視（localStorageに手動設定がない場合のみ）
+    // Watch OS changes (only when there is no manual setting in localStorage)
     prefersDark.addEventListener('change', (e) => {
         let manual = null;
         try { manual = localStorage.getItem('kizuna-theme'); } catch (err) { /* ignore */ }
@@ -263,16 +303,20 @@
 
     // ============================================================
     // トースト
+    // Toast
     // ============================================================
     function showToast(message, type = 'info') {
         if (!toastContainer) return;
         // 連打などで同じ内容のトーストが積み上がらないよう、既存の同一トーストは
         // 先に消してから出し直す。
+        // So rapid repeats do not stack identical toasts, remove an existing
+        // toast with the same content before showing it again.
         const key = type + '\u0000' + message;
         Array.from(toastContainer.children).forEach((c) => {
             if (c.dataset.toastKey === key) c.remove();
         });
         // 表示は最大 MAX_TOASTS 件まで。あふれた分は古い順に消す。
+        // At most MAX_TOASTS shown; overflow removes the oldest first.
         const MAX_TOASTS = 4;
         while (toastContainer.children.length >= MAX_TOASTS) {
             toastContainer.removeChild(toastContainer.firstChild);
@@ -281,6 +325,9 @@
         // 設定エディタと同じクラス構成（toast + 種別）にする。
         // 「toast-success」形式だと style.css の旧互換ルール
         // (.toast-success { background:#22c55e }) がマッチして緑ベタ塗りになる。
+        // Use the same class structure as the config editor (toast + type).
+        // The "toast-success" form would match a legacy style.css rule
+        // (.toast-success { background:#22c55e }), giving a flat green fill.
         toast.className = `toast ${type}`;
         toast.dataset.toastKey = key;
         toast.textContent = message;
@@ -296,6 +343,7 @@
 
     // ============================================================
     // モーダル（既存・手動編集）
+    // Modal (existing / manual edit)
     // ============================================================
     function openModal(title, data) {
         modalTitle.textContent = title;
@@ -315,6 +363,9 @@
             const type = data.config?.type || 'pro';
             // セレクタ文字列へ値を連結すると、値次第で別要素にマッチし得る。
             // 候補を走査して value を直接比較する。
+            // Concatenating a value into a selector string could match a
+            // different element depending on the value. Walk the candidates
+            // and compare value directly.
             const radio = Array.prototype.find.call(
                 document.querySelectorAll('input[name="modType"]'),
                 r => r.value === type
@@ -360,6 +411,7 @@
 
     // ============================================================
     // バリデーション
+    // Validation
     // ============================================================
     function validateForm() {
         let valid = true;
@@ -436,6 +488,7 @@
     }
 
     // Agent が報告したモジュールのロード結果を取得する。
+    // Fetch the module load results reported by the Agent.
     async function fetchPluginRuntime() {
         try {
             const res = await fetch('/api/plugin-runtime');
@@ -452,6 +505,7 @@
     }
 
     // 現在のロールと認証有効/無効を取得する。
+    // Fetch the current role and whether auth is enabled.
     async function fetchAuthStatus() {
         try {
             const res = await fetch('/api/auth/status', { credentials: 'same-origin' });
@@ -463,6 +517,7 @@
     }
 
     // Phase 8-6: プラグインメタを取得
+    // Phase 8-6: fetch plugin metas
     async function fetchPluginMetas() {
         try {
             const res = await fetch('/api/plugins');
@@ -518,6 +573,8 @@
 
     // 表示名（user_label）だけを書き換える。プラグインの内部名・.so・
     // modules.json は変更しないため、イベントやバックアップは壊れない。
+    // Rewrite only the display name (user_label). The plugin's internal name,
+    // .so and modules.json are untouched, so events and backups keep working.
     async function updatePluginLabel(name, userLabel) {
         const res = await fetch(`/api/plugins/${encodeURIComponent(name)}/label`, {
             method: 'PUT',
@@ -533,10 +590,13 @@
 
     // ============================================================
     // ★ Phase 8-5: 手動実行
+    // ★ Phase 8-5: manual run
     // ============================================================
     async function handleRunClick(btn) {
         const name = btn.dataset.name;
 
+        // 必須設定フィールドが空なら実行を拒否する。そうでないとバックアップが
+        // エージェント側で、より分かりにくいエラーで失敗する。
         // Refuse to run when a required config field is empty. The backup
         // would otherwise fail on the agent side with a less obvious error.
         const runMeta = pluginMetas.get(name);
@@ -555,6 +615,7 @@
         }
 
         // すでに実行中なら受け付けない（二重実行の防止）
+        // Reject if it is already running (prevents a double run)
         if (runningPlugins.has(name)) {
             showToast(t('toast.execution_in_progress'), 'info');
             return;
@@ -562,6 +623,7 @@
         runningPlugins.add(name);
         manualRunning.add(name);
 
+        // カードを即座に「実行中」にする。
         // Mark the card as running immediately.
         moduleStatus.set(name, { status: 'running', size: 0, last_run: '' });
         renderModules();
@@ -575,6 +637,10 @@
             if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
             showToast(t('toast.execution_accepted'), 'info');
+            // サーバー側の実行ガードは 30 分で解除される（runGuardTimeout）。
+            // それより少し長く待ち、結果が永遠に来ない場合はサーバー側ガードが
+            // 既に切れて再実行できるようにする（そうでないと UI は「実行中でない」
+            // のにサーバーが 409 を返す）。
             // The server's run guard is released after 30 minutes
             // (runGuardTimeout). Wait slightly longer than that, so that if a
             // result never arrives the server-side guard has already expired
@@ -590,6 +656,7 @@
             await loadModules();
         } catch (err) {
             showToast(t('toast.execution_error', err.message), 'error');
+            // カードを失敗としてマークし、状態が「実行中」のまま残らないようにする。
             // Mark the card as failed so the state does not stay "running".
             moduleStatus.set(name, { status: 'error', size: 0, last_run: '' });
         } finally {
@@ -601,6 +668,7 @@
 
     // ============================================================
     // 描画
+    // Rendering
     // ============================================================
     function renderModules() {
         if (!modules || modules.length === 0) {
@@ -632,6 +700,8 @@
         let disabled = 0;
 
         // 権限で使えない操作（プラグイン追加＝.soアップロード）は UI ごと隠す。
+        // Hide the whole UI for operations the role cannot use (adding a
+        // plugin = uploading a .so).
         const pluginLabel = document.querySelector('label[for="pluginInput"]');
         if (pluginLabel) pluginLabel.style.display = canUploadPlugin() ? '' : 'none';
 
@@ -649,6 +719,15 @@
                                (s === 'failed' || s === 'error') ? t('status.failed') :
                                (s === 'running' || s === 'processing') ? t('status.running') : t('status.unknown');
 
+            // バッジの規則:
+            //   - 純正 (origin=official): プラグインの Tag()（GUARD/LITE/PRO）を
+            //     尊重し、無ければ display_name のヒント、最後に PLUGIN。
+            //   - サードパーティ (origin=third_party): 常に PLUGIN。
+            //     コミュニティプラグインが Tag() をそう名付けるだけで
+            //     GUARD/LITE/PRO を主張できてはならない。
+            // カードタイトルは、プラグインの display_name より運用者自身の
+            // ラベル（user_label）を優先し、アップロード時に入力した名前を
+            // そのまま見せる。
             // Badge rules:
             //   - pure (origin=official): honor the plugin's Tag() (GUARD/
             //     LITE/PRO) or fall back to a display_name hint, then PLUGIN.
@@ -698,10 +777,15 @@
 
             const meta = pluginMetas.get(mod.name);
             // バックアップ系（is_backup=true）以外のプラグインは常時監視タイプとして扱う。
+            // Plugins other than backup ones (is_backup=true) are treated as
+            // always-on monitoring types.
             const isSecurityPlugin = mod.type === 'plugin' && meta && meta.is_backup !== true;
 
             // Agent のロード結果。失敗していれば「監視中」ではなく「読み込み失敗」
             // として表示し、理由を UI 言語へ翻訳して出す。
+            // The Agent's load result. If it failed, show "load failed" rather
+            // than "monitoring" and render the reason translated into the UI
+            // language.
             const runtime = pluginRuntime.get(mod.name);
             const runtimeFailed = runtime && runtime.status === 'failed';
             const failReason = (() => {
@@ -714,6 +798,8 @@
                 }
                 // reason_code を持たない旧 Agent。生の理由は日本語の可能性が
                 // あるため、UI が日本語のときだけ表示する。
+                // An older Agent without reason_code. The raw reason may be in
+                // Japanese, so show it only when the UI is Japanese.
                 const lang = window.KizunaI18n ? window.KizunaI18n.getLang() : 'ja';
                 if (lang === 'ja' && runtime.reason) return runtime.reason;
                 return t('modules.fail.unknown');
@@ -728,6 +814,9 @@
 
             // 「実行」ボタンは手動実行できるバックアップ系プラグインのみ表示する。
             // 常時監視するタイプ（セキュリティ等）は実行不要なので出さない。
+            // The "Run" button is shown only for backup plugins that can be
+            // run manually. Always-on monitoring types (security, etc.) need
+            // no run, so it is not shown.
             const canRun = mod.type === 'plugin' && meta && meta.is_backup === true;
             const isRunning = runningPlugins.has(mod.name);
             const runButton = canRun
@@ -735,6 +824,7 @@
                 : '';
 
             // プラグイン専用 Web UI があれば「開く」ボタンを表示
+            // Show an "Open" button when the plugin has its own web UI
             const openButton = (mod.type === 'plugin' && meta && meta.has_web_ui)
                 ? `<a class="btn-open" href="/plugins/${encodeURIComponent(mod.name)}/" target="_blank" rel="noopener">${t('modules.btn_open')}</a>`
                 : '';
@@ -744,12 +834,19 @@
             //   有効 → 「無効化」（赤系・注意）
             //   無効 → 「有効化」（緑系・前向き）
             // 有効/無効の切り替えは監視の停止/開始に直結するため admin のみ。
+            // Enable/disable toggle button.
+            // The button colour changes with the state so it is obvious at a
+            // glance.
+            //   enabled  -> "Disable" (red-ish, caution)
+            //   disabled -> "Enable"  (green-ish, positive)
+            // The toggle directly starts/stops monitoring, so it is admin only.
             const toggleClass = mod.enabled ? 'btn-toggle on' : 'btn-toggle off';
             const toggleButton = isAdmin()
                 ? `<button class="${toggleClass}" data-name="${escapeAttr(mod.name)}" data-enable="${mod.enabled ? '0' : '1'}">${mod.enabled ? t('modules.btn_disable') : t('modules.btn_enable')}</button>`
                 : '';
 
             // カード本文。セキュリティ等の監視プラグインは専用の項目を表示する。
+            // Card body. Monitoring plugins such as security show dedicated rows.
             const cfg = mod.config || {};
             const watchFiles = cfg.watch_files || '--';
             const notifyLevel = cfg.notify_min_level
@@ -760,6 +857,10 @@
                 : '--';
             const monitorState = mod.enabled ? t('security.state_active') : t('security.state_inactive');
 
+            // 理由別のヒント。"already_loaded" は障害ではない。.so を再ロードするには
+            // Agent の再起動が必要というだけだ（Go プラグインはアンロードできない）。
+            // そこに汎用ヒントを出すと、正常な無効化→有効化が壊れたモジュールに
+            // 見えてしまう。
             // A reason-specific hint. "already_loaded" is not a fault: it
             // just means the Agent must be restarted to re-load the .so (Go
             // plugins cannot be unloaded). Showing the generic hint there made
@@ -783,6 +884,8 @@
                 `;
 
             // 権限のない操作はボタンを出さない（押して 403 になる UX を避ける）。
+            // Do not show buttons for operations the role cannot perform (to
+            // avoid the "press and get 403" UX).
             const editButton = canEditModule()
                 ? `<button class="btn-edit" data-name="${escapeAttr(mod.name)}">${t('modules.btn_edit')}</button>`
                 : '';
@@ -842,6 +945,9 @@
 
             // 表示名を変更できるボタン。プラグインの内部名は変えず、
             // meta.json の user_label だけを書き換える（PUT /label）。
+            // A button to change the display name. The plugin's internal name
+            // is unchanged; only meta.json's user_label is rewritten
+            // (PUT /label).
             const labelButton = (mod.type === 'plugin')
                 ? `<button class="btn-label" data-name="${escapeAttr(mod.name)}" title="${escapeAttr(t('modules.btn_label_title'))}">${t('modules.btn_label')}</button>`
                 : '';
@@ -850,6 +956,12 @@
             // 並べ替えはカード本体のドラッグで行える（setupReorder が
             // つまみの無いカードでは余白ドラッグを許可する）。
             // つまみを戻したい場合は下の空文字を次のボタンに差し替える:
+            //   `<button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>`
+            // Do not show a drag handle in the action button row.
+            // Reordering can be done by dragging the card body itself
+            // (setupReorder allows margin dragging on cards without a handle).
+            // To bring the handle back, replace the empty string below with
+            // the following button:
             //   `<button type="button" class="drag-handle" aria-label="${escapeAttr(t('card.reorder'))}" title="${escapeAttr(t('card.reorder'))}">⣿</button>`
             const dragHandle = '';
 
@@ -892,11 +1004,13 @@
         disabledCount.textContent = disabled;
 
         // ★ Phase 8-5: 実行ボタンのイベント登録
+        // ★ Phase 8-5: wire the run button
         document.querySelectorAll('.btn-run').forEach(btn => {
             btn.addEventListener('click', () => handleRunClick(btn));
         });
 
         // 編集ボタン
+        // Edit button
         document.querySelectorAll('.btn-edit').forEach(btn => {
             btn.addEventListener('click', () => {
                 const name = btn.dataset.name;
@@ -917,11 +1031,13 @@
         });
 
         // 有効/無効 切り替えボタン
+        // Enable/disable toggle button
         document.querySelectorAll('.btn-toggle').forEach(btn => {
             btn.addEventListener('click', () => handleToggleClick(btn));
         });
 
         // 削除ボタン
+        // Delete button
         document.querySelectorAll('.btn-delete').forEach(btn => {
             btn.addEventListener('click', () => {
                 const name = btn.dataset.name;
@@ -932,17 +1048,21 @@
         });
 
         // 名前変更ボタン（表示名だけを書き換える）
+        // Rename button (rewrites only the display name)
         document.querySelectorAll('.btn-label').forEach(btn => {
             btn.addEventListener('click', () => openLabelModal(btn.dataset.name));
         });
 
         // ドラッグ & ドロップで並べ替え（順序は localStorage に保存）
+        // Drag-and-drop reordering (the order is saved to localStorage)
         setupModuleReorder();
     }
 
     // ============================================================
     // モジュールカード並べ替え（ダッシュボードと同じ方式）
     // 順序は localStorage の kizuna-module-order に保存する。
+    // Module card reordering (same scheme as the dashboard).
+    // The order is saved to localStorage under kizuna-module-order.
     // ============================================================
     const MODULE_ORDER_KEY = 'kizuna-module-order';
 
@@ -952,7 +1072,7 @@
                 .filter(c => c.classList.contains('module-card'))
                 .map(c => c.dataset.name);
             localStorage.setItem(MODULE_ORDER_KEY, JSON.stringify(order));
-        } catch (e) { /* localStorage 不可の環境では無視 */ }
+        } catch (e) { /* localStorage 不可の環境では無視 / ignore where localStorage is unavailable */ }
     }
 
     function applyModuleOrder() {
@@ -997,6 +1117,10 @@
             // ドラッグ中のカードは elementFromPoint の最前面にあり、その
             // 下にあるカードを拾えない。一時的に当たり判定から外すことで
             // 左右どちらへ動かしても正しい移動先を検出できる。
+            // The dragged card is on top for elementFromPoint, so the card
+            // underneath cannot be hit. Temporarily removing it from hit
+            // testing lets the correct drop target be found whether moving
+            // left or right.
             dragging.style.pointerEvents = 'none';
             const target = document.elementFromPoint(e.clientX, e.clientY);
             const over = target && target.closest('.module-card');
@@ -1007,6 +1131,9 @@
             // グリッドは2次元配置なので、カーソルが over の中心から見て
             // X/Y のどちらに大きく外れているかで前後を決める。横長カード
             // では通常 X が支配的だが、行をまたぐときは Y が支配的になる。
+            // The grid is a 2D layout, so decide before/after by which of X/Y
+            // the cursor is further from over's centre. On a wide card X
+            // usually dominates, but Y dominates when crossing rows.
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
             const dx = e.clientX - cx;
@@ -1029,6 +1156,7 @@
 
         items.forEach(item => {
             // 同じカードに二重登録しないよう、関数プロパティで印を付ける。
+            // Mark with a data property so the same card is not bound twice.
             if (item.dataset.reorderBound === '1') return;
             item.dataset.reorderBound = '1';
             item.addEventListener('pointerdown', (e) => onDown(e, item));
@@ -1043,6 +1171,7 @@
 
     // ============================================================
     // 表示名の変更
+    // Rename the display name
     // ============================================================
     function openLabelModal(name) {
         const mod = modules.find(m => m.name === name);
@@ -1053,7 +1182,7 @@
         }
         const current = (meta.user_label || meta.display_name || name);
         const input = prompt(t('modules.label_prompt'), current);
-        if (input === null) return; // キャンセル
+        if (input === null) return; // キャンセル / cancel
         const trimmed = input.trim();
         if ([...trimmed].length > 64) {
             showToast(t('toast.plugin_name_too_long'), 'error');
@@ -1069,6 +1198,7 @@
 
     // ============================================================
     // 有効/無効 切り替え
+    // Enable/disable toggle
     // ============================================================
     async function handleToggleClick(btn) {
         const name = btn.dataset.name;
@@ -1126,6 +1256,7 @@
 
     // ============================================================
     // 保存・削除（既存手動モーダル用）
+    // Save / delete (for the existing manual modal)
     // ============================================================
     async function handleSave() {
         if (!validateForm()) {
@@ -1155,6 +1286,9 @@
 
         try {
             await deleteModule(deleteTarget);
+            // プラグインの削除は破壊的（.so・meta・modules.json エントリが
+            // 除去される）ため、origin に関わらず常に赤トーストを出す。
+            // カードタイトルは user_label を優先し、運用者が認識できる名前を見せる。
             // Deleting a plugin is destructive (the .so, meta and modules.json
             // entry are removed), so always show a red toast, regardless of
             // origin. The card title prefers user_label so the operator sees
@@ -1192,6 +1326,9 @@
 
     // JSON読み込み: ローカルの modules.json を読み、画面表示を置き換える。
     // 注意: サーバーへは保存しない（保存は「保存」操作で行う）。表示確認用。
+    // JSON load: read a local modules.json and replace the on-screen view.
+    // Note: it does NOT save to the server (saving is done by the save
+    // action). This is for viewing.
     function loadConfigFile(file) {
         const reader = new FileReader();
         reader.onload = function (e) {
@@ -1216,11 +1353,14 @@
 
     // ============================================================
     // Phase 8-6: プラグインアップロード → 動的フォーム表示
+    // Phase 8-6: plugin upload -> dynamic form
     // ============================================================
     if (pluginInput) {
         pluginInput.addEventListener('change', async (e) => {
             if (e.target.files.length === 0) return;
 
+            // A-3: .so と分離署名を一緒に選択できる（input は複数ファイルを
+            // 受け付ける）ため、ダイアログ 1 つで済む。他のファイル種別は無視する。
             // A-3: the .so and its detached signature can be selected
             // together (the input accepts multiple files), so one dialog is
             // enough. Any other file type is ignored.
@@ -1243,6 +1383,9 @@
             const defaultName = file.name.replace(/\.so$/, '');
             const pluginName = prompt(t('toast.plugin_name_prompt'), defaultName);
             if (!pluginName) {
+                // アップロード開始前に名前プロンプトを閉じた。日常的なキャンセル
+                // なので、中立的な緑トーストを使う（"Plugin installation was
+                // cancelled."）。
                 // The operator dismissed the name prompt before any upload
                 // started. This is a routine cancel, so use a neutral green
                 // toast ("Plugin installation was cancelled.").
@@ -1250,6 +1393,9 @@
                 e.target.value = '';
                 return;
             }
+            // 名前は表示専用ラベルなので任意のテキストを受け付ける（日本語や
+            // 空白も可）。サーバーはアップロードファイル名からファイルシステム名を
+            // 導出する。過度に長いラベルのみ拒否する。
             // The name is a display-only label, so any text is accepted
             // (including Japanese and spaces). The server derives the
             // filesystem name from the uploaded filename. Only an
@@ -1264,6 +1410,7 @@
             formData.append('name', pluginName);
             formData.append('plugin', file);
             if (signature) {
+                // A-3: 分離署名は .so が検査・インストールされる前に検証される。
                 // A-3: the detached signature is verified before the .so is
                 // inspected and installed.
                 formData.append('signature', signature);
@@ -1274,6 +1421,9 @@
 
                 const result = await uploadPlugin(formData);
 
+                // 運用者が未署名プラグインの確認を拒否した。サードパーティ
+                // モジュールらしかったので、これは警告レベルのキャンセルだ。
+                // 理由を明示する赤トーストを使う。
                 // The operator declined the unsigned-plugin confirmation.
                 // The plugin looked like a third-party module, so this is a
                 // warning-level cancel: use a red toast that names the reason.
@@ -1290,6 +1440,9 @@
                     return;
                 }
 
+                // origin は純正 Kizuna プラグインとサードパーティを区別する。
+                // サードパーティのインストールは意図的なリスクなので、運用者が
+                // 確認した場合でも赤で警告する。
                 // Origin tells pure Kizuna plugins apart from third-party
                 // ones. A third-party install is a deliberate risk, so it is
                 // flagged in red even when the operator confirmed it.
@@ -1309,6 +1462,11 @@
         });
     }
 
+    // uploadPlugin は .so（+ 任意の .sig）を送る。409 needs_confirmation では
+    // 「未検証」オーバーレイを表示し、運用者がリスクを受け入れた場合のみ
+    // confirm_unsigned=true で再試行する。成功時はサーバーの JSON meta、
+    // 運用者が拒否した場合は { cancelled: true }、実際の失敗時は Error で
+    // reject する。
     // uploadPlugin sends the .so (+ optional .sig). On 409 needs_confirmation
     // it shows the "not verified" overlay and retries with confirm_unsigned=true
     // only if the operator accepts the risk. Resolves with the server's JSON
@@ -1317,12 +1475,15 @@
     async function uploadPlugin(formData) {
         const res = await fetch('/api/plugins/upload', { method: 'POST', body: formData });
 
+        // 409 + needs_confirmation => 未署名プラグイン。運用者に尋ねる。
         // 409 + needs_confirmation => unsigned plugin. Ask the operator.
         if (res.status === 409) {
             const body = await res.json().catch(() => ({}));
             if (body.needs_confirmation) {
                 const ok = await confirmUnsignedPlugin(body.name || '');
                 if (!ok) {
+                    // 拒否: エラーではない。呼び出し側がエラーラッパーではなく
+                    // 中立的なメッセージを出せるよう、センチネルを返す。
                     // Declined: not an error. Return a sentinel so the caller
                     // can show a neutral message instead of the error wrapper.
                     return { cancelled: true };
@@ -1345,6 +1506,8 @@
         return res.json();
     }
 
+    // confirmUnsignedPlugin は未署名（サードパーティ）プラグインのオーバーレイを
+    // 表示し、運用者が明示的に受け入れたときのみ true で解決する。
     // confirmUnsignedPlugin shows the overlay for an unsigned (third-party)
     // plugin and resolves true only when the operator explicitly accepts.
     function confirmUnsignedPlugin(name) {
@@ -1374,6 +1537,7 @@
 
     // ============================================================
     // Phase 8-6: 動的フォーム生成
+    // Phase 8-6: dynamic form generation
     // ============================================================
     function openPluginConfigModal(meta, currentConfig) {
         editingPluginName = meta.name;
@@ -1382,6 +1546,7 @@
         }
         if (pluginConfigBody) {
             // admin 以外には admin 限定フィールドを表示しない。
+            // Do not show admin-only fields to non-admins.
             pluginConfigBody.innerHTML = renderConfigForm(visibleFields(meta.fields), currentConfig || {});
         }
         if (pluginConfigModal) {
@@ -1394,6 +1559,11 @@
         if (pluginConfigModal) pluginConfigModal.style.display = 'none';
     }
 
+    // labelForOption はプラグイン提供の select オプション（例:
+    // notify_min_level の "critical"/"warning"/"info"）の i18n ラベルを返す。
+    // "opt.<value>" エントリのあるオプションのみ翻訳し、それ以外はプラグインが
+    // 宣言した生の値へフォールバックし、未知のオプションもまともに表示される
+    // ようにする。
     // labelForOption returns the i18n label for a plugin-provided select
     // option (e.g. notify_min_level's "critical"/"warning"/"info"). Only
     // options with an "opt.<value>" entry are translated; anything else
@@ -1405,6 +1575,9 @@
         return translated !== key ? translated : value;
     }
 
+    // pickLang は ConfigField の文字列について、UI が英語でプラグインが翻訳を
+    // 提供していれば英語版を、そうでなければ日本語版を返す。これにより、一部の
+    // フィールドしか翻訳していないプラグインも使える。
     // pickLang returns the English variant of a ConfigField string when the
     // UI is in English and the plugin supplied a translation, otherwise the
     // Japanese value. This keeps a plugin usable even if it only translated
@@ -1444,6 +1617,9 @@
         const value = (current !== undefined && current !== null)
             ? String(current)
             : (f.default || '');
+        // キーから安全な要素 id を組み立てる。[A-Za-z0-9_-] のみを保つため、
+        // プラグイン提供のキーが id="..." から抜け出したり、getElementById() と
+        // 曖昧になったりしない。
         // Build a safe element id from the key. Only [A-Za-z0-9_-] is kept, so
         // a plugin-provided key can neither break out of id="..." nor make the
         // id ambiguous with getElementById().
@@ -1473,6 +1649,8 @@
                 break;
             }
             case 'number': {
+                // min/max はプラグインのメタデータ由来だ。非数値が属性から
+                // 抜け出せないようエスケープする。
                 // min/max come from the plugin's metadata; escape them so a
                 // non-numeric value cannot break out of the attribute.
                 const min = (f.min !== undefined && f.min !== null) ? `min="${escapeAttr(f.min)}"` : '';
@@ -1507,12 +1685,16 @@
         `;
     }
 
+    // collectFormValues はプラグイン設定フォームの現在値を素のオブジェクトへ読む。
+    // 保存と、言語変更時の再描画（言語切替でユーザーの入力を失わないため）の
+    // 両方で使う。
     // collectFormValues reads the current values of the plugin config form into
     // a plain object. It is used by save and by the language-change redraw so
     // switching the UI language does not lose what the user typed.
     function collectFormValues(fields) {
         const config = {};
         for (const f of (fields || [])) {
+            // プラグイン提供のキーに Object.prototype を汚染させない。
             // Never let a plugin-provided key pollute Object.prototype.
             if (isUnsafeKey(f.key)) continue;
             const el = document.getElementById(fieldElementId(f.key));
@@ -1543,6 +1725,8 @@
 
         // 表示していない（admin 限定）フィールドは必須検証の対象外にする。
         // 表示フィールドは collectFormValues と同じ集合で判定する。
+        // Exclude non-displayed (admin-only) fields from required validation.
+        // The displayed fields are judged by the same set as collectFormValues.
         for (const f of visibleFields(meta.fields)) {
             if (!f.required) continue;
             const v = config[f.key];
@@ -1583,10 +1767,17 @@
 
     // ============================================================
     // ユーティリティ
+    // Utilities
     // ============================================================
     // escapeHtml / escapeAttr は escape.js（共有ユーティリティ）で定義される。
     // プラグイン由来の文字列（meta.fields / options / hint など）は必ず通すこと。
+    // escapeHtml / escapeAttr are defined in escape.js (shared utilities).
+    // Always pass plugin-derived strings (meta.fields / options / hint, etc.)
+    // through them.
 
+    // fieldElementId はプラグイン提供の設定キーから DOM id を組み立てる。
+    // [A-Za-z0-9_-] のみを保つため、値は id="..." 内で安全で、getElementById()
+    // に対して安定している。
     // fieldElementId builds a DOM id from a plugin-provided config key.
     // Only [A-Za-z0-9_-] is kept so the value is safe inside id="..." and
     // stable for getElementById().
@@ -1594,6 +1785,8 @@
         return 'cfg_' + String(key).replace(/[^A-Za-z0-9_-]/g, '_');
     }
 
+    // isUnsafeKey はプラグイン提供のキーがオブジェクトプロパティ名として
+    // Object.prototype を汚染し得るかを返す。
     // isUnsafeKey reports whether a plugin-provided key could pollute
     // Object.prototype if used as an object property name.
     function isUnsafeKey(key) {
@@ -1625,6 +1818,7 @@
 
     // ============================================================
     // イベント登録
+    // Event wiring
     // ============================================================
     if (modalCloseBtn) modalCloseBtn.addEventListener('click', closeModal);
     if (modalCancelBtn) modalCancelBtn.addEventListener('click', closeModal);
@@ -1673,11 +1867,15 @@
 
     // ============================================================
     // 初期化
+    // Initialisation
     // ============================================================
     loadModules();
 
     // 言語変更時に再描画。プラグイン設定モーダルが開いていれば、
     // 入力中の値を読み取ってから描き直し、言語切替で入力が消えないようにする。
+    // Redraw on language change. If the plugin config modal is open, read the
+    // in-progress values first and redraw, so switching language does not lose
+    // the input.
     window.addEventListener('kizuna-lang-change', () => {
         setTheme(getTheme());
         if (modules && modules.length > 0) renderModules();
