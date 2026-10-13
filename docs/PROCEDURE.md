@@ -19,8 +19,8 @@
 
 次を実行する。
 
-    git clone https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git
-    cd Kizuna-Eye_forEN
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye.git
+    cd Kizuna-Eye
     go mod download
     ./build.sh
 

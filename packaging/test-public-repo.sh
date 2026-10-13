@@ -10,7 +10,7 @@
 set -euo pipefail
 
 IMAGE="${1:-ubuntu:20.04}"
-BASE="${2:-https://exiserverteam.github.io/Kizuna-Eye_forEN}"
+BASE="${2:-https://exiserverteam.github.io/Kizuna-Eye}"
 
 echo "▶ image=$IMAGE base=$BASE"
 docker run --rm "$IMAGE" bash -c "

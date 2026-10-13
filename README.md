@@ -90,11 +90,11 @@ Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from its 
 No build required; dependencies (`python3` / `smartmontools` / `rsync` / `bubblewrap`) are installed automatically.
 
     # Register the public key (dearmor is required)
-    curl -fsSL https://exiserverteam.github.io/Kizuna-Eye_forEN/kizuna.gpg \
+    curl -fsSL https://exiserverteam.github.io/Kizuna-Eye/kizuna.gpg \
       | sudo gpg --dearmor -o /usr/share/keyrings/kizuna.gpg
 
     # Add the repository
-    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye_forEN stable main" \
+    echo "deb [signed-by=/usr/share/keyrings/kizuna.gpg] https://exiserverteam.github.io/Kizuna-Eye stable main" \
       | sudo tee /etc/apt/sources.list.d/kizuna.list
 
     sudo apt update
@@ -126,8 +126,8 @@ Uninstall with `sudo apt remove kizuna-eye` (stops services, keeps data) or `sud
 
 ### 1. Clone the repository
 
-    git clone https://github.com/ExiServerTeam/Kizuna-Eye_forEN.git
-    cd Kizuna-Eye_forEN
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye.git
+    cd Kizuna-Eye
 
 ### 2. Download dependencies
 
