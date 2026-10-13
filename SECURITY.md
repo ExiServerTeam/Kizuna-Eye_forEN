@@ -82,13 +82,20 @@ Kizuna-Eye は「安全・堅牢・簡単」を目標にしていますが、**�
   読みます。悪意ある `.so` はこの検査プロセスでコード実行に至り得ます。
   `bwrap` による分離（`plugins.inspect_isolation`）を推奨します。
 
-### 3. 危険なデフォルト（既定値の見直しを計画中）
+### 3. デフォルト値
 
-- `auth.enabled` は既定 `false`、`public_viewer` は既定 `true`、
-  `agent_token` は既定 空、`plugins.require_signature` は既定 `false`。
-- これらは「簡単」を優先した既定です。**公開ネットワークに晒す場合は
-  必ず安全側へ変更**してください（セキュアデフォルト化は `docs/ROADMAP.md`
-  の P1 で計画中）。
+- **新規インストール（`config_version >= 2`、install.sh / deb が導入）**:
+  `public_viewer=false`（未ログイン閲覧は無効）、`auth.enabled=true`、
+  `agent_token` は install.sh がランダム生成、`plugins.require_signature=true`
+  （配布 example 既定）。安全側で開始します。
+- **既存インストール（`config_version` 無し）**: アップグレードで挙動が
+  変わらないよう、従来の既定（`public_viewer` 既定 true など）を維持します。
+  明示的に設定された値は常に尊重されます。
+- `secure_cookies` は HTTP 直アクセスを壊すため既定 `false` のままです。
+  **HTTPS/リバースプロキシ運用時は true にしてください**。
+- `listen_addr` の既定は `:8080`（全 IF）です。これは LAN 監視ツールの
+  通常配備を想定した既定であり、**公開ネットワークに晒す場合は
+  リバースプロキシの背後に置くか、`127.0.0.1:8080` に変更**してください。
 
 ### 4. ログのローカル性
 

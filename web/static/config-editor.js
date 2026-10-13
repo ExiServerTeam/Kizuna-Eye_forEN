@@ -101,8 +101,13 @@ document.addEventListener('DOMContentLoaded', function () {
             legendKey: 'config.g.dash.auth',
             prefix: 'auth.',
             checks: [
-                // 未設定のときは有効（既定ON）。キーが無ければチェックを入れる。
-                { key: 'public_viewer', labelKey: 'config.c.public_viewer', defaultChecked: true },
+                // 未設定時の既定は config_version で決まる（バックエンドと同じ規則）。
+                //  - 旧設定（config_version 無し）: 既定 ON（従来どおり）
+                //  - 新規/セキュア既定（config_version>=2）: 既定 OFF
+                // ここを固定 ON にすると、セキュア既定の環境で他の設定を保存した
+                // だけで public_viewer=true が明示書き込みされ、匿名閲覧が
+                // 静かに再有効化される（セキュア既定の後退）。
+                { key: 'public_viewer', labelKey: 'config.c.public_viewer', defaultChecked: true, secureDefault: false },
             ],
         },
         {
@@ -341,9 +346,20 @@ document.addEventListener('DOMContentLoaded', function () {
             (g.checks || []).forEach(c => {
                 const path = (g.prefix || '') + c.key;
                 const cc = Object.assign({}, c, { key: path });
-                // キーが未設定なら defaultChecked（未設定＝有効な項目）を使う。
+                // キーが未設定なら既定値を使う。既定は config_version に依存する:
+                // config_version>=2 のセキュア既定なら secureDefault、それ以外
+                // （旧設定）は defaultChecked。バックエンドの LoadDashboardConfig
+                // と同じ規則にして、保存時に明示値として書き戻しても挙動が
+                // 変わらないようにする。
                 let val = getByPath(loadedConfig, path);
-                if (val === undefined || val === null) val = cc.defaultChecked;
+                if (val === undefined || val === null) {
+                    const secureCfg = Number(getByPath(loadedConfig, 'config_version') || 0) >= 2;
+                    if (secureCfg && Object.prototype.hasOwnProperty.call(c, 'secureDefault')) {
+                        val = c.secureDefault;
+                    } else {
+                        val = c.defaultChecked;
+                    }
+                }
                 fs.appendChild(buildCheck(cc, val));
             });
             guiBody.appendChild(fs);
