@@ -2,13 +2,22 @@
    Kizuna-Eye - 認証画面（ログイン / セットアップ / ユーザー管理）
    ダッシュボードと同じテーマ変数・デザイン言語を使用
    ============================================================ */
+/* ============================================================
+   Kizuna-Eye - auth screens (login / setup / user management)
+   Uses the same theme variables and design language as the dashboard.
+   ============================================================ */
 
 /* ===== テーマ切替ボタン（画面右上に固定） ===== */
+/* ===== Theme toggle button (fixed at the top right) ===== */
 .auth-theme-toggle {
     position: fixed;
     /* max(env()) 非対応の古いブラウザでは top/right が丸ごと無効になり、
        ボタンが通常フロー位置（カード中央付近）に浮く。先に固定値を書き、
        対応ブラウザだけ env() でセーフエリアを考慮する。 */
+    /* On older browsers without max(env()), top/right is dropped entirely
+       and the button floats in the normal flow (near the card centre).
+       Write the fixed value first; only browsers that support env()
+       account for the safe area. */
     top: 16px;
     right: 16px;
     top: max(16px, env(safe-area-inset-top));
@@ -41,10 +50,12 @@
 }
 
 /* ===== 言語切替ボタン（テーマ切替の左隣に固定） ===== */
+/* ===== Language toggle button (fixed left of the theme toggle) ===== */
 .auth-lang-toggle {
     position: fixed;
     top: 16px;
     /* テーマ切替（右16px + 幅44px + 間隔8px）の左に置く */
+    /* Placed left of the theme toggle (right 16px + width 44px + gap 8px). */
     right: 68px;
     top: max(16px, env(safe-area-inset-top));
     right: max(68px, calc(env(safe-area-inset-right) + 52px));
@@ -74,6 +85,7 @@
 }
 
 /* ===== 背景 ===== */
+/* ===== Background ===== */
 .auth-body {
     min-height: 100vh;
     display: flex;
@@ -86,6 +98,7 @@
 }
 
 /* ダッシュボードのヘッダー/カードと同じガラス風カード */
+/* Same glass-style card as the dashboard header / cards. */
 .auth-card {
     width: 100%;
     max-width: 400px;
@@ -100,6 +113,7 @@
 }
 
 /* ===== ロゴ（ダッシュボードと同じグラデーション） ===== */
+/* ===== Logo (same gradient as the dashboard) ===== */
 .auth-logo {
     font-size: 1.7rem;
     font-weight: 700;
@@ -128,6 +142,7 @@
 }
 
 /* ===== フォーム ===== */
+/* ===== Form ===== */
 .auth-form {
     display: flex;
     flex-direction: column;
@@ -153,7 +168,7 @@
     border: 1px solid var(--border-color);
     background: var(--bg-card);
     color: var(--text-primary);
-    font-size: 1rem; /* iOS の自動ズーム防止 */
+    font-size: 1rem; /* iOS の自動ズーム防止 / prevents iOS auto-zoom */
     font-family: inherit;
     transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
@@ -166,6 +181,7 @@
 }
 
 /* ===== ボタン（ダッシュボードの btn-primary と同じ） ===== */
+/* ===== Button (same as the dashboard's btn-primary) ===== */
 .auth-btn {
     margin-top: 22px;
     padding: 13px;
@@ -196,6 +212,7 @@
 }
 
 /* ゲストログインなど、主アクションではないボタン。 */
+/* A secondary button, e.g. guest login. */
 .auth-btn-secondary {
     margin-top: 10px;
     background: transparent;
@@ -220,6 +237,9 @@
 
 /* ============================================================
    ユーザー管理（ダッシュボードのカードに寄せる）
+   ============================================================ */
+/* ============================================================
+   User management (styled like the dashboard cards)
    ============================================================ */
 .users-main {
     padding: 24px;
@@ -283,6 +303,7 @@
 }
 
 /* ===== ロールバッジ ===== */
+/* ===== Role badges ===== */
 .role-badge {
     display: inline-block;
     padding: 3px 12px;
@@ -296,6 +317,7 @@
 .role-viewer { background: var(--status-bg-success); color: var(--status-success); }
 
 /* ===== 小ボタン ===== */
+/* ===== Small buttons ===== */
 .btn-sm {
     padding: 7px 14px;
     border-radius: 10px;
@@ -322,6 +344,7 @@
 }
 
 /* ===== モーダル ===== */
+/* ===== Modal ===== */
 .modal-backdrop {
     position: fixed;
     inset: 0;
@@ -338,11 +361,13 @@
 .modal-backdrop[hidden] { display: none; }
 
 /* モーダル内のカードもダッシュボード風に */
+/* Cards inside a modal are dashboard-styled too. */
 .modal-backdrop .auth-card {
     max-width: 400px;
 }
 
 /* ===== スマホ対応 ===== */
+/* ===== Phone support ===== */
 @media (max-width: 480px) {
     .auth-card {
         padding: 28px 22px 24px;
@@ -365,6 +390,7 @@
 }
 
 /* 動きを減らす設定の尊重 */
+/* Respect the reduced-motion preference. */
 @media (prefers-reduced-motion: reduce) {
     .auth-btn:hover,
     .auth-theme-toggle:hover {
@@ -374,6 +400,9 @@
 
 /* ============================================================
    表示崩れ防止（ログイン / ユーザー管理）
+   ============================================================ */
+/* ============================================================
+   Layout-stability guards (login / user management)
    ============================================================ */
 *,
 *::before,
@@ -388,11 +417,13 @@ body {
 }
 
 /* overflow-x:hidden は position:sticky を無効化するため clip を使う。 */
+/* overflow-x: hidden disables position: sticky, so use clip instead. */
 body {
     overflow-x: clip;
 }
 
 /* カードは画面幅を超えない。 */
+/* Cards do not exceed the screen width. */
 .auth-card,
 .modal-backdrop .auth-card {
     width: 100%;
@@ -400,6 +431,7 @@ body {
 }
 
 /* 入力欄は iOS の自動ズームを避けるため 16px 以上に。 */
+/* Inputs are 16px or more to avoid iOS auto-zoom. */
 @media (max-width: 480px) {
     .auth-input,
     .auth-form input,
@@ -413,6 +445,7 @@ body {
     }
 
     /* ユーザー管理テーブルは横スクロールで対応。 */
+    /* The user-management table scrolls horizontally. */
     .users-table {
         display: block;
         width: 100%;

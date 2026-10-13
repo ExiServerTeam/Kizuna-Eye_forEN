@@ -1,4 +1,5 @@
 /* ログビューア */
+/* Log viewer */
 .log-viewer-container {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -40,6 +41,7 @@
 }
 
 /* 検索 / フィルタ行 */
+/* Search / filter row */
 .log-filterbar {
     display: flex;
     flex-wrap: wrap;
@@ -100,6 +102,13 @@
    1行のコンパクトなバー。左に「種類」のセグメントコントロール、
    右に操作（行数・自動更新・再読み込み）を置く。
    幅が足りなければ flex-wrap で自然に折り返す（固定列は使わない）。 */
+/* ============================================================
+   Toolbar
+   ============================================================
+   A compact one-row bar. The "type" segment control on the left,
+   the actions (lines / auto-follow / reload) on the right.
+   If the width is insufficient, flex-wrap wraps it naturally
+   (no fixed columns). */
 .log-toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -123,6 +132,8 @@
 
 /* 種類: セグメントコントロール。1つの枠の中にボタンを並べ、
    選択中だけ色を付ける（macOS のタブ風で一目で分かる）。 */
+/* Type: a segment control. Buttons sit inside one frame and only the
+   selected one is coloured (macOS tab style, obvious at a glance). */
 .log-type-buttons {
     display: flex;
     flex-wrap: wrap;
@@ -154,6 +165,7 @@
 }
 
 /* 再読み込みボタン(btn-primary)と同じ青紫グラデーションに統一。 */
+/* Unified with the reload button's (btn-primary) blue-purple gradient. */
 .log-type-buttons .btn-secondary.active {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     color: #fff;
@@ -161,6 +173,7 @@
 }
 
 /* 操作群: 右寄せ。margin-left:auto で右端へ寄せる。 */
+/* Actions: right-aligned. margin-left:auto pushes them to the right edge. */
 .log-toolbar-ops {
     display: flex;
     flex-wrap: wrap;
@@ -199,6 +212,9 @@
 /* 自動更新が ON の間は緑＋点滅で「今ライブ更新中」を一目で示す。
    textContent の先頭に ● を付けるので、色が変わらない環境でも
    文字だけで ON が判別できる（二重の手がかり）。 */
+/* While auto-follow is ON, green + blinking shows "live now" at a
+   glance. A leading dot in textContent means ON is distinguishable by
+   text alone even where colour does not change (a second cue). */
 #logFollowBtn.follow-on {
     background: #16a34a;
     border-color: #15803d;
@@ -207,6 +223,9 @@
     /* 緑ドットと文字を確実に中央揃えにする。inline-block +
        vertical-align: middle はテキストのベースライン基準でずれるため、
        ボタンを flex コンテナにして中央揃えにする。 */
+    /* Guarantee the green dot and the text are centred together.
+       inline-block + vertical-align: middle misaligns against the text
+       baseline, so make the button a flex container and centre it. */
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -221,6 +240,8 @@
     content: '';
     /* flex アイテムとして常に中央に並ぶ。vertical-align は flex では
        効果がなく、かえってずれの原因になるため使わない。 */
+    /* Always centred as a flex item. vertical-align has no effect in
+       flex and only causes misalignment, so it is not used. */
     flex: 0 0 auto;
     width: 8px;
     height: 8px;
@@ -236,10 +257,16 @@
 }
 
 /* 横幅が足りないときは操作群を次の行に回し、左寄せで押しやすく。 */
+/* When the width is insufficient, move the actions to the next row and
+   left-align for easy tapping. */
 @media (max-width: 700px) {
     /* 種類セグメントは縦積みにせず、1行のまま横スクロールさせる。
        折り返すと各ボタンが全幅になり、種類の数だけ縦に伸びて画面を
        占領する（実機のスマホで発生）。指でスワイプして選ばせる。 */
+    /* The type segment does not stack vertically; keep it on one row and
+       scroll horizontally. Wrapping makes each button full-width and
+       grows the bar by the number of types, filling the screen (seen on
+       a real phone). Let the finger swipe to choose. */
     .log-toolbar-label {
         flex: 0 0 auto;
     }
@@ -256,6 +283,9 @@
     /* 操作群（行数・表示・自動更新・再読み込み）はスマホでは
        次の行に回し、中央揃えにする。左寄せだと画面左に偏って
        バランスが悪い（実機のスマホで指摘）。 */
+    /* On a phone, move the actions (lines / format / auto-follow /
+       reload) to the next row and centre them. Left-aligned looks
+       unbalanced, crowded to the left (pointed out on a real phone). */
     .log-toolbar-ops {
         margin-left: 0;
         width: 100%;
@@ -270,7 +300,7 @@
 
     .log-lines-select {
         flex: 1;
-        font-size: 16px;   /* iOS の自動ズーム防止 */
+        font-size: 16px;   /* iOS の自動ズーム防止 / prevents iOS auto-zoom */
         padding: 10px;
     }
 }
