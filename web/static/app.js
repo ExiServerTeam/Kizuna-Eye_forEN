@@ -2086,10 +2086,13 @@
         document.addEventListener('pointercancel', onUp);
     }
 
-    // カードは .gauge-grid 内、セクションは .main 直下で、それぞれ独立に
-    // 並べ替えられるようにする（カードとセクションは跨がない）。
+    // セクション（履歴/プラグイン/アラート）は .main 直下で並べ替えられる。
+    //
+    // 一番上のカード（CPU/メモリ/ストレージ/稼働時間）の並べ替えは無効にした。
+    // カード右上のつまみ（⣿）を出さない。順序は HTML の並びで固定。
+    // 有効に戻す場合は下の 1 行を復活させる:
+    //   setupReorderIn(document.querySelector('.gauge-grid'), REORDER_CARD_SELECTOR);
     function setupCardReorder() {
-        setupReorderIn(document.querySelector('.gauge-grid'), REORDER_CARD_SELECTOR);
         setupReorderIn(document.querySelector('.main'), REORDER_SECTION_SELECTOR);
     }
 
