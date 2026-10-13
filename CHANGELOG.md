@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-10-13
 
 ### Changed
 - プログラムのコメントを「日本語（常体・〜だ/〜である）→英語」の2行ペアに統一した（Go / シェル / JS / CSS / systemd unit）。参照実装は `pkg/config/config.go`。
@@ -15,8 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - 古いインストーラの残骸 `install.sh.bak-20261008` を削除し、`.gitignore` に `*.bak` / `install.sh.bak*` を追加した。あわせてローカル資料（`Kizunaシリーズ　資料/`）を `.gitignore` に追加した。
-
-## [0.8.0] - 2026-10-12
 
 ### Fixed
 - モジュール提供カード（iframe）がライトモードでも暗いままになる問題への対応。コアは iframe の URL に `&theme=dark|light` を付与し、テーマ切替時に再読み込みするようにした（`web/static/app.js`）。あわせて Kizuna-Security の Web UI（`webui.go`）が `?theme=` を読み、`html[data-theme]` に応じて背景・文字色を切り替える（ダーク `#17181c` / ライト `#ffffff`）ようにした。従来は `background:transparent` ＋ OS の `prefers-color-scheme` 依存で、ダッシュボードのテーマに追従しなかった。
