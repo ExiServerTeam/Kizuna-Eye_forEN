@@ -88,6 +88,27 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+# deb（apt）で導入されている場合は、実体だけ消すと dpkg が「インストール済み」
+# のまま残り、再 apt install しても postinst が走らず復旧できなくなる
+# （install.sh と deb を混在させた実機で発生）。dpkg を検出したら apt purge を
+# 案内して中止する。手動導入（install.sh）のときだけ以下の削除を実行する。
+# If installed via deb/apt, deleting only the files would leave dpkg believing
+# the package is still installed, so a re-install would skip postinst and the
+# service could not be recovered. Detect dpkg and hand off to apt purge.
+if command -v dpkg >/dev/null 2>&1 && dpkg -s kizuna-eye >/dev/null 2>&1; then
+    echo ""
+    warn "このパッケージは apt（deb）で導入されています。"
+    warn "uninstall.sh ではなく apt で削除してください（dpkg の管理情報も消す必要があります）:"
+    echo ""
+    echo "     sudo apt purge kizuna-eye      # データ・ユーザーも削除（完全削除）"
+    echo "     sudo apt remove kizuna-eye     # サービス撤去・データは残す"
+    echo ""
+    if [ "$PURGE" -eq 1 ]; then
+        echo "   （--purge 相当は apt purge が担当します）"
+    fi
+    exit 1
+fi
+
 # sudo 実行時の実ユーザー（データ削除の対象ホーム解決に使う）
 RUN_USER="${SUDO_USER:-$(id -un)}"
 RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
@@ -116,13 +137,22 @@ fi
 # ---- 1. systemd サービス停止 + disable ----
 log ""
 log "▶ systemd サービスを停止・disable"
-UNITS="kizuna-eye-agent kizuna-dashboard kizuna-agent kizuna-eye"
+UNITS="kizuna-eye-agent kizuna-dashboard kizuna-action kizuna-agent kizuna-eye kizuna-log-collector kizuna-watchdog"
+# 停止・disable する unit（socket は .socket 拡張子で扱う）
+UNITS_SOCKET="kizuna-action"
 if command -v systemctl >/dev/null 2>&1; then
     for u in $UNITS; do
         if systemctl list-unit-files "$u.service" >/dev/null 2>&1 \
            && { systemctl is-active --quiet "$u" 2>/dev/null || systemctl is-enabled --quiet "$u" 2>/dev/null; }; then
             log "   $u を停止・disable"
             run systemctl disable --now "$u" 2>/dev/null || true
+        fi
+    done
+    # socket は .socket で停止・disable する（.service では見つからない）。
+    for u in $UNITS_SOCKET; do
+        if systemctl list-unit-files "$u.socket" >/dev/null 2>&1; then
+            log "   $u.socket を停止・disable"
+            run systemctl disable --now "$u.socket" 2>/dev/null || true
         fi
     done
 else
@@ -144,7 +174,26 @@ fi
 log ""
 log "▶ unit ファイルを削除"
 for u in $UNITS; do
-    f="/etc/systemd/system/$u.service"
+    for ext in service socket; do
+        f="/etc/systemd/system/$u.$ext"
+        if [ -f "$f" ]; then
+            log "   削除: $f"
+            run rm -f "$f"
+        fi
+    done
+done
+# deb の postinst が /lib/systemd/system に置く場合もあるため、そちらも掃除する。
+for u in $UNITS; do
+    for ext in service socket; do
+        f="/lib/systemd/system/$u.$ext"
+        if [ -f "$f" ]; then
+            log "   削除: $f"
+            run rm -f "$f"
+        fi
+    done
+done
+# tmpfiles 設定（action socket 用の /run/kizuna-eye）
+for f in /usr/lib/tmpfiles.d/kizuna-eye.conf; do
     if [ -f "$f" ]; then
         log "   削除: $f"
         run rm -f "$f"
@@ -181,6 +230,11 @@ for f in /usr/local/bin/kizuna-cron-read.sh /usr/local/bin/kizuna-action.sh; do
         run rm -f "$f"
     fi
 done
+# deb 経路のヘルパー（/usr/lib/kizuna-eye）
+if [ -d /usr/lib/kizuna-eye ]; then
+    log "   削除: /usr/lib/kizuna-eye"
+    run rm -rf /usr/lib/kizuna-eye
+fi
 
 # ---- 6. /etc/kizuna-eye（署名公開鍵）削除 ----
 log ""
