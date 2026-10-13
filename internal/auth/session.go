@@ -7,9 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // maxSessions bounds the total number of in-memory sessions. Without a cap, an
@@ -387,40 +388,11 @@ func (m *SessionManager) save() {
 	}
 	data = append(data, '\n')
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		m.log("セッション永続化: ディレクトリ作成に失敗 (%s): %v", dir, err)
-		return
-	}
-	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
-	if err != nil {
-		m.log("セッション永続化: 一時ファイル作成に失敗: %v", err)
-		return
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(0600); err != nil {
-		tmp.Close()
-		m.log("セッション永続化: chmod に失敗: %v", err)
-		return
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		m.log("セッション永続化: 書き込みに失敗: %v", err)
-		return
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		m.log("セッション永続化: sync に失敗: %v", err)
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		m.log("セッション永続化: close に失敗: %v", err)
-		return
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		m.log("セッション永続化: rename に失敗: %v", err)
+	// fsutil.WriteFileAtomic: 親ディレクトリを 0700 で用意し、0600 の一時
+	// ファイルに fsync してから rename する（L-12: ここにも同じ処理が
+	// 重複していた）。
+	if err := fsutil.WriteFileAtomic(path, data, 0600); err != nil {
+		m.log("セッション永続化: 書き込みに失敗 (%s): %v", path, err)
 	}
 }
 

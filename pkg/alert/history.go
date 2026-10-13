@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"Kizuna-Eye/pkg/fsutil"
 	"Kizuna-Eye/pkg/notify"
 )
 
@@ -196,38 +197,20 @@ func (h *History) compactLocked() {
 	if h.path == "" {
 		return
 	}
-	dir := filepath.Dir(h.path)
-	tmp, err := os.CreateTemp(dir, filepath.Base(h.path)+".tmp-*")
-	if err != nil {
-		return
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	_ = tmp.Chmod(0600)
-
-	w := bufio.NewWriter(tmp)
+	var out []byte
 	for _, e := range h.entries {
 		b, err := json.Marshal(e)
 		if err != nil {
 			continue
 		}
-		if _, err := w.Write(append(b, '\n')); err != nil {
-			tmp.Close()
-			return
-		}
+		out = append(out, b...)
+		out = append(out, '\n')
 	}
-	if err := w.Flush(); err != nil {
-		tmp.Close()
+	// fsutil.WriteFileAtomic: 同一ディレクトリの一時ファイルに書き、fsync して
+	// から rename する。同じ処理が10箇所に散っていたので共通化した（L-12）。
+	if err := fsutil.WriteFileAtomic(h.path, out, 0600); err != nil {
 		return
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return
-	}
-	if err := tmp.Close(); err != nil {
-		return
-	}
-	_ = os.Rename(tmpName, h.path)
 }
 
 // Load reads persisted records from path (newest kept up to max).

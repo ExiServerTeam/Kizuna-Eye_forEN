@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // Role is the user permission level.
@@ -182,29 +184,9 @@ func (s *Store) saveLocked() error {
 		mode = info.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(s.path)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, s.path)
+	// fsutil.WriteFileAtomic: mode を一時ファイルへ適用し、fsync してから
+	// rename する（L-12: 同じ処理が12箇所に重複していた）。
+	return fsutil.WriteFileAtomic(s.path, data, mode)
 }
 
 // Count returns the number of users.

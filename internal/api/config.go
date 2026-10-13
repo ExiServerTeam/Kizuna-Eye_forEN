@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"Kizuna-Eye/pkg/config"
+	"Kizuna-Eye/pkg/fsutil"
 )
 
 // ConfigHandler serves config file APIs.
@@ -449,30 +450,9 @@ func (c *ConfigHandler) saveJSONFile(filePath string, data interface{}) error {
 		mode = info.Mode().Perm()
 	}
 
-	tmp, err := os.CreateTemp(dir, filepath.Base(filePath)+".tmp-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	// Best-effort cleanup; a no-op after a successful rename.
-	defer func() { _ = os.Remove(tmpName) }()
-
-	if err := tmp.Chmod(mode); err != nil {
-		tmp.Close()
-		return err
-	}
-	if _, err := tmp.Write(jsonData); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, filePath)
+	// fsutil.WriteFileAtomic: シンボリックリンクを拒否し、mode を一時ファイル
+	// に適用してから fsync + rename する（L-12: 同じ処理が10箇所にあった）。
+	return fsutil.WriteFileAtomic(filePath, jsonData, mode)
 }
 
 // validateNotificationChannels validates the notifications block the same way
