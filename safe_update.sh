@@ -118,6 +118,11 @@ if [ -n "$LATEST_BACKUP" ]; then
     if [ -d "$LATEST_BACKUP/plugins" ]; then
         mkdir -p "$PLUGIN_OUT_DIR" 2>/dev/null || true
         cp -a "$LATEST_BACKUP/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+        # Restore the signatures with the .so files. Restoring only the .so
+        # leaves the NEW .sig in place, so the OLD .so no longer matches and
+        # plugins.require_signature=true refuses to load every plugin (the
+        # rollback would silently disable all security monitoring).
+        cp -a "$LATEST_BACKUP/plugins"/*.so.sig "$PLUGIN_OUT_DIR/" 2>/dev/null || true
     fi
     restart_services || true
     echo "⚠️  前のバージョンへ戻しました。"

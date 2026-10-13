@@ -144,6 +144,11 @@ done
 if [ -d "$PLUGIN_OUT_DIR" ]; then
     mkdir -p "$ROLLBACK_DIR/plugins"
     cp -a "$PLUGIN_OUT_DIR"/*.so "$ROLLBACK_DIR/plugins/" 2>/dev/null || true
+    # 署名ファイル (.so.sig) も必ず退避する。rollback が .so だけ戻して新しい
+    # .sig を残すと、旧 .so と新 .sig が不一致になり、require_signature=true の
+    # 環境ではロールバック後のプラグインが署名検証に失敗してロードされない
+    # （エラーログだけを残して静かに監視が止まる）。
+    cp -a "$PLUGIN_OUT_DIR"/*.so.sig "$ROLLBACK_DIR/plugins/" 2>/dev/null || true
 fi
 ok "バックアップ: $ROLLBACK_DIR"
 PREV_VERSION="$(git describe --tags --always 2>/dev/null || echo unknown)"
@@ -153,7 +158,12 @@ rollback() {
     for f in agent_linux dashboard_linux plugin-inspect plugin-sign; do
         [ -f "$ROLLBACK_DIR/$f" ] && cp -a "$ROLLBACK_DIR/$f" "$BIN_DIR/$f"
     done
-    [ -d "$ROLLBACK_DIR/plugins" ] && cp -a "$ROLLBACK_DIR/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+    if [ -d "$ROLLBACK_DIR/plugins" ]; then
+        cp -a "$ROLLBACK_DIR/plugins"/*.so "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+        # .so と .sig は必ずペアで戻す（片方だけだと署名検証が失敗し、
+        # fail-closed でプラグインがロードされない）。
+        cp -a "$ROLLBACK_DIR/plugins"/*.so.sig "$PLUGIN_OUT_DIR/" 2>/dev/null || true
+    fi
 }
 
 # ---- 3. 変更検出 ----
