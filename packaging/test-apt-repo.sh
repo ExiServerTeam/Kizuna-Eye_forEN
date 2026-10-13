@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${1:-ubuntu:24.04}"
+IMAGE="${1:-ubuntu:20.04}"
 REPO="$ROOT/apt-repo"
 
 if [ ! -d "$REPO" ]; then

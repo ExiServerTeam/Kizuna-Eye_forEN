@@ -11,7 +11,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-IMAGE="${1:-ubuntu:24.04}"
+IMAGE="${1:-ubuntu:20.04}"
 DEB="$(ls -1 "$ROOT"/dist/kizuna-eye_*_amd64.deb 2>/dev/null | head -n1 || true)"
 if [ -z "$DEB" ]; then
     echo "❌ dist/ に .deb がありません。先に ./packaging/build-deb.sh を実行してください。" >&2
