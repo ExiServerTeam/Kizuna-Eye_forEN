@@ -240,13 +240,32 @@ func acceptAgentPayload(isAgent, isStatus, canPromote bool) (accept, promote boo
 // ブラウザは WebSocket ハンドシェイクで常に Origin ヘッダを送るが、Go agent は
 // 送らない。Origin チェックが無いと、ログイン済みの任意のブラウザが
 // /ws?role=agent を開いて agent を偽装できてしまう。
+//
+// さらに、認証が有効（authEnabled）なときは常に false を返す（fail-closed）。
+// 認証が有効なら、トークン無しの非ブラウザクライアントに agent を名乗らせては
+// ならない。そうしないと、未認証のリモートクライアントが /ws?role=agent を
+// 開き、偽の security_alert を注入して通知・アラート履歴を汚染できてしまう。
+// トークンが未設定なら agent は接続できない（起動時に dash.agent_token_missing
+// で警告済み）。トークン無しヒューリスティックは、認証を切った信頼済み
+// ネットワークでのみ意味を持つ。
 // eligibleForHeuristicPromotion reports whether a /ws connection may become
 // the agent through the legacy tokenless heuristic. It requires that no token
 // is configured, that the client declared role=agent, and that the client is
 // NOT a browser. Browsers always send an Origin header on the WebSocket
 // handshake; the Go agent does not. Without the Origin check, any logged-in
 // browser could open /ws?role=agent and impersonate the agent.
-func eligibleForHeuristicPromotion(agentToken string, isAgentRole bool, origin string) bool {
+//
+// It also always returns false when authentication is enabled (authEnabled),
+// i.e. fail-closed: a tokenless non-browser client must not be able to claim
+// to be the agent, otherwise an unauthenticated remote client could open
+// /ws?role=agent and inject forged security_alert events into notifications
+// and the alert history. With no token configured the agent simply cannot
+// connect (warned at startup via dash.agent_token_missing). The tokenless
+// heuristic is meaningful only on a trusted network with auth disabled.
+func eligibleForHeuristicPromotion(agentToken string, authEnabled, isAgentRole bool, origin string) bool {
+	if authEnabled {
+		return false
+	}
 	return agentToken == "" && isAgentRole && origin == ""
 }
 
@@ -485,6 +504,16 @@ type Hub struct {
 	// agentToken authenticates agent connections. Empty disables token
 	// authentication (legacy heuristic detection only).
 	agentToken string
+
+	// authEnabled は dashboard の認証が有効かを示す。認証が有効なときは
+	// トークン無しのレガシーヒューリスティック（role=agent + Origin なし）を
+	// 無効化する。そうしないと、未認証の非ブラウザクライアントが agent を
+	// 名乗り、偽の security_alert を注入できてしまう（fail-closed）。
+	// authEnabled indicates whether dashboard authentication is on. When it is,
+	// the legacy tokenless heuristic (role=agent with no Origin) is disabled:
+	// otherwise an unauthenticated non-browser client could claim to be the
+	// agent and inject forged security_alert events (fail-closed).
+	authEnabled bool
 
 	// viewerMode は未認証ブラウザクライアントが受け取るものをフィルタする。
 	// true のとき、status は無害化され、セッションを提示しなかったクライアントには
@@ -1169,6 +1198,7 @@ func main() {
 
 	hub := NewHub(100, lg)
 	hub.agentToken = cfg.Auth.AgentToken
+	hub.authEnabled = cfg.Auth.Enabled
 	// public viewer フィルタリングは auth が有効なときのみ意味を持つ。auth がオフなら
 	// 全クライアントが信頼され、従来どおり完全なデータを配信する。
 	// Public viewer filtering only matters when auth is enabled; with auth off
@@ -1341,7 +1371,7 @@ func main() {
 			// to the legacy heuristic, but only for non-browser clients
 			// (see eligibleForHeuristicPromotion).
 			isAgent := hub.agentToken != "" && isAgentRole
-			canPromoteHeuristically := eligibleForHeuristicPromotion(hub.agentToken, isAgentRole, r.Header.Get("Origin"))
+			canPromoteHeuristically := eligibleForHeuristicPromotion(hub.agentToken, hub.authEnabled, isAgentRole, r.Header.Get("Origin"))
 			if isAgent {
 				if !hub.MarkAgentConn(client) {
 					lg.WarnT("dash.agent_dup_rejected", conn.RemoteAddr())

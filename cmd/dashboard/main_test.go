@@ -38,22 +38,27 @@ func TestEligibleForHeuristicPromotion(t *testing.T) {
 	cases := []struct {
 		name        string
 		agentToken  string
+		authEnabled bool
 		isAgentRole bool
 		origin      string
 		want        bool
 	}{
-		{"tokenless non-browser agent is eligible", "", true, "", true},
+		{"tokenless non-browser agent on trusted network is eligible", "", false, true, "", true},
 		// Regression: a browser always sends Origin, so it must never be
 		// eligible for tokenless agent promotion.
-		{"browser with Origin is not eligible", "", true, "http://evil.example", false},
-		{"token configured disables the heuristic", "tok", true, "", false},
-		{"missing role=agent is not eligible", "", false, "", false},
+		{"browser with Origin is not eligible", "", false, true, "http://evil.example", false},
+		{"token configured disables the heuristic", "tok", false, true, "", false},
+		{"missing role=agent is not eligible", "", false, false, "", false},
+		// Fail-closed: with auth enabled, no tokenless promotion even when
+		// the token is empty, so an unauthenticated remote client cannot
+		// impersonate the agent and forge security events.
+		{"auth enabled disables the heuristic", "", true, true, "", false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := eligibleForHeuristicPromotion(c.agentToken, c.isAgentRole, c.origin); got != c.want {
-				t.Fatalf("eligibleForHeuristicPromotion(%q,%v,%q) = %v, want %v",
-					c.agentToken, c.isAgentRole, c.origin, got, c.want)
+			if got := eligibleForHeuristicPromotion(c.agentToken, c.authEnabled, c.isAgentRole, c.origin); got != c.want {
+				t.Fatalf("eligibleForHeuristicPromotion(%q,%v,%v,%q) = %v, want %v",
+					c.agentToken, c.authEnabled, c.isAgentRole, c.origin, got, c.want)
 			}
 		})
 	}
