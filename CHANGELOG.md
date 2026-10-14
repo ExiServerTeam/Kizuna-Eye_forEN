@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (docs)
+- `docs/ROADMAP.md` 第5章（プラグイン機構の運用負荷）を実態に更新。共有パッケージに `pkg/fsutil` を追加し、combined `go.work` と `-trimpath` の一致が必須であることを明記。再ビルド自動化（`build-all.sh` / `scripts/build-plugin.sh`）と `plugin.Open` 失敗の可視化（`reason_code`）は実装済みとしてチェックを付けた。
 - プラグイン再ビルドの注意（`docs/PROCEDURE.md` 5.1 / 5.3）を README と揃えた。共有パッケージに `pkg/fsutil` を追加し、`go.work` と `GOWORK=off` の混在が build ID 不一致を招くこと、`-trimpath` を本体とプラグインで一致させること、プラグインビルド例に `-trimpath -buildvcs=false` を付けることを明記した。
 
 ### Fixed

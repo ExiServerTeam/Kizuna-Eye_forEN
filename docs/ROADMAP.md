@@ -149,13 +149,14 @@
 ## 5. プラグイン機構の運用負荷 → 🟡 一部対応
 
 **現状**
-- `pkg/module` / `pkg/status` 変更時は本体＋全 `.so` を同一ソースで再ビルドが必須。
+- `pkg/module` / `pkg/status` / `pkg/fsutil` 変更時は本体＋全 `.so` を同一ソースで再ビルドが必須。
+- 加えて、本体と全プラグインを 1 つの combined `go.work`・`-trimpath` 常時 ON でビルドする必要がある（`go.work` と `GOWORK=off` の混在は同じソースでも build ID が食い違い、ロードに失敗する）。
 - ホットリロードやバージョン互換の仕組みは未実装。
 
 **対応**
-- ✅ README / README.ja.md に「プラグイン再ビルドの運用注意」を明記済み。
-- ⬜ **再ビルド自動化**: `scripts/rebuild-plugins.sh` で全プラグインを一括再ビルド。
-- ⬜ **互換性チェック**: 起動時に `plugin.Open` 失敗を検知し、警告を明確化。
+- ✅ README / README.ja.md / PROCEDURE.md に「プラグイン再ビルドの運用注意」（共有パッケージ・go.work・`-trimpath`）を明記済み。
+- ✅ **再ビルド自動化**: `build-all.sh` / `scripts/build-plugin.sh` が本体＋全プラグインを 1 つの combined `go.work` でビルド・署名・配置する。
+- ✅ **互換性チェック**: agent は `plugin.Open` 失敗を検知し、`/api/plugin-runtime`（および WS `module_status`）で UI に「読み込み失敗」と理由（`reason_code`）を伝える。
 
 ---
 
