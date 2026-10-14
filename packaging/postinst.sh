@@ -133,6 +133,21 @@ case "$1" in
     # 旧 sudoers 方式の残骸を掃除（sudo → socket 方式への移行）。
     rm -f /etc/sudoers.d/kizuna-security-action /usr/local/bin/kizuna-action.sh 2>/dev/null || true
 
+    # --- 6c. プラグイン署名公開鍵の置き場 ---
+    # 設定の public_key_file は /etc/kizuna-eye/plugin_signing.pub を指す。
+    # require_signature=false の間は読まれないが、パス先のディレクトリが無いと
+    # 後で署名検証を有効化したくても置き場に困る（有効化した瞬間に fail-closed で
+    # 起動拒否になる）。root 所有の空ディレクトリを用意し、公開鍵がパッケージに
+    # 含まれていれば配置する。
+    # The config's public_key_file points at /etc/kizuna-eye/plugin_signing.pub.
+    # While require_signature=false it is not read, but the directory must exist
+    # so an operator can enable signature checking without hitting fail-closed on
+    # the next start. Create the directory and install the public key if shipped.
+    install -d -m 0755 /etc/kizuna-eye
+    if [ -f "$SHARE_DIR/plugin_signing.pub" ]; then
+      install -m 0644 -o root -g root "$SHARE_DIR/plugin_signing.pub" /etc/kizuna-eye/plugin_signing.pub
+    fi
+
     # --- 7. systemd unit のプレースホルダを実値に置換 ---
     for u in kizuna-eye-agent kizuna-dashboard; do
       if [ -f "$SHARE_DIR/systemd/$u.service" ]; then

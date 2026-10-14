@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - プラグイン再ビルドの注意（`docs/PROCEDURE.md` 5.1 / 5.3）を README と揃えた。共有パッケージに `pkg/fsutil` を追加し、`go.work` と `GOWORK=off` の混在が build ID 不一致を招くこと、`-trimpath` を本体とプラグインで一致させること、プラグインビルド例に `-trimpath -buildvcs=false` を付けることを明記した。
 
 ### Fixed
+- 実機の apt 検証で見つかったログの未定義キーを修正した。`dash.api_insight`（`cmd/dashboard/main.go`）と `agent.module_status_sent` / `agent.module_status_failed` / `agent.plugin_name_panic` / `agent.sec_event_requeue_panic`（`cmd/agent/main.go`）が `pkg/logger/catalog.go` に無く、ログ本文に生キーがそのまま出ていた。ja/en 両方に追加した。あわせて、**コード中で使われている `*T` キーがカタログに存在するか**を走査する回帰テスト `TestCatalogCoversAllUsedKeys` を追加した（従来のパリティテストは ja/en の一致しか見ておらず、この種の抜けを検出できなかった）。
+- deb の postinst が設定の `public_key_file` が指す `/etc/kizuna-eye/` を作っていなかった問題を修正した。`require_signature=false` の間は実害が無いが、後で署名検証を有効化すると鍵の置き場が無く fail-closed で起動拒否になる。postinst でディレクトリを作成し、公開鍵がパッケージに含まれていれば配置するようにした。
 - `install.sh` の英語 UI（`UI_LANG=en`）で日本語のまま表示されていた 30 件のメッセージを `tr_msg` に追加した。対象はワンクリック対処サービス（特権ソケット）の導入、agent unit の最新化・稼働確認、H-1 移行の補助メッセージ、deb（apt）管理下の検出、プラグイン ABI 不一致の警告、プラグインソース欠落の案内など。あわせて、`go が見つかりません` / `x/sys 不一致` / `旧 unit ... を disable` の 3 パターンが既存の `tr_msg` で途中までしか英訳できておらず日本語の接尾辞が残っていた問題も直した。
 
 ## [0.8.0] - 2026-10-13
