@@ -532,11 +532,24 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var mod ModuleConfig
-	if err := json.NewDecoder(r.Body).Decode(&mod); err != nil {
+	// enabled は *bool で受ける。bool だと「省略（ゼロ値 false）」と「明示的な
+	// false」を区別できず、enabled を省いた設定編集リクエストがモジュールを
+	// 黙って無効化してしまう（保護のダウングレード）。省略時は保存値を保つ。
+	// Parse enabled as *bool: a plain bool cannot tell "omitted" (zero value
+	// false) from an explicit false, so a config-edit request that omits
+	// enabled would silently disable the module (a protection downgrade).
+	// Preserve the stored value when it is omitted.
+	var req struct {
+		Name    string          `json:"name"`
+		Type    string          `json:"type"`
+		Config  json.RawMessage `json:"config"`
+		Enabled *bool           `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "リクエストボディのパースに失敗しました: "+err.Error())
 		return
 	}
+	mod := ModuleConfig{Name: req.Name, Type: req.Type, Config: req.Config}
 
 	// 一部の設定フィールドは保護/復旧機能またはコード実行境界（plugin_path）に
 	// 触れる。パスベースのミドルウェア規則では設定編集とそのような変更を区別
@@ -548,6 +561,13 @@ func (h *ModuleHandler) handleUpdate(w http.ResponseWriter, r *http.Request) {
 	// here: if any admin-only field differs from the stored value, admin is
 	// required. A nil checker is treated as "not admin" (fail-closed).
 	if cur := h.storage.Get(name); cur != nil {
+		// enabled が省略されていれば保存値を保つ（config と同じ扱い）。
+		// Keep the stored enabled value when it is omitted (same as config).
+		if req.Enabled == nil {
+			mod.Enabled = cur.Enabled
+		} else {
+			mod.Enabled = *req.Enabled
+		}
 		// モジュールを無効化（または有効化）するとその監視が停止/開始するため、
 		// 保護機能の変更だ。admin のみ。
 		// Disabling (or enabling) a module starts/stops its monitoring, so it
