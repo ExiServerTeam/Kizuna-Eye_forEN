@@ -181,9 +181,9 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 - `ConfigProvider`: `GetConfigFields`（任意）
 - `DisplayNameProvider`: `DisplayName`（任意）
 
-ビルドは次のとおりである。
+ビルドは次のとおりである。本体とプラグインを 1 つの combined `go.work`・`-trimpath` 常時 ON でビルドすること（5.3 を参照）。
 
-    CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
+    CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o my_plugin.so .
 
 ### 5.2 配備
 
@@ -193,7 +193,11 @@ Web ダッシュボードの「モジュール管理」タブから `.so` をア
 
 ### 5.3 再ビルドが必要な場合
 
-`pkg/module` または `pkg/status` の公開型を変更した場合は、Agent 本体と全プラグインを同一ソースから同時に再ビルドする必要がある。片方だけを再ビルドすると、読み込み時に「異なるバージョンのパッケージ」として失敗する。
+`pkg/module` / `pkg/status` / `pkg/fsutil` のいずれかを変更した場合は、Agent 本体と全プラグインを同一ソースから同時に再ビルドする必要がある。片方だけを再ビルドすると、読み込み時に「異なるバージョンのパッケージ（plugin was built with a different version of package ...）」として失敗する。
+
+加えて、**モジュール解決の方法**と `-trimpath` も一致させること。本体を `go.work` で、プラグインを `GOWORK=off`（プラグイン側の `replace Kizuna-Eye => ...`）でビルドすると、同じソースでも共有パッケージの build ID が食い違い、ロードに失敗する。`./build-all.sh`（または `scripts/build-plugin.sh`）は、本体と全プラグインを 1 つの combined `go.work`・`-trimpath` 常時 ON でビルドする。
+
+手で行う場合: (1) 本体と各プラグインのディレクトリを 1 つの `go.work` に入れる。(2) 本体と各プラグインを同一ツールチェーン・`-trimpath` でビルドする。(3) `.so` を plugins ディレクトリへ配備し、agent を再起動する。
 
 ---
 
