@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- `install.sh` の英語 UI（`UI_LANG=en`）で日本語のまま表示されていた 30 件のメッセージを `tr_msg` に追加した。対象はワンクリック対処サービス（特権ソケット）の導入、agent unit の最新化・稼働確認、H-1 移行の補助メッセージ、deb（apt）管理下の検出、プラグイン ABI 不一致の警告、プラグインソース欠落の案内など。あわせて、`go が見つかりません` / `x/sys 不一致` / `旧 unit ... を disable` の 3 パターンが既存の `tr_msg` で途中までしか英訳できておらず日本語の接尾辞が残っていた問題も直した。
+
 ## [0.8.0] - 2026-10-13
 
 ### Added

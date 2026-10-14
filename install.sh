@@ -124,7 +124,7 @@ tr_msg() {
         "Go の確認（必要: "*"）") m="Go check (required: ${m#Go の確認（必要: })" ;;
         "検出: "*) m="Detected: ${m#検出: }" ;;
         "Go バージョン OK") m="Go version OK" ;;
-        "go が見つかりません。Go "*) m="go not found. Install Go: ${m#go が見つかりません。Go }" ;;
+        "go が見つかりません。Go "*) m="go not found. Install the required Go version — https://go.dev/dl/" ;;
         "例: curl -LO "*) m="Example: curl -LO ${m#例: curl -LO }" ;;
         "go "*" は "*" 未満。GOTOOLCHAIN=auto で "*" を自動取得します（初回ネット必須）。")
             m="Go is older than required; GOTOOLCHAIN=auto will fetch it (network needed on first run)." ;;
@@ -136,7 +136,7 @@ tr_msg() {
         "プラグインをビルド中...") m="Building plugins..." ;;
         "プラグインソース無し: "*) m="No plugin source: ${m#プラグインソース無し: }" ;;
         *" は main パッケージではないためスキップ") m="${m% は main パッケージではないためスキップ} is not a main package; skipping" ;;
-        "x/sys 不一致: "*) m="x/sys mismatch: ${m#x/sys 不一致: }" ;;
+        "x/sys 不一致: "*) m="x/sys version mismatch between host and plugin (the plugin will fail to load)" ;;
         "🔌 ビルド: "*) m="🔌 Building: ${m#🔌 ビルド: }" ;;
         "プラグインビルド失敗: "*) m="Plugin build failed: ${m#プラグインビルド失敗: }" ;;
         # --- 署名 ---
@@ -169,6 +169,18 @@ tr_msg() {
         "/etc/sudoers.d がありません。手動で設定してください。") m="/etc/sudoers.d not found. Configure manually." ;;
         "sudo が使えないため sudoers 設定をスキップします。S.M.A.R.T には権限が必要です。")
             m="sudo unavailable; skipping sudoers. S.M.A.R.T needs privileges." ;;
+        # --- 前提チェック（root シェル / 実行権限 / deb 検出）---
+        "root シェルから実行されています（SUDO_UID なし）。"*"dashboard からのプラグイン配置・署名が失敗します。sudo ./install.sh の形で実行し直すか、後で chown -R <ユーザー> "*" を実行してください。")
+            m="Running from a root shell (no SUDO_UID). $BIN_DIR will be root-owned and plugin upload/signing from the dashboard will fail. Re-run as 'sudo ./install.sh', or run 'chown -R <user> $BIN_DIR' afterwards." ;;
+        "kizuna-eye から "*" を実行できません。: sudo chmod o+rx "*) m="kizuna-eye cannot execute the agent binary (permission fix needed: sudo chmod o+rx on the parent dir and the binary)" ;;
+        "kizuna-eye は apt（deb）で導入されています。") m="kizuna-eye is installed via apt (deb)." ;;
+        "install.sh は使いません。更新・削除は apt で行ってください:") m="Do not use install.sh. Use apt to update or remove:" ;;
+        "（ソースから入れ直す場合は先に sudo apt purge kizuna-eye）") m="(To reinstall from source, first run: sudo apt purge kizuna-eye)" ;;
+        "  KIZUNA_SEC_PLUGIN_DIR / KIZUNA_LITE_PLUGIN_DIR の指定と、go build のエラー内容を確認してください。")
+            m="  Check KIZUNA_SEC_PLUGIN_DIR / KIZUNA_LITE_PLUGIN_DIR and the go build error output." ;;
+        "  プラグインが古いままだと ABI 不一致でロードに失敗します（再ビルド推奨）。")
+            m="  A stale plugin fails to load due to ABI mismatch (rebuild recommended)." ;;
+        "以下のプラグインはビルドに失敗しました:"*) m="The following plugins failed to build:${m#以下のプラグインはビルドに失敗しました:}" ;;
         "cron 読み取りヘルパーの導入") m="Installing cron-read helper" ;;
         "sudo が使えないため cron ヘルパーの導入をスキップします。手動で:")
             m="sudo unavailable; skipping cron helper. Manually:" ;;
@@ -185,12 +197,25 @@ tr_msg() {
         "対処ヘルパーの設置に失敗しました: "*) m="Failed to install the action helper: ${m#対処ヘルパーの設置に失敗しました: }" ;;
         "対処用 sudoers の設定に失敗しました（visudo 検証 or 権限）。手動で設定してください:")
             m="Failed to write the action sudoers (visudo or permissions). Configure manually:" ;;
+        # --- ワンクリック対処サービス（特権ソケット / タスク2）---
+        "▶ ワンクリック対処サービス（特権ソケット）の導入") m="Installing the one-click action service (privileged socket)" ;;
+        "sudo が使えないため対処サービスの導入をスキップします。手動で:")
+            m="sudo unavailable; skipping the action service. Manually:" ;;
+        "対処サービス資産が見つかりません（"*"）") m="Action service assets not found (helper or server script)" ;;
+        "対処サーバーの設置に失敗しました: "*) m="Failed to install the action server" ;;
+        "対処サーバー: "*) m="action server: ${m#対処サーバー: }" ;;
+        "systemd unit ソースがありません（"*"）") m="systemd unit source missing (socket/service)" ;;
+        "kizuna-action.socket を有効化・起動しました") m="Enabled and started kizuna-action.socket" ;;
+        "kizuna-action.socket の起動に失敗しました。手動で: sudo systemctl enable --now kizuna-action.socket")
+            m="Failed to start kizuna-action.socket. Manually: sudo systemctl enable --now kizuna-action.socket" ;;
+        "旧 sudoers を削除（socket 方式へ移行）") m="Removed the legacy sudoers entry (migrated to the socket service)" ;;
+        "ℹ️  プラグインソース無し: "*) m="ℹ️  No plugin source: ${m#ℹ️  プラグインソース無し: }" ;;
         # --- systemd（サービス登録）---
         # --- systemd ---
         "systemd 登録（dashboard + agent）") m="Registering systemd services (dashboard + agent)" ;;
         "sudo が使えないため systemd 登録をスキップします。手動で: sudo systemd/migrate-agent-user.sh "*)
             m="sudo unavailable; skipping systemd registration. Run manually." ;;
-        "旧 unit "*" を disable（二重起動防止）") m="Disabling legacy unit ${m#旧 unit }" ;;
+        "旧 unit "*" を disable（二重起動防止）") m="Disabled legacy unit ${m#旧 unit }"; m="${m% を disable（二重起動防止）}" ;;
         "   ℹ️ agent は移行済み（"*) m="   agent already migrated; restarting only" ;;
         *" が無いため agent の H-1 移行をスキップします。") m="migration script missing; skipping H-1 migration." ;;
         "agent を専用ユーザー (kizuna-eye) で systemd 管理下に移行しました") m="Migrated agent to the dedicated kizuna-eye user under systemd" ;;
@@ -202,6 +227,15 @@ tr_msg() {
             m="Failed to start dashboard via systemd. Run: sudo systemctl enable --now kizuna-dashboard" ;;
         "agent を再起動しました") m="Restarted agent" ;;
         "agent の再起動に失敗しました: sudo systemctl restart kizuna-eye-agent") m="Failed to restart agent: sudo systemctl restart kizuna-eye-agent" ;;
+        # --- H-1 移行の補助メッセージ（agent unit 最新化・状態確認）---
+        "   ℹ️ agent unit は最新です") m="   ℹ️ agent unit is already up to date" ;;
+        "   ℹ️ 旧版の退避先: "*) m="   ℹ️ Previous version saved to: ${m#   ℹ️ 旧版の退避先: }" ;;
+        "agent unit を最新テンプレートで更新しました（旧版は /tmp に退避）") m="Updated the agent unit to the latest template (previous version saved in /tmp)" ;;
+        "agent unit に未置換のプレースホルダが残るため更新をスキップします: "*) m="Skipped the agent unit update because unresolved placeholders remain: ${m#agent unit に未置換のプレースホルダが残るため更新をスキップします: }" ;;
+        *" は Kizuna-Eye の unit ではないため更新しません（手動で確認してください）") m="${m% は Kizuna-Eye の unit ではないため更新しません（手動で確認してください）} is not a Kizuna-Eye unit; not updating (check manually)" ;;
+        "agent が active ではありません（state="*"）。確認: sudo journalctl -u kizuna-eye-agent -n 50 --no-pager") m="agent is not active (see state above). Check: sudo journalctl -u kizuna-eye-agent -n 50 --no-pager" ;;
+        "dashboard が active ではありません（state="*"）。確認: sudo journalctl -u kizuna-dashboard -n 50 --no-pager") m="dashboard is not active (see state above). Check: sudo journalctl -u kizuna-dashboard -n 50 --no-pager" ;;
+        "dashboard は稼働中 (systemd)") m="dashboard is running (systemd)" ;;
         # --- 起動 ---
         "2回目以降の実行です。起動する場合は ./start.sh を実行してください。") m="Already installed. Run ./start.sh to start." ;;
         "既に動作中です。./stop.sh で停止してから起動します。") m="Already running; stopping with ./stop.sh first." ;;
