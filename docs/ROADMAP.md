@@ -157,6 +157,7 @@
 - ✅ README / README.ja.md / PROCEDURE.md に「プラグイン再ビルドの運用注意」（共有パッケージ・go.work・`-trimpath`）を明記済み。
 - ✅ **再ビルド自動化**: `build-all.sh` / `scripts/build-plugin.sh` が本体＋全プラグインを 1 つの combined `go.work` でビルド・署名・配置する。
 - ✅ **互換性チェック**: agent は `plugin.Open` 失敗を検知し、`/api/plugin-runtime`（および WS `module_status`）で UI に「読み込み失敗」と理由（`reason_code`）を伝える。
+- ✅ **配布物（.deb）の ABI 一致**: 共有パッケージを変更したら `.deb` も再ビルドする必要があることを `packaging/README.md` に明記した（2026-10-14 の実機 apt 検証で、`.deb` 据え置き → 新 host と旧 host のプラグインが `plugin was built with a different version of package Kizuna-Eye/pkg/status` でロード不能になった事例を受けて）。`release.sh` を一括で走らせる（deb 再ビルド → リポジトリ再構築 → 20.04 実検証）。
 
 ---
 
@@ -196,13 +197,13 @@
 **現状**
 - `web/static/i18n.js` に ja / en の辞書あり。
 - **整合性チェッカー（`scripts/check_i18n.js`）で完全一致を検証済み**
-  （386 ja / 386 en キー、使用 301 キー、欠落ゼロ）。
+  （547 ja / 547 en キー、使用 374 キー、欠落ゼロ）。
 - 一方、**Go 側のエラーメッセージは日本語のみ**。英語 UI に切り替えても
   サーバーが日本語エラーを返すため、英語圏ユーザーには不親切。
 - 通知本文（Discord 等）も日本語のまま。
 
 **対応**
-- ✅ UI の ja/en 対応は完了（386キー一致、CI 相当のチェッカーで検証）。
+- ✅ UI の ja/en 対応は完了（547キー一致、CI 相当のチェッカーで検証）。
 - ⬜ **サーバーエラーの構造化**: `writeError` が返す文字列を機械可読な
   `code`（例 `auth.invalid_credentials`）に置き換え、フロントで i18n 翻訳
   する。全ハンドラ横断のため段階的に。

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (docs)
 - `docs/ROADMAP.md` 第5章（プラグイン機構の運用負荷）を実態に更新。共有パッケージに `pkg/fsutil` を追加し、combined `go.work` と `-trimpath` の一致が必須であることを明記。再ビルド自動化（`build-all.sh` / `scripts/build-plugin.sh`）と `plugin.Open` 失敗の可視化（`reason_code`）は実装済みとしてチェックを付けた。
 - プラグイン再ビルドの注意（`docs/PROCEDURE.md` 5.1 / 5.3）を README と揃えた。共有パッケージに `pkg/fsutil` を追加し、`go.work` と `GOWORK=off` の混在が build ID 不一致を招くこと、`-trimpath` を本体とプラグインで一致させること、プラグインビルド例に `-trimpath -buildvcs=false` を付けることを明記した。
+- `packaging/README.md` の冒頭に「共有パッケージを変更したら `.deb` も再ビルド」の節を追加し、`docs/ROADMAP.md` 第5章にも配布物（.deb）の ABI 一致として追記した。CHANGELOG の Fixed では「`packaging/README.md` のリリース手順で対応」と記録していたが、実際の同 README には当該手順が無いドリフトがあったため、背景（2026-10-14 の apt 検証で `.deb` 据え置きにより `plugin was built with a different version of package Kizuna-Eye/pkg/status` でロード不能）と是正（`release.sh` を一括で走らせる）を明記した。
+- `docs/ROADMAP.md` 第7章の i18n キー数を実測（`scripts/check_i18n.js`）に合わせて更新（386 ja/386 en・使用 301 → 547 ja/547 en・使用 374）。
 
 ### Fixed
 - モジュール設定の部分更新（`PUT /api/modules/{name}`）で `enabled` を省略すると、モジュールが**黙って無効化**されていた問題を修正した。`handleUpdate` は `enabled` を `bool` で受けていたため「省略（ゼロ値 false）」と「明示的な false」を区別できず、`config` には保持ガード（`isEmptyConfig`）があるのに `enabled` には無い非対称が原因。`enabled` を `*bool` で受け、省略時は保存値を保つようにした（ペネトレで再現: `plugin_path` だけ送ると `enabled: false` になり config の他フィールドも消えた）。回帰テスト `TestHandleUpdateOmitsEnabledKeepsStored` を追加。

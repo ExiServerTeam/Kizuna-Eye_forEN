@@ -2,6 +2,28 @@
 
 `dpkg-deb` だけで `.deb` を作る（nfpm 不要）。
 
+## 重要: 共有パッケージを変更したら `.deb` も再ビルド
+
+本体とプラグインは共有パッケージ（`pkg/module` / `pkg/status` /
+`pkg/fsutil`）のビルドハッシュ完全一致が必須である。したがって、これらを
+変更したら次の**両方**を行う。片方だけでは、配布物同士が食い違って壊れる。
+
+1. 全プラグイン（`.so`）を同一ソース・同一 combined `go.work`・`-trimpath` で
+   再ビルド・再署名する（`build-all.sh` / `scripts/build-plugin.sh`）。
+2. **`.deb` も再ビルドし、APT リポジトリを更新する**（`release.sh`）。
+
+背景: 実機 2026-10-14 で、`apt install` した host（`.deb` が 10/12）と、
+リポジトリでビルドしたプラグイン（`pkg/status` 変更が 10/13）が
+`plugin was built with a different version of package Kizuna-Eye/pkg/status`
+でロード不能になった。原因は環境差ではなく、共有パッケージ変更後に
+`.deb` を再ビルドしていなかったこと。`.deb` を再ビルドしたところ、同一
+ソースのプラグインが署名検証付きで正常にロードされることを確認した。
+
+> 注: `apt-repo.sh` だけを実行して `.deb` を据え置くと、古い host と新しい
+> プラグインの組み合わせで APT リポジトリが公開され得る。共有パッケージを
+> 触ったら必ず `release.sh`（= deb 再ビルド → リポジトリ再構築 → 実検証）を
+> 一括で走らせること。
+
 ## 対応環境
 
 - **Ubuntu Server 20.04 LTS 以降** / Debian 11 以降（amd64）。
