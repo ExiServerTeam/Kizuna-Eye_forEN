@@ -37,7 +37,7 @@ Released: 2026-10-13
 
 ## Fixed
 
-- Dashboard unit confinement that made one-click remediation unusable (NoNewPrivileges / ProtectSystem=strict / PrivateTmp are no longer applied to the dashboard only).
+- Dashboard unit confinement that made one-click remediation unusable. The privileged action helper was moved to a socket-activated root service (kizuna-action.socket / kizuna-action.service), so the dashboard no longer needs sudo. It therefore keeps full confinement: NoNewPrivileges, ProtectSystem=strict and PrivateTmp are now applied to the dashboard too, the same as the agent.
 - install.sh granted the one-click helper sudoers to the wrong user on the source-install path.
 - Plugin Name() / Interval() / RequeueSecurityEvents panics could crash the whole agent process.
 - Log forwarding (pkg/logger/forward.go) Close/Write race (send-on-closed-channel).

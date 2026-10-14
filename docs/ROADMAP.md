@@ -1,6 +1,6 @@
 # Kizuna-Eye プロジェクト ロードマップ / 課題管理
 
-> 最終更新: 2026-10-13
+> 最終更新: 2026-10-14
 
 ## 0. セキュリティ6層の現状（サマリ）
 
@@ -13,8 +13,8 @@
 | 2. 認証 | B | ロール/ bcrypt / セッション / 最終管理者保護。新規インストール（`config_version` 付き）は `public_viewer` 既定 false（secure default）、`auth.enabled` は install.sh が true、`agent_token` は install.sh がランダム生成 | `secure_cookies` の既定 true 化は HTTP 運用を壊すため対象外（HTTPS 運用時のみ設定） |
 | 3. プラグイン（設計書第5章の将来構想） | B | 別プロセス検査、Ed25519 署名検証、bwrap 分離。配布 example / install.sh は `require_signature=true`・`inspect_isolation=bwrap` を既定にする（コードのゼロ値ではなく実配備で fail-closed） | 共有型の最小化、コード既定での require_signature=true 化（鍵未設定時に起動不能になるため example 経由に留める） |
 | 4. ログ | A- | HMAC チェーン＋定期検証、alert_history 整合性＋行単位 HMAC 署名（`alert_history_key_path`）、inode 追跡、FIM、リモート転送（opt-in `log_forward.url`） | HMAC 鍵の自動ローテーション |
-| 5. 権限 | B | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、dashboard unit にも部分適用（ワンクリック対処と両立する範囲） | ワンクリック対処の特権ヘルパーサービス化（dashboard を strict 化するため）、HMAC 鍵ローテーション自動化 |
-| 6. 運用 | C+ | CONTRIBUTING 受入範囲、CI(go test/-race) | SECURITY.md 拡充(済)、govulncheck CI(済)、ROADMAP(本書)、脆弱性開示ポリシー |
+| 5. 権限 | B+ | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、**ワンクリック対処の特権ソケット化（kizuna-action.socket / kizuna-action.service）完了により dashboard も全保護**（NoNewPrivileges / ProtectSystem=strict / PrivateTmp を含む） | HMAC 鍵ローテーション自動化 |
+| 6. 運用 | B | CONTRIBUTING 受入範囲、CI(go test/-race)、SECURITY.md 拡充、govulncheck CI、ROADMAP(本書)、脆弱性開示ポリシー | Issue/PR テンプレート、CI の必須ゲート化（PR ブロック） |
 
 ## 0.1 実装済み / 未実装 / やらないこと
 
@@ -178,12 +178,15 @@
   - **agent**（`kizuna-eye-agent.service`）: 専用ユーザー `kizuna-eye` + `ProtectSystem=strict` /
     `NoNewPrivileges=yes` / `AmbientCapabilities`（CAP_DAC_READ_SEARCH・CAP_SYS_RAWIO・CAP_NET_ADMIN）。
     ケーパビリティで直接実行するため `NoNewPrivileges` を維持できる。
-  - **dashboard**（`kizuna-dashboard.service`）: 管理者向け「ワンクリック対処」が検証済みの
-    NOPASSWD ヘルパーを `sudo -n` で実行するため、`NoNewPrivileges`（sudo を不能化）・
-    `ProtectSystem=strict`（cron spool 書き込みを不能化）・`PrivateTmp`（実 /tmp 復元を不能化）は
-    **適用しない**。`ProtectHome` / `ProtectKernelTunables` / `ProtectControlGroups` /
-    `RestrictRealtime` / `RestrictSUIDSGID` は適用する。
-  - 完全な保護は「ワンクリック対処の特権ヘルパーサービス化」で実現する（下記 5. の残課題）。
+  - **dashboard**（`kizuna-dashboard.service`）: **全保護を適用**する。
+    管理者向け「ワンクリック対処」は特権ソケットサービス（`kizuna-action.service`,
+    systemd socket activation）へ委譲した。dashboard は `/run/kizuna-eye/action.sock` に
+    接続して結果を受け取るだけで root を要求しないため、`NoNewPrivileges` /
+    `ProtectSystem=strict` / `PrivateTmp` も含めて適用できる。したがって以前の
+    「sudo の都合で 3 点を外す」記述はもはや当てはまらない。
+  - 特権が必要な操作（kill / ファイアウォール / cron 削除 / ファイル復元）は
+    root で動く `kizuna-action.service` に集約し、ダッシュボードからは Unix ソケット
+    経由で JSON を送るだけにした（`systemd/kizuna-action.socket` / `.service`）。
 
 ---
 
