@@ -32,6 +32,16 @@ case "$1" in
           /usr/local/bin/kizuna-cron-read.sh 2>/dev/null || true
     rm -f /usr/lib/kizuna-eye/kizuna-action.sh \
           /usr/lib/kizuna-eye/kizuna-action-server 2>/dev/null || true
+    # ディレクトリは空でも残るため、明示的に除去する（dpkg は空でない
+    # ディレクトリを残す。「not empty so not removed」警告の原因）。
+    # /opt/kizuna-eye は bin のみ梱包のため dpkg 管理外で、plugins 配下が
+    # 残ると空にならず消えない。プラグインは利用者が追加するものなので、
+    # パッケージ削除時に一緒に消す（設定・データは DATA_ROOT 側にある）。
+    # dpkg leaves an empty-but-untracked directory behind, and /opt/kizuna-eye
+    # is not dpkg-managed (only bin is packaged), so a leftover plugins/ dir
+    # keeps it from being removed. Remove both explicitly on purge.
+    rm -rf /usr/lib/kizuna-eye 2>/dev/null || true
+    rm -rf /opt/kizuna-eye 2>/dev/null || true
     # データ・ユーザーを完全削除
     rm -rf "$DATA_ROOT" 2>/dev/null || true
     if getent passwd "$PKG_USER" >/dev/null 2>&1; then
