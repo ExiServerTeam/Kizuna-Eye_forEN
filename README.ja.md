@@ -24,7 +24,7 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 - **Prometheus メトリクス**: `GET /api/metrics`
 - **ログローテーション**: サイズベースで自動ローテーション
 - **i18n**: 日本語 / 英語 UI
-- **軽量・自己完結**: 外部依存なし。信頼できるネットワーク / VPN 内での利用を想定
+- **軽量・自己完結**: データベースや外部サービス不要の単一バイナリ。信頼できるネットワーク / VPN 内での利用を想定
 
 ## スクリーンショット
 
@@ -80,8 +80,11 @@ Go の `plugin` パッケージは、プラグインと本体が**共有パッ�
 
 - `pkg/module`（プラグインの共通型・インターフェース。`Module` / `ConfigField` / `SecurityEvent` など）
 - `pkg/status`（`SystemStatus` などの共有型）
+- `pkg/fsutil`（原子的なファイル書き込みなどの共有ヘルパー。プラグインも使用）
 
-手順: (1) `./build.sh` で本体を再ビルド。(2) 各プラグインをそれぞれのソースツリーで再ビルド（プラグインは本体リポジトリには同梱されません。例: `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を plugins ディレクトリへ配備し、agent を再起動。`scripts/build-plugin.sh` はソースを `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` で指定するとビルド→署名→配備を1コマンドで行えます。
+加えて、**モジュール解決の方法**と `-trimpath` も一致させる必要があります。本体を `go.work` で、プラグインを `GOWORK=off`（プラグイン側の `replace Kizuna-Eye => ...`）でビルドすると、同じソースでも共有パッケージの build ID が食い違い、ロードに失敗します。`./build-all.sh`（または `scripts/build-plugin.sh`）は、本体と全プラグインを 1 つの combined `go.work`・`-trimpath` 常時 ON でビルドします。
+
+手で行う場合の手順: (1) 本体と各プラグインのディレクトリを 1 つの `go.work` に入れる。(2) 本体と各プラグインを同一ツールチェーン・`-trimpath` でビルドする（例: `CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o kizuna_security.so .`）。(3) 生成した `.so` を plugins ディレクトリへ配備し、agent を再起動。`scripts/build-plugin.sh` はソースを `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR` で指定するとビルド→署名→配備を1コマンドで行えます。
 
 ## インストール
 
@@ -318,9 +321,9 @@ Kizuna-Eye のプラグインは、Go標準の `plugin` パッケージを使っ
         DisplayName() string
     }
 
-ビルド:
+ビルド（本体とプラグインを 1 つの combined `go.work`・`-trimpath` で。上記「プラグイン再ビルドの運用注意」を参照）:
 
-    CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
+    CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o my_plugin.so .
 
 Webダッシュボードの「モジュール管理」タブから `.so` をアップロードしてください。組み込みの `plugin-inspect` ツールがプラグインを解析し、設定可能なフィールドを検査して、動的設定フォームを構築します。
 

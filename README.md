@@ -24,7 +24,7 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 - **Prometheus metrics**: `GET /api/metrics`
 - **Log rotation**: Size-based rotation keeps log files bounded
 - **i18n**: Japanese / English UI
-- **Self-contained**: No external dependencies; intended for use inside a trusted network / VPN
+- **Self-contained**: a single binary with no database or external service; intended for use inside a trusted network / VPN
 
 ## Screenshots
 
@@ -80,8 +80,11 @@ Go's `plugin` package requires the plugin and the host to agree on a **hash of e
 
 - `pkg/module` (shared plugin types / interfaces: `Module`, `ConfigField`, `SecurityEvent`, ...)
 - `pkg/status` (shared types such as `SystemStatus`)
+- `pkg/fsutil` (shared helpers such as atomic file writes, used by the plugins too)
 
-Steps: (1) rebuild the host with `./build.sh`; (2) rebuild each plugin from its own source tree (plugins live outside this repository), e.g. `cd /path/to/Kizuna-Security/plugin && GOWORK=off CGO_ENABLED=1 go build -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into the plugins directory and restart the agent. `scripts/build-plugin.sh` can do build + sign + deploy in one step when the plugin source is given via `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR`.
+The builds must also agree on **how modules are resolved** and on `-trimpath`: building the host with `go.work` but a plugin with `GOWORK=off` (the plugin's own `replace Kizuna-Eye => ...`) yields a different build ID for the shared packages and fails to load even from identical sources. Use `./build-all.sh` (or `scripts/build-plugin.sh`), which build the host and every plugin under a single combined `go.work` with `-trimpath` always on.
+
+Steps when building by hand: (1) put the host and the plugin directories in one `go.work`; (2) build the host and each plugin with the same toolchain and `-trimpath`, e.g. `CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o kizuna_security.so .`; (3) deploy the `.so` into the plugins directory and restart the agent. `scripts/build-plugin.sh` can do build + sign + deploy in one step when the plugin source is given via `KIZUNA_SEC_PLUGIN_DIR` / `KIZUNA_LITE_PLUGIN_DIR`.
 
 ## Installation
 
@@ -122,7 +125,22 @@ Uninstall with `sudo apt remove kizuna-eye` (stops services, keeps data) or `sud
 
 > Built for Ubuntu 20.04+ / Debian 11+.
 
-### Install from source
+### Quick setup (from source, recommended)
+
+`install.sh` performs the whole initial setup (package install → build → plugin signing → sudoers → systemd registration → start).
+
+    git clone https://github.com/ExiServerTeam/Kizuna-Eye.git
+    cd Kizuna-Eye
+    sudo ./install.sh
+
+The agent runs as the dedicated user `kizuna-eye` (`kizuna-eye-agent.service`) and the dashboard as `kizuna-dashboard.service`, both under systemd. Pass `--no-systemd` to manage them manually with `start.sh` / `stop.sh`.
+
+Uninstall:
+
+    sudo ./uninstall.sh            # remove services etc. (keeps data)
+    sudo ./uninstall.sh --purge    # also remove data, keys and the user
+
+### Manual setup
 
 ### 1. Clone the repository
 
@@ -301,9 +319,9 @@ Required interfaces:
         DisplayName() string
     }
 
-Build:
+Build (host and plugin must be under one combined `go.work` with `-trimpath`; see the rebuild note above):
 
-    CGO_ENABLED=1 go build -buildmode=plugin -o my_plugin.so .
+    CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=plugin -o my_plugin.so .
 
 Upload the `.so` from the **Module Management** tab. The bundled `plugin-inspect` tool analyses the plugin, inspects its configurable fields, and builds a dynamic configuration form.
 
