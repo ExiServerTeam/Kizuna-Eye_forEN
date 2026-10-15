@@ -10,7 +10,9 @@ import (
 )
 
 // keyCallRe matches a catalog key passed to a *T logging method, e.g.
-//   lg.InfoT("dash.api_insight")   /   l.WarnT("agent.dep_missing", ...)
+//
+//	lg.InfoT("dash.api_insight")   /   l.WarnT("agent.dep_missing", ...)
+//
 // The receiver can be any identifier, so the regex only anchors on the method
 // name and the string literal.
 var keyCallRe = regexp.MustCompile(`\.(?:Info|Warn|Error|Debug|Fatal)T\("([a-z0-9_.]+)"`)
