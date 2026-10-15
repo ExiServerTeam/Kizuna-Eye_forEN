@@ -65,8 +65,23 @@ func LoadOrCreateUsersKey(keyPath string) ([]byte, error) {
 	if keyPath == "" {
 		return nil, fmt.Errorf("users 鍵のパスが空です")
 	}
-	if data, err := os.ReadFile(keyPath); err == nil && len(data) >= usersKeySize {
+	data, err := os.ReadFile(keyPath)
+	if err == nil {
+		// 鍵は存在する。短すぎる（切り詰め・破損）場合は黙って作り直さない。
+		// 作り直すと既存 users.json の MAC が合わなくなりログイン全拒否を招くため、
+		// 原因が分かるよう明示エラーにする（fail-closed）。
+		// The key exists. A too-short (truncated/corrupt) key must not be
+		// silently regenerated: that would break the existing users.json MAC
+		// and lock everyone out. Return an explicit error instead.
+		if len(data) < usersKeySize {
+			return nil, fmt.Errorf("users 鍵が不正です（%d バイト < %d）。手動で確認してください: %s", len(data), usersKeySize, keyPath)
+		}
 		return data[:usersKeySize], nil
+	}
+	if !os.IsNotExist(err) {
+		// 存在するのに読めない（権限等）。上書きせず失敗させる。
+		// Exists but unreadable (permissions, ...); fail rather than overwrite.
+		return nil, fmt.Errorf("users 鍵を読めません（上書きしません）: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
 		return nil, fmt.Errorf("鍵ディレクトリの作成に失敗: %w", err)

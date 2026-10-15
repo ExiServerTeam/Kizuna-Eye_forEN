@@ -133,6 +133,42 @@ func TestUsersMACWrongKeyFails(t *testing.T) {
 	}
 }
 
+// 壊れた（短すぎる）鍵は黙って作り直さず、明示エラーになる。
+// A too-short (corrupt) key must not be silently regenerated; it errors.
+func TestUsersShortKeyIsNotRegenerated(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "users.key")
+	if err := os.WriteFile(keyPath, []byte("tooshort"), 0600); err != nil {
+		t.Fatalf("write short key: %v", err)
+	}
+	before, _ := os.ReadFile(keyPath)
+
+	if _, err := LoadOrCreateUsersKey(keyPath); err == nil {
+		t.Fatal("a too-short key must return an error, not be regenerated")
+	}
+	after, _ := os.ReadFile(keyPath)
+	if string(before) != string(after) {
+		t.Fatal("the corrupt key file must be left untouched")
+	}
+}
+
+// 新規（存在しない）鍵だけが生成される。
+// Only a missing key is generated.
+func TestUsersMissingKeyIsGenerated(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "keys", "users.key")
+	k, err := LoadOrCreateUsersKey(keyPath)
+	if err != nil {
+		t.Fatalf("missing key should be generated: %v", err)
+	}
+	if len(k) != usersKeySize {
+		t.Fatalf("generated key length = %d, want %d", len(k), usersKeySize)
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		t.Fatalf("generated key should be written: %v", err)
+	}
+}
+
 func containsField(b []byte, field string) bool {
 	return stringIndex(string(b), field) >= 0
 }
