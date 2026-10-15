@@ -17,6 +17,29 @@ if ! go version | grep -q "go1\.27\.2"; then
     echo "⚠️  go version is $(go version); forcing ${PINNED_GO} via GOTOOLCHAIN"
 fi
 
+# ---- deb（apt）管理下の検出 ----
+# deb で導入済みの環境で build.sh を走らせると、dpkg の管理するバイナリを上書きし、
+# 以降の apt upgrade / apt purge が壊れる（dpkg が把握しない変更になる）。検出したら
+# 中止して apt を案内する。ステージング先（KIZUNA_BIN_DIR）へ意図的にビルドする場合は
+# KIZUNA_ALLOW_DEB_BUILD=1 で回避できる。
+# If installed via deb/apt, running build.sh would overwrite dpkg-managed
+# binaries, breaking a later apt upgrade/purge. Refuse and point to apt.
+# Set KIZUNA_ALLOW_DEB_BUILD=1 to build into a staging dir on purpose.
+if [ "${KIZUNA_ALLOW_DEB_BUILD:-0}" != "1" ] \
+   && command -v dpkg >/dev/null 2>&1 && dpkg -s kizuna-eye >/dev/null 2>&1; then
+    echo ""
+    echo "⚠️  kizuna-eye は apt（deb）で導入されています。"
+    echo "⚠️  build.sh は dpkg 管理下のバイナリを上書きするため使いません。更新は apt で:"
+    echo ""
+    echo "     更新: sudo apt update && sudo apt upgrade kizuna-eye"
+    echo "     再入: sudo apt install --reinstall ./kizuna-eye_<ver>_amd64.deb"
+    echo "     削除: sudo apt purge kizuna-eye"
+    echo ""
+    echo "   （ソースから入れ直す場合は先に sudo apt purge kizuna-eye）"
+    echo "   （ステージング先へビルドする場合は KIZUNA_ALLOW_DEB_BUILD=1 を付ける）"
+    exit 1
+fi
+
 # 出力先は環境変数で上書きできる。deb ビルド（docker-build-deb.sh）は
 # /opt と切り離したステージング先を指定し、インストール済み環境のバイナリを
 # 誤って梱包しないようにする。
