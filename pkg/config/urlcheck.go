@@ -238,6 +238,29 @@ func ValidateAgentURL(raw string) error {
 	return nil
 }
 
+// isMetadataIP は、ip がリンクローカル / クラウドメタデータの範囲に属する場合に
+// true を返す。ValidateWebhookURL の isBlockedIP は loopback / private も含めて
+// すべて拒否するが、log_forward は LAN コレクタ（private / loopback）を意図的に
+// 許可する。ここではリンクローカル（169.254.0.0/16、fe80::/10）と既知の
+// メタデータ用アドレス（100.100.100.200: Alibaba）だけを弾き、SSRF の典型
+// ターゲットのみを塞ぐ。
+// isMetadataIP reports whether ip belongs to a link-local / cloud-metadata
+// range. ValidateWebhookURL's isBlockedIP rejects loopback and private too,
+// but log_forward intentionally allows LAN collectors (private / loopback).
+// This helper blocks only link-local (169.254.0.0/16, fe80::/10) and known
+// metadata addresses (100.100.100.200: Alibaba), closing the SSRF-typical
+// targets while keeping LAN collectors usable.
+func isMetadataIP(ip net.IP) bool {
+	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsInterfaceLocalMulticast() {
+		return true
+	}
+	// Alibaba Cloud metadata service (ECS).
+	if ip.Equal(net.ParseIP("100.100.100.200")) {
+		return true
+	}
+	return false
+}
+
 // isBlockedIP は、ip が loopback、private、リンクローカル、マルチキャスト、
 // unspecified、その他公開ユニキャストでない場合に true を返す。
 // isBlockedIP reports whether ip is loopback, private, link-local, multicast,

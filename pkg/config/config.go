@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -107,12 +108,20 @@ func (c LogForwardConfig) Timeout() time.Duration {
 // ここでプライベートアドレスを遮断すると機能が使えなくなるためだ。
 // 値は運用者（admin）が設定し、リダイレクトはクライアントが拒否するので、
 // 影響範囲は運用者自身の選択に留まる。
+//
+// 例外としてリンクローカル / クラウドメタデータ範囲（169.254.0.0/16、fe80::/10、
+// 100.100.100.200）は拒否する。これらは LAN コレクタとは別物で、SSRF の典型
+// ターゲット（インスタンスクレデンシャル窃取）だからだ。
 // ValidateForwardURL checks a log-forward URL. Only http/https with a host is
 // accepted. It does not apply the SSRF private-IP rules used for webhooks: a
 // log collector on the LAN (e.g. http://192.168.0.10:9200) is a normal, useful
 // deployment, so blocking private addresses here would make the feature
 // unusable. The value is operator-configured (admin), and redirects are
 // refused by the client, so the blast radius stays the operator's own choice.
+//
+// As an exception, link-local / cloud-metadata ranges (169.254.0.0/16,
+// fe80::/10, 100.100.100.200) are rejected: they are not LAN collectors but
+// the classic SSRF targets (instance-credential theft).
 func ValidateForwardURL(raw string) error {
 	s := strings.TrimSpace(raw)
 	if s == "" {
@@ -127,6 +136,28 @@ func ValidateForwardURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("log_forward.url にホストがありません")
+	}
+
+	host := u.Hostname()
+	if ip := net.ParseIP(host); ip != nil {
+		if isMetadataIP(ip) {
+			return fmt.Errorf("log_forward.url にリンクローカル/メタデータアドレスは指定できません: %s", host)
+		}
+		return nil
+	}
+
+	// ホスト名: 解決した全アドレスを検査する。解決失敗はここでは致命的でない
+	// （設定時に DNS が使えないことがある）。
+	// Hostname: check every resolved address. A resolution failure is not
+	// fatal here (DNS may be unavailable at config time).
+	addrs, err := net.LookupIP(host)
+	if err != nil {
+		return nil
+	}
+	for _, ip := range addrs {
+		if isMetadataIP(ip) {
+			return fmt.Errorf("log_forward.url のホスト %s はリンクローカル/メタデータアドレス (%s) を指しています", host, ip)
+		}
 	}
 	return nil
 }
