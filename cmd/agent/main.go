@@ -23,6 +23,7 @@ import (
 
 	"Kizuna-Eye/internal/api"
 	"Kizuna-Eye/internal/pluginsig"
+	"Kizuna-Eye/internal/system"
 	"Kizuna-Eye/internal/updater"
 	"Kizuna-Eye/pkg/config"
 	"Kizuna-Eye/pkg/logger"
@@ -266,7 +267,7 @@ func main() {
 	if sysInterval < 1 {
 		sysInterval = 1
 	}
-	sysConfig := &module.SystemConfig{
+	sysConfig := &system.SystemConfig{
 		DiskPath:          cfg.DiskPath,
 		Interval:          sysInterval,
 		HealthInterval:    0,
@@ -274,7 +275,7 @@ func main() {
 		ShutdownTimeout:   5,
 		CPUErrorThreshold: 3,
 	}
-	sysModule := module.NewSystemModule(lg)
+	sysModule := system.NewSystemModule(lg)
 	if err := sysModule.Configure(sysConfig); err != nil {
 		lg.ErrorT("agent.sys_module_cfg_failed", err)
 	}
@@ -1277,7 +1278,7 @@ func statusTimestamp(manager module.ModuleManager) int64 {
 	if !ok {
 		return 0
 	}
-	sysModule, ok := sysMod.(*module.SystemModule)
+	sysModule, ok := sysMod.(*system.SystemModule)
 	if !ok {
 		return 0
 	}
@@ -1294,7 +1295,7 @@ func sendStatus(w *wsWriter, manager module.ModuleManager, lg *logger.Logger) (i
 	if !ok {
 		return 0, nil
 	}
-	sysModule, ok := sysMod.(*module.SystemModule)
+	sysModule, ok := sysMod.(*system.SystemModule)
 	if !ok {
 		return 0, nil
 	}

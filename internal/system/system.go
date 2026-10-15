@@ -1,4 +1,4 @@
-package module
+package system
 
 import (
 	"context"
@@ -21,6 +21,8 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 
 	"Kizuna-Eye/pkg/status"
+
+	module "Kizuna-Eye/pkg/module"
 )
 
 // SystemConfig はシステムモジュールの設定だ。
@@ -365,7 +367,7 @@ func (c *processCache) collect() []status.ProcessInfo {
 // ============================================================
 type SystemModule struct {
 	config     *SystemConfig
-	logger     Logger
+	logger     module.Logger
 	mu         sync.RWMutex
 	status     *status.SystemStatus
 	lastError  string
@@ -462,7 +464,7 @@ func (c *cpuCollector) getErrorCount() int {
 
 // ---------- コンストラクタ ----------
 // ---------- Constructor ----------
-func NewSystemModule(logger Logger) *SystemModule {
+func NewSystemModule(logger module.Logger) *SystemModule {
 	return &SystemModule{
 		logger: logger,
 		config: &SystemConfig{
