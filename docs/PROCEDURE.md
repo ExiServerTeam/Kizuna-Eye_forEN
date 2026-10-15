@@ -167,6 +167,7 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 - [ ] `auth.agent_token` を設定する（空だと Agent が接続できない）。
 - [ ] プロキシは**同一ホスト（loopback）**で動かす。レート制限と CSRF の `X-Forwarded-*` 信頼は loopback ピア限定のため、別マシンのプロキシだと全リクエストがプロキシ IP 扱いになり、**レート制限が実質無効化**される。
 - [ ] HSTS は HTTPS 配信時に自動付与される（`Strict-Transport-Security: max-age=31536000`）。プロキシ側でも付与してよい。
+- [ ] プロキシの X-Forwarded-For は、**追記方式（nginx 既定の `$proxy_add_x_forwarded_for`）か上書き方式（`proxy_set_header X-Forwarded-For $remote_addr`）**にする。アプリは**右端（プロキシが付けた実クライアント）**をレート制限キーに使うため、どちらでも正しく機能する。クライアント申告値を左端に残すだけ（追記しない）構成では、左端＝偽装値になるが、右端がプロキシの値なので影響しない。なお XFF を一切設定しない場合、キーはプロキシ IP（loopback）になり全クライアントが1つに集約される（過剰ロックアウトになるが安全側）。
 
 #### 起動時の警告
 
