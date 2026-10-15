@@ -159,6 +159,30 @@ func isLoopbackListen(addr string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
+// forwardedHTTPS はリクエストが HTTPS で届いたかを返す。直接 TLS（r.TLS）か、
+// 同一ホストのリバースプロキシが X-Forwarded-Proto: https を付けた場合だ。
+// X-Forwarded-Proto はループバックのピアからのみ信頼する（リモートのクライアントが
+// 偽装して HSTS を騙るのを防ぐ。X-Forwarded-Host と同じ規則）。
+// forwardedHTTPS reports whether the request arrived over HTTPS: either
+// directly (r.TLS) or via a same-host reverse proxy that set
+// X-Forwarded-Proto: https. X-Forwarded-Proto is honored only from a loopback
+// peer (a remote client must not be able to spoof it to fake HSTS; same rule
+// as X-Forwarded-Host).
+func forwardedHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	ip := net.ParseIP(strings.Trim(peer, "[]"))
+	if ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
 // runWeeklyReport は設定された曜日/時刻に毎週セキュリティブリーフィングを送る。
 // コンテキストがキャンセルされるまで続く。レポートは現在のアラート履歴
 // （直近 7 日）から生成し、指定されたチャンネルにのみ送る。
@@ -1802,6 +1826,17 @@ func main() {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "same-origin")
+		// HTTPS で届いたときだけ HSTS を付ける。HTTP に付けると、まだ HTTPS を
+		// 用意していない自己ホスト環境でブラウザが恒久的に HTTPS へ切り替え、
+		// アクセス不能になり得る。includeSubDomains / preload は付けない
+		// （サブドメインが HTTPS とは限らないため）。
+		// Only send HSTS when the request arrived over HTTPS. Sending it over
+		// plain HTTP would make a browser pin HTTPS on a self-hosted setup
+		// that has not enabled TLS yet, locking the user out. No
+		// includeSubDomains / preload (subdomains are not necessarily HTTPS).
+		if forwardedHTTPS(r) {
+			h.Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		h.Set("Content-Security-Policy",
 			"default-src 'self'; "+
 				"script-src 'self'; "+
