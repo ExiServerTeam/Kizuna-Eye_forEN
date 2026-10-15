@@ -32,7 +32,7 @@
 ### 未実装 / 要強化（優先度順）
 - P1: ~~セキュアデフォルト化~~（`config_version` 導入済み。新規は `public_viewer=false`、既存は現状維持）、~~ログのリモート転送~~（opt-in `log_forward.url` として実装済み）、~~alert_history の HMAC 署名~~（実装済み）。
 - P2: 共有型の最小化、HMAC 鍵の自動ローテーション。
-- P3: E2E 自動化、Docker 再現手順。
+- P3: ~~E2E 自動化~~（CI の e2e ジョブで `scripts/verify.sh --smoke` を実行。`scripts/smoke-config.sh` が example からスモーク設定を生成）、~~Docker 再現手順~~（`scripts/e2e.sh`）。
 - 完了: 作業記録のサニタイズ（内部記録を資料フォルダへ退避して repo から削除）。
 
 ### やらないこと（現時点）
@@ -117,11 +117,12 @@
   Discord の embed 構造・`allowed_mentions.parse=[]`、LINE の
   form エンコードと Bearer を検証。Webhook 仕様変更やリファクタで
   静かに壊れるのを CI で検知する。LINE の API URL はテスト可能に変数化。
-- ⬜ **E2E の自動化**: 下記を段階的に CI へ。
-  - [ ] `/health` と `/api/*` のスモーク（`verify.sh --smoke` を CI に組込）
-  - [ ] WebSocket 接続の自動テスト
-  - [ ] プラグイン `.so` のロード検査（Linux）
-- ⬜ **体調に依存しない品質保証**: CI を「必須ゲート」にし、ローカル検証は補助に位置づける。
+- ✅ **E2E の自動化**: `scripts/verify.sh --smoke` を CI の `e2e` ジョブで実行（ビルド→起動→API スモーク→履歴増加確認）。設定は `scripts/smoke-config.sh` が同梱 example から生成（トークン一致・署名不要・通知なし）。`scripts/e2e.sh` は同一手順を Docker コンテナで再現する。
+  - [x] `/health` と `/api/*` のスモーク（`verify.sh --smoke` を CI に組込）
+  - [x] `gofmt` の CI チェック（`static-analysis` ジョブ。E2E が gofmt 違反を検出したのを受けて追加。従来は CI が gofmt を回していなかった）
+  - [ ] WebSocket 接続の自動テスト（現状は agent 接続を `/health` の `agent_connected` で間接確認）
+  - [ ] プラグイン `.so` のロード検査（`verify.sh --full`。要 `.so` 配置）
+- ⬜ **体調に依存しない品質保証**: CI を「必須ゲート」にし、ローカル検証は補助に位置づける（branch protection は GitHub 側の設定。手順は PROCEDURE/README に記載）。
 
 ---
 

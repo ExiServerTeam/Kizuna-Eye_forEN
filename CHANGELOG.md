@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- E2E スモークを CI に組み込んだ（`.github/workflows/ci.yml` の `e2e` ジョブ）。`scripts/verify.sh --smoke` がビルド → 起動 → API スモーク → メトリクス履歴の増加確認まで行う。設定は新設の `scripts/smoke-config.sh` が同梱の example から生成する（agent トークンを dashboard/agent で一致、`plugins_dir` を一時領域へ、`require_signature=false`、通知 off）。`scripts/e2e.sh` も同スクリプトを呼ぶよう更新し、コンテナ内で同じ手順を再現する。ROADMAP の P3「E2E 自動化 / Docker 再現手順」を完了。
+- CI の `static-analysis` ジョブに `gofmt -l` チェックを追加した（`cmd` / `internal` / `pkg`）。
+
 ### Changed (docs)
 - `docs/ROADMAP.md` 第5章（プラグイン機構の運用負荷）を実態に更新。共有パッケージに `pkg/fsutil` を追加し、combined `go.work` と `-trimpath` の一致が必須であることを明記。再ビルド自動化（`build-all.sh` / `scripts/build-plugin.sh`）と `plugin.Open` 失敗の可視化（`reason_code`）は実装済みとしてチェックを付けた。
 - プラグイン再ビルドの注意（`docs/PROCEDURE.md` 5.1 / 5.3）を README と揃えた。共有パッケージに `pkg/fsutil` を追加し、`go.work` と `GOWORK=off` の混在が build ID 不一致を招くこと、`-trimpath` を本体とプラグインで一致させること、プラグインビルド例に `-trimpath -buildvcs=false` を付けることを明記した。
@@ -14,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/ROADMAP.md` 第7章の i18n キー数を実測（`scripts/check_i18n.js`）に合わせて更新（386 ja/386 en・使用 301 → 547 ja/547 en・使用 374）。
 
 ### Fixed
+- `pkg/logger/catalog.go` と `pkg/logger/catalog_used_keys_test.go` の `gofmt` 違反（マップのアラインメント崩れ、コメント整形）を修正した。新設の E2E（`verify.sh --smoke` 経由）が検出したもので、従来の CI は `gofmt` を実行していなかったため見逃されていた。CI に `gofmt` チェックを追加して再発を防ぐ。
 - モジュール設定の部分更新（`PUT /api/modules/{name}`）で `enabled` を省略すると、モジュールが**黙って無効化**されていた問題を修正した。`handleUpdate` は `enabled` を `bool` で受けていたため「省略（ゼロ値 false）」と「明示的な false」を区別できず、`config` には保持ガード（`isEmptyConfig`）があるのに `enabled` には無い非対称が原因。`enabled` を `*bool` で受け、省略時は保存値を保つようにした（ペネトレで再現: `plugin_path` だけ送ると `enabled: false` になり config の他フィールドも消えた）。回帰テスト `TestHandleUpdateOmitsEnabledKeepsStored` を追加。
 - 配布中の `.deb` が陳腐化し得る問題を記録（`packaging/README.md` のリリース手順で対応）。実機の apt 検証で、`apt install` した host とリポジトリでビルドしたプラグインが `plugin was built with a different version of package Kizuna-Eye/pkg/status` でロード不能になった。原因は環境差ではなく、共有パッケージ（`pkg/status` 等）を変更した後に `.deb` を再ビルドしていなかったこと（`.deb` が 10/12、`pkg/status` 変更が 10/13）。**共有パッケージを変更したら `.deb` も再ビルドして APT リポジトリを更新する**必要がある。`.deb` を再ビルドしたところ、同一ソースのプラグインが署名検証付きで正常にロードされることを実機で確認した。
 - `apt purge` が `/opt/kizuna-eye` と `/usr/lib/kizuna-eye` を残していた問題を修正した（`packaging/postrm.sh`）。postrm はファイル単位でしか消しておらず、dpkg は空でないディレクトリを残す（「not empty so not removed」）。`/opt/kizuna-eye` は bin のみ梱包で dpkg 管理外のため、`plugins/` が残ると空にならず消えなかった。purge 時に両ディレクトリを明示的に削除するようにした。
