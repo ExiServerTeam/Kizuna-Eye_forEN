@@ -17,6 +17,10 @@
 
     const ROLE_RANK = { viewer: 1, operator: 2, admin: 3 };
 
+    // 言語切替時にアカウントメニューを再構築するため、現在のユーザー情報を保つ。
+    // Keep the current user so the account menu can be rebuilt on language change.
+    let currentMe = null;
+
     function rank(role) {
         return ROLE_RANK[role] || 0;
     }
@@ -108,8 +112,30 @@
 
         const anchor = headerAnchor();
         if (!anchor) return;
+        currentMe = me;
         buildAvatarMenu(anchor, me);
     }
+
+    // rebuildAccountUI は言語切替時にヘッダのアカウント UI を描き直す。
+    // 動的に生成したテキストは applyI18n（data-i18n 属性）では更新されないため、
+    // 明示的に再構築する必要がある。
+    // rebuildAccountUI redraws the header account UI on language change.
+    // Dynamically built text is not covered by applyI18n (data-i18n), so it must
+    // be rebuilt explicitly.
+    function rebuildAccountUI() {
+        // 公開ビューア（未ログイン）のログインリンクも再構築する。
+        // Rebuild the public-viewer login link too.
+        const login = document.getElementById('headerLoginLink');
+        if (login) {
+            login.textContent = t('nav.login', 'ログイン');
+        }
+        if (currentMe) {
+            const anchor = headerAnchor();
+            if (anchor) buildAvatarMenu(anchor, currentMe);
+        }
+    }
+
+    window.addEventListener('kizuna-lang-change', rebuildAccountUI);
 
     // buildAvatarMenu は、アカウント情報と操作を含むドロップダウンを開く
     // アバターボタンを描画する。ゲストアカウントはログアウトのみだ。
@@ -117,6 +143,11 @@
     // account information and actions. Guest accounts only get logout.
     function buildAvatarMenu(anchor, me) {
         const isGuest = me.username === 'guest';
+
+        // 再構築（言語切替など）で二重に積まないよう、既存メニューを除去する。
+        // Remove any existing menu so a rebuild (e.g. language change) does not
+        // stack a second one.
+        anchor.querySelectorAll('.account-menu').forEach(function (m) { m.remove(); });
 
         const wrap = document.createElement('div');
         wrap.className = 'account-menu';

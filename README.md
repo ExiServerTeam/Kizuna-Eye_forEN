@@ -29,22 +29,40 @@ A lightweight server monitoring tool written in Go, designed for low-spec machin
 ## Screenshots
 
 <p align="center">
-  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye dashboard (dark mode)" width="600">
+  <img src="docs/images/dashboard_dark_en.png" alt="Kizuna-Eye dashboard (dark mode)" width="600">
   <br>
   <em>Real-time system monitoring dashboard (dark mode)</em>
 </p>
 
-### Theme switch
+### Dashboard
 
-| Dashboard (Dark) | Dashboard (Light) |
+| Dark | Light |
 | :---: | :---: |
-| <img src="docs/images/dashboard_dark.png" width="350" alt="Dashboard dark mode"> | <img src="docs/images/dashboard_light.png" width="350" alt="Dashboard light mode"> |
+| <img src="docs/images/dashboard_dark_en.png" width="350" alt="Dashboard dark mode"> | <img src="docs/images/dashboard_light_en.png" width="350" alt="Dashboard light mode"> |
 
 ### Module management
 
-| Module management (Dark) | Module management (Light) |
+| Dark | Light |
 | :---: | :---: |
-| <img src="docs/images/module_management_dark.png" width="350" alt="Module management dark mode"> | <img src="docs/images/module_management.png" width="350" alt="Module management light mode"> |
+| <img src="docs/images/modules_dark_en.png" width="350" alt="Module management dark mode"> | <img src="docs/images/modules_light_en.png" width="350" alt="Module management light mode"> |
+
+### Logs
+
+| Dark | Light |
+| :---: | :---: |
+| <img src="docs/images/logs_dark_en.png" width="350" alt="Log viewer dark mode"> | <img src="docs/images/logs_light_en.png" width="350" alt="Log viewer light mode"> |
+
+### Config editor
+
+| Dark | Light |
+| :---: | :---: |
+| <img src="docs/images/config_editor_dark_en.png" width="350" alt="Config editor dark mode"> | <img src="docs/images/config_editor_light_en.png" width="350" alt="Config editor light mode"> |
+
+### User management
+
+| Dark | Light |
+| :---: | :---: |
+| <img src="docs/images/users_dark_en.png" width="350" alt="User management dark mode"> | <img src="docs/images/users_light_en.png" width="350" alt="User management light mode"> |
 
 ## Architecture
 

@@ -13,6 +13,16 @@
     // i18n translation helper
     const t = (key, ...args) => (window.KizunaI18n ? window.KizunaI18n.t(key, ...args) : key);
 
+    // 言語切替時に、動的生成した行のボタン文言を新しい言語で描き直すため、
+    // 直近のユーザー一覧を保つ。
+    // Keep the last user list so the dynamically built row buttons can be
+    // redrawn in the new language on a language change.
+    let lastUsers = [];
+
+    window.addEventListener('kizuna-lang-change', function () {
+        render(lastUsers);
+    });
+
     function showError(el, msg) {
         if (!el) return;
         el.textContent = msg;
@@ -31,7 +41,8 @@
                 return r.json();
             })
             .then(function (data) {
-                render(data.users || []);
+                lastUsers = data.users || [];
+                render(lastUsers);
             })
             .catch(function (e) {
                 if (e.message !== 'unauth') showError(errEl, e.message || t('users.load_failed'));

@@ -29,22 +29,40 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 ## スクリーンショット
 
 <p align="center">
-  <img src="docs/images/dashboard_dark.png" alt="Kizuna-Eye ダッシュボード ダークモード" width="600">
+  <img src="docs/images/dashboard_dark_ja.png" alt="Kizuna-Eye ダッシュボード ダークモード" width="600">
   <br>
   <em>リアルタイムシステム監視ダッシュボード（ダークモード）</em>
 </p>
 
-### テーマ切り替え
+### ダッシュボード
 
-| ダッシュボード（ダーク） | ダッシュボード（ライト） |
+| ダーク | ライト |
 | :---: | :---: |
-| <img src="docs/images/dashboard_dark.png" width="350" alt="ダッシュボード ダークモード"> | <img src="docs/images/dashboard_light.png" width="350" alt="ダッシュボード ライトモード"> |
+| <img src="docs/images/dashboard_dark_ja.png" width="350" alt="ダッシュボード ダークモード"> | <img src="docs/images/dashboard_light_ja.png" width="350" alt="ダッシュボード ライトモード"> |
 
 ### モジュール管理
 
-| モジュール管理（ダーク） | モジュール管理（ライト） |
+| ダーク | ライト |
 | :---: | :---: |
-| <img src="docs/images/module_management_dark.png" width="350" alt="モジュール管理 ダークモード"> | <img src="docs/images/module_management.png" width="350" alt="モジュール管理 ライトモード"> |
+| <img src="docs/images/modules_dark_ja.png" width="350" alt="モジュール管理 ダークモード"> | <img src="docs/images/modules_light_ja.png" width="350" alt="モジュール管理 ライトモード"> |
+
+### ログ
+
+| ダーク | ライト |
+| :---: | :---: |
+| <img src="docs/images/logs_dark_ja.png" width="350" alt="ログ ダークモード"> | <img src="docs/images/logs_light_ja.png" width="350" alt="ログ ライトモード"> |
+
+### 設定エディタ
+
+| ダーク | ライト |
+| :---: | :---: |
+| <img src="docs/images/config_editor_dark_ja.png" width="350" alt="設定エディタ ダークモード"> | <img src="docs/images/config_editor_light_ja.png" width="350" alt="設定エディタ ライトモード"> |
+
+### ユーザー管理
+
+| ダーク | ライト |
+| :---: | :---: |
+| <img src="docs/images/users_dark_en.png" width="350" alt="ユーザー管理 ダークモード"> | <img src="docs/images/users_light_en.png" width="350" alt="ユーザー管理 ライトモード"> |
 
 ## アーキテクチャ
 
