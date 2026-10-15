@@ -107,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/PROCEDURE.md` 9章に `users.key`（users.json 完全性検査鍵）のローテーション手順を追加した。単純に鍵を差し替えると MAC 不一致で**ログインが全拒否**される（fail-closed）ため、`users.json` の `mac` を除去してから鍵を再生成し、次の保存で再署名する手順を示した。MAC 不一致は改ざんと区別できないため**自動ローテーションは提供しない**（検知を無効化しないため）。
 
 ### Security
+- 追加ログ（モジュールの `log_path`）を**データ領域配下のみ**に限定した（`internal/api/logs.go` の `SetExtraLogAllowedPrefixes`、`cmd/dashboard/main.go` で `configDir` の親を許可）。`log_path` は admin 限定だが、admin が dashboard 実行ユーザー権限で「読める任意ファイル」をログ UI 経由で読めるのを防ぐ（多層防御）。許可プレフィックス未設定時は従来動作（後方互換）。回帰テスト `TestExtraLogAllowlist` を追加。
+- プラグイン一覧 API（`GET /api/plugins`）の応答から `dir`（`pluginsDir` の絶対パス）を削除した。UI は未使用で、operator 以上にサーバーのファイルシステム配置を開示するだけだった。
 - users.json に改ざん検知（ファイル全体の HMAC-SHA256）を追加した（`internal/auth/userssig.go` / `store.go`）。追記専用ログと違い users.json は毎回まるごと書き換わるため、チェーンではなく全体 MAC を使う。鍵は既定で `keys/users.key`（0600、無ければ自動生成）。読み込み時に MAC を検証し、不一致ならロードを失敗させて変更・セットアップを拒否する（fail-closed）。MAC の無い旧形式は `unsigned` として警告し、次の保存で署名する。回帰テスト `internal/auth/userssig_test.go` を追加。
 - HTTPS 配信時に `Strict-Transport-Security` を付与するようにした（`cmd/dashboard/main.go`）。直接 TLS か、loopback リバースプロキシの `X-Forwarded-Proto: https` のときのみ付与する（リモートクライアントの偽装は不可）。HTTP に付けると自己ホスト環境でブラウザが恒久的に HTTPS へ切り替わりアクセス不能になり得るため、HTTPS のときだけに限定した。
 - HTTPS 配信時はセッション cookie の `Secure` 属性を自動で有効化するようにした（`internal/auth/handlers.go`）。`auth.secure_cookies` の設定漏れがあっても「HTTPS なのに Secure でない cookie」を配らない（多層防御）。判定は上と同じ規則（直接 TLS / loopback プロキシの XFP）。
