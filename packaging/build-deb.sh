@@ -92,13 +92,26 @@ for u in "$STAGE/usr/share/kizuna-eye/systemd/"*.service; do
 done
 
 # ダッシュボードのプラグインアップロード先は書き込み可能でなければならない。
-# postinst は dashboard_config.json の plugins_dir を $BIN_DIR/plugins に設定する
-# ので、そのパスを ReadWritePaths に追記する（ProtectSystem=strict のままだと
-# アップロードが EROFS で失敗する）。存在しない可能性を考慮し、先頭に "-" を付ける。
+# postinst は dashboard_config.json の plugins_dir を /opt/kizuna-eye/bin/plugins に
+# 設定するので、そのパスを ReadWritePaths に追記する（ProtectSystem=strict の
+# ままだとアップロードが EROFS で失敗する）。
+#
+# 注意: ここで $BIN_DIR を使ってはならない。docker-build-deb.sh は
+# KIZUNA_BIN_DIR=/src/dist/bin でビルドするため、$BIN_DIR/plugins は
+# 「/src/dist/bin/plugins」というビルド時ステージングのパスになり、実機に
+# 存在しない。パッケージでの実配置先は常に /opt/kizuna-eye/bin/plugins だ。
+# 過去にこれを取り違え、deb 導入環境でアップロードが必ず失敗した（EROS）。
+# 先頭の "-" は「存在しなくても起動を止めない」ための印。ワンクリック対処の
+# Unix ソケット用に /run/kizuna-eye も許可する（systemd のソケット有効化が
+# ディレクトリを作るが、unit 側でも許可しておく）。
+# The installed plugins dir is always /opt/kizuna-eye/bin/plugins; never use
+# the build-time $BIN_DIR (docker staging path). The leading "-" tolerates a
+# missing dir. /run/kizuna-eye is needed for the one-click action socket.
+INSTALLED_PLUGINS_DIR="/opt/kizuna-eye/bin/plugins"
 DASH_UNIT="$STAGE/usr/share/kizuna-eye/systemd/kizuna-dashboard.service"
 if [ -f "$DASH_UNIT" ]; then
     if grep -q '^ReadWritePaths=' "$DASH_UNIT"; then
-        sed -i -E "s|^ReadWritePaths=(.*)$|ReadWritePaths=\1 -$BIN_DIR/plugins|" "$DASH_UNIT"
+        sed -i -E "s|^ReadWritePaths=(.*)$|ReadWritePaths=\1 -$INSTALLED_PLUGINS_DIR /run/kizuna-eye|" "$DASH_UNIT"
     fi
 fi
 
