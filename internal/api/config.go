@@ -742,6 +742,28 @@ func validateNotificationChannels(v interface{}) error {
 	return nil
 }
 
+// validateLogForward は log_forward ブロックの url を検証する（保存時）。
+// url が空/未設定なら何もしない。ValidateForwardURL は http/https とホストを
+// 要求する（LAN コレクタのため private/loopback は意図的に許可）。
+// validateLogForward validates the log_forward block's url at save time.
+// A missing/empty url is a no-op. ValidateForwardURL requires http/https and a
+// host (private/loopback addresses are intentionally allowed for LAN
+// collectors).
+func validateLogForward(raw interface{}) error {
+	lf, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	u, ok := lf["url"].(string)
+	if !ok || strings.TrimSpace(u) == "" {
+		return nil
+	}
+	if err := config.ValidateForwardURL(u); err != nil {
+		return fmt.Errorf("log_forward.url が不正です: %w", err)
+	}
+	return nil
+}
+
 // validateConfig は簡単な設定検証を行う。
 // validateConfig performs simple config validation.
 func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error {
@@ -785,6 +807,18 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 		if err := validatePluginsBlock(cfgMap["plugins"]); err != nil {
 			return err
 		}
+		// log_forward.url を保存時に検証する。ロード時（validateAgentConfig /
+		// validateDashboardConfig）は ValidateForwardURL を呼ぶが、API の保存経路が
+		// 呼んでいなかったため、file:// や gopher:// などの非 http(s) URL、ホスト無し
+		// URL が 200 で保存され、次回起動で読み込み失敗（fail-closed）を招いていた。
+		// webhook_url と同じく保存時に拒否する。
+		// Validate log_forward.url at save time. The load path validates it, but
+		// the API save path did not, so a non-http(s) URL (file://, gopher://)
+		// or a host-less URL was accepted with 200 and then failed to load on
+		// the next restart (fail-closed). Reject it at save time like webhooks.
+		if err := validateLogForward(cfgMap["log_forward"]); err != nil {
+			return err
+		}
 	case "dashboard":
 		// dashboard 設定を LoadDashboardConfig が使うのと同じ規則で検証する。
 		// 特に、有効な通知チャンネルに必須フィールドが欠けている（例: webhook_url の
@@ -807,6 +841,11 @@ func (c *ConfigHandler) validateConfig(configType string, cfg interface{}) error
 		// agent ブランチ参照: 使用不能な署名ポリシーを保存してはならない。
 		// See the agent branch: an unusable signature policy must not be saved.
 		if err := validatePluginsBlock(cfgMap["plugins"]); err != nil {
+			return err
+		}
+		// log_forward.url を保存時に検証する（agent ブランチと同じ理由）。
+		// Validate log_forward.url at save time (same reason as the agent branch).
+		if err := validateLogForward(cfgMap["log_forward"]); err != nil {
 			return err
 		}
 		// agent トークンを保護する。auth 有効時に空の agent_token は従来の
