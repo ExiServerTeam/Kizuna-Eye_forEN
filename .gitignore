@@ -105,3 +105,9 @@ Kizunaシリーズ　資料/
 # エディタ/手動バックアップの残骸
 # Stray editor / manual backup artifacts.
 install.sh.bak*
+
+# curl クッキージャー（手動/ペネトレ検証の残骸。セッショントークンを含む）
+# curl cookie jars (manual / pentest leftovers; contain a session token).
+cookies.txt
+a[0-9].txt
+b[0-9].txt
