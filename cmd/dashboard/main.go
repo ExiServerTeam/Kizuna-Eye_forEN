@@ -1844,8 +1844,27 @@ func main() {
 		usersFile = filepath.Join(configDir, "users.json")
 	}
 	userStore := auth.NewStore(usersFile)
+	// users.json の改ざん検知（MAC）を有効化する。鍵は既定で users.json の隣の
+	// keys/users.key。鍵の準備に失敗しても起動は続ける（MAC 無しで動作）が、
+	// 警告を残す。MAC が埋まっていれば読み込み時に検証され、不一致なら
+	// ロードが失敗して変更・セットアップが拒否される（fail-closed）。
+	// Enable tamper detection (MAC) for users.json. The key defaults to
+	// keys/users.key next to users.json. A key failure is non-fatal (no MAC),
+	// but warned. When a MAC is present it is verified on load; a mismatch
+	// fails the load and refuses mutations/setup (fail-closed).
+	usersKeyPath := cfg.Auth.UsersKeyPath
+	if usersKeyPath == "" {
+		usersKeyPath = filepath.Join(filepath.Dir(usersFile), "keys", "users.key")
+	}
+	if err := userStore.EnableIntegrity(usersKeyPath); err != nil {
+		lg.WarnT("dash.users_integrity_off", err)
+	}
 	if err := userStore.Load(); err != nil {
 		lg.ErrorT("dash.users_load_failed", err)
+	} else if userStore.IsUnsigned() {
+		// 旧形式（MAC 無し）。次の保存で署名される。
+		// Legacy form (no MAC); the next save will sign it.
+		lg.WarnT("dash.users_unsigned")
 	}
 	sessionTTL := time.Duration(cfg.Auth.SessionTTLHours) * time.Hour
 	// 設定された無操作タイムアウト（0 = 既定 2h、負 = 無効）を渡し、運用者が

@@ -369,6 +369,11 @@ type AuthConfig struct {
 	SecureCookies   bool   `json:"secure_cookies"` // HTTPS 配信時に true にする
 	SessionTTLHours int    `json:"session_ttl_hours"`
 	UsersFile       string `json:"users_file"` // 既定: dashboard 設定隣の users.json
+	// UsersKeyPath は users.json の完全性検査（MAC）に使う HMAC 鍵だ。
+	// 空なら既定（users.json と同じディレクトリの keys/users.key）を使う。
+	// UsersKeyPath is the HMAC key for the users.json integrity MAC. Empty
+	// means the default: keys/users.key next to users.json.
+	UsersKeyPath string `json:"users_key_path"`
 	// AgentToken は agent の WebSocket 接続を認証する。空なら dashboard は
 	// 従来のヒューリスティック判定にフォールバックする（legacy）。
 	// AgentToken authenticates the agent's WebSocket connection. When empty,

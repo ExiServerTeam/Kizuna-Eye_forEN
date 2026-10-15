@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -124,6 +125,16 @@ type Store struct {
 	// case NeedsSetup must NOT report true, otherwise anyone could recreate
 	// an admin account through /setup after the file is damaged.
 	corrupt bool
+	// macKey は users.json の MAC を計算・検証する HMAC 鍵だ。nil なら完全性検査は
+	// 無効（EnableIntegrity 未呼び出し）。
+	// macKey is the HMAC key for the users.json MAC. nil disables integrity
+	// checking (EnableIntegrity was not called).
+	macKey []byte
+	// unsigned は読み込んだ users.json に MAC が無かった（旧形式）ことを示す。
+	// 次の保存で MAC が付く。
+	// unsigned marks that the loaded users.json had no MAC (legacy). The next
+	// save adds one.
+	unsigned bool
 }
 
 // NewStore は path に裏打ちされた Store を作る。
@@ -158,6 +169,7 @@ func (s *Store) Load() error {
 
 	var file struct {
 		Users []*User `json:"users"`
+		Mac   string  `json:"mac"`
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		s.users = make(map[string]*User)
@@ -179,8 +191,58 @@ func (s *Store) Load() error {
 		}
 		s.users[u.Username] = u
 	}
+
+	// MAC があれば検証する。不一致は改ざんとして扱い、セットアップも変更も
+	// 拒否する（fail-closed）。MAC が無い旧形式は警告扱い（unsigned）とし、
+	// 次の保存で署名する。MAC があるのに鍵が無い場合は検証できないため
+	// 同じく破損として拒否する。
+	// Verify the MAC when present. A mismatch is tampering: refuse setup and
+	// mutations (fail-closed). A missing MAC is a legacy file (unsigned); the
+	// next save signs it. A MAC with no key cannot be verified, so it is also
+	// refused as corrupt.
+	s.unsigned = file.Mac == ""
+	if file.Mac != "" {
+		if s.macKey == nil {
+			s.corrupt = true
+			return fmt.Errorf("users.json に MAC があるが鍵が未設定です")
+		}
+		canonical, cerr := canonicalUsers(s.users)
+		if cerr != nil {
+			s.corrupt = true
+			return fmt.Errorf("users.json の正規化に失敗: %w", cerr)
+		}
+		want := computeUsersMAC(s.macKey, canonical)
+		if !hmac.Equal([]byte(want), []byte(file.Mac)) {
+			s.corrupt = true
+			return ErrUsersMACMismatch
+		}
+	}
+
 	s.corrupt = false
 	return nil
+}
+
+// EnableIntegrity は users.json の MAC 検証を有効化する。keyPath の鍵を読み込み
+// （無ければ生成し）、以降の保存で MAC を付与する。Load より前に呼ぶこと。
+// EnableIntegrity turns on MAC verification for users.json. It loads (or
+// creates) the key at keyPath; subsequent saves attach a MAC. Call before Load.
+func (s *Store) EnableIntegrity(keyPath string) error {
+	key, err := LoadOrCreateUsersKey(keyPath)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.macKey = key
+	s.mu.Unlock()
+	return nil
+}
+
+// IsUnsigned は読み込んだ users.json に MAC が無かった（旧形式）かを返す。
+// IsUnsigned reports whether the loaded users.json had no MAC (legacy form).
+func (s *Store) IsUnsigned() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.unsigned
 }
 
 // IsCorrupt は users.json のロードが失敗したかを返す。
@@ -205,7 +267,17 @@ func (s *Store) saveLocked() error {
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].Username < list[j].Username })
 
-	data, err := json.MarshalIndent(map[string]interface{}{"users": list}, "", "  ")
+	payload := map[string]interface{}{"users": list}
+	// 完全性検査が有効なら、正規化したユーザー一覧に対する MAC を埋め込む。
+	// If integrity is enabled, embed a MAC over the canonical users list.
+	if s.macKey != nil {
+		canonical, cerr := canonicalUsers(s.users)
+		if cerr != nil {
+			return cerr
+		}
+		payload[usersMACField] = computeUsersMAC(s.macKey, canonical)
+	}
+	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
