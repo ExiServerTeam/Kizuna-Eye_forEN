@@ -295,6 +295,7 @@ gcc が無い環境では race 検証は自動的にスキップされる。Linu
 |---|---|---|---|
 | chain.key | /var/lib/kizuna-eye/keys/chain.key | セキュリティログのハッシュチェーン | agent / agent |
 | alert_history.key | <data>/keys/alert_history.key | アラート履歴の行単位署名 | dashboard / dashboard + agent |
+| users.key | <data>/keys/users.key | users.json の改ざん検知（ファイル全体 MAC） | dashboard / dashboard |
 
 ### 9.1 セキュリティログのチェーン鍵（chain.key）
 
@@ -321,7 +322,34 @@ gcc が無い環境では race 検証は自動的にスキップされる。Linu
 
    注意: 鍵は dashboard と agent が共有する（dashboard が書き、agent が検証する）。差し替え後は両方の再起動、またはグループ kizuna-eye の読み取り（0640）が維持されていることを確認する。
 
-### 9.3 鍵のバックアップ
+### 9.3 users.json の完全性検査鍵（users.key）
+
+**注意（罠）**: `users.key` を単純に消す/差し替えると、既存の `users.json` の MAC が
+一致しなくなり、**改ざんとみなされてログインが全拒否**される（fail-closed）。
+ローテーションは次の手順で行う。
+
+1. 現在の鍵を退避する:
+
+       sudo cp <data>/keys/users.key <data>/keys/users.key.old-$(date +%Y%m%d)
+
+2. `users.json` の MAC を「未署名」状態に戻す（`"mac"` 行を除去する）。これで
+   次回起動時は旧形式として扱われ、警告のうえ再署名される:
+
+       sudo python3 -c "import json;p='<data>/users.json';d=json.load(open(p));d.pop('mac',None);open(p,'w').write(json.dumps(d,indent=2,ensure_ascii=False)+chr(10))"
+
+3. 新しい鍵に差し替え、dashboard を再起動する:
+
+       sudo rm -f <data>/keys/users.key
+       sudo systemctl restart kizuna-dashboard   # 起動時に 32B を再生成（0600）
+
+4. ブラウザでユーザー操作を 1 回行う（例: 自分のパスワード変更やロール再保存）。
+   その保存時に新しい鍵で MAC が付く。
+
+**自動ローテーションは提供しない**。MAC 不一致は「改ざん」と「鍵ローテーション」を
+区別できないため、自動で再署名すると改ざん検知そのものを無効化する。ローテーションは
+上記の手動手順で、証跡を意識して行う。
+
+### 9.4 鍵のバックアップ
 
 - 鍵は 0600/0640 のまま、アクセス制御された別ストレージ（Samba 共有外）へ退避する。
 - Samba 共有（guest 許可）には置かない。漏洩は改ざん検知の無効化に直結する。

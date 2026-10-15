@@ -12,7 +12,7 @@
 | 1. ネットワーク | B | リバースプロキシ前提、agent_token、CSWSH/CSRF 対策、レート制限 | `listen_addr` 既定が全IF（LAN 監視ツールのため意図的）、`secure_cookies` 既定 false（HTTP 直アクセス対応、HTTPS 運用時のみ true） |
 | 2. 認証 | B | ロール/ bcrypt / セッション / 最終管理者保護。新規インストール（`config_version` 付き）は `public_viewer` 既定 false（secure default）、`auth.enabled` は install.sh が true、`agent_token` は install.sh がランダム生成 | `secure_cookies` の既定 true 化は HTTP 運用を壊すため対象外（HTTPS 運用時のみ設定） |
 | 3. プラグイン（設計書第5章の将来構想） | B | 別プロセス検査、Ed25519 署名検証、bwrap 分離。配布 example / install.sh は `require_signature=true`・`inspect_isolation=bwrap` を既定にする（コードのゼロ値ではなく実配備で fail-closed） | 共有型の最小化、コード既定での require_signature=true 化（鍵未設定時に起動不能になるため example 経由に留める） |
-| 4. ログ | A- | HMAC チェーン＋定期検証、alert_history 整合性＋行単位 HMAC 署名（`alert_history_key_path`）、inode 追跡、FIM、リモート転送（opt-in `log_forward.url`） | HMAC 鍵の自動ローテーション |
+| 4. ログ | A- | HMAC チェーン＋定期検証、alert_history 整合性＋行単位 HMAC 署名（`alert_history_key_path`）、users.json 全体 MAC（`keys/users.key`）、inode 追跡、FIM、リモート転送（opt-in `log_forward.url`） | HMAC 鍵の自動ローテーションは**意図的に非対応**（MAC 不一致は改ざんと区別できず、自動再署名は検知を無効化するため。手順を `docs/PROCEDURE.md` 9.1〜9.4 に記載） |
 | 5. 権限 | B+ | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、**ワンクリック対処の特権ソケット化（kizuna-action.socket / kizuna-action.service）完了により dashboard も全保護**（NoNewPrivileges / ProtectSystem=strict / PrivateTmp を含む） | HMAC 鍵ローテーション自動化 |
 | 6. 運用 | B | CONTRIBUTING 受入範囲、CI(go test/-race)、SECURITY.md 拡充、govulncheck CI、ROADMAP(本書)、脆弱性開示ポリシー | Issue/PR テンプレート、CI の必須ゲート化（PR ブロック） |
 
@@ -120,7 +120,7 @@
 - ✅ **E2E の自動化**: `scripts/verify.sh --smoke` を CI の `e2e` ジョブで実行（ビルド→起動→API スモーク→履歴増加確認）。設定は `scripts/smoke-config.sh` が同梱 example から生成（トークン一致・署名不要・通知なし）。`scripts/e2e.sh` は同一手順を Docker コンテナで再現する。
   - [x] `/health` と `/api/*` のスモーク（`verify.sh --smoke` を CI に組込）
   - [x] `gofmt` の CI チェック（`static-analysis` ジョブ。E2E が gofmt 違反を検出したのを受けて追加。従来は CI が gofmt を回していなかった）
-  - [ ] WebSocket 接続の自動テスト（現状は agent 接続を `/health` の `agent_connected` で間接確認）
+  - [x] WebSocket 接続の自動テスト（`verify.sh --smoke` に `/ws` のトークン無し拒否 401 チェックを追加。成功パスは `/health` の `agent_connected` で確認）
   - [ ] プラグイン `.so` のロード検査（`verify.sh --full`。要 `.so` 配置）
 - ⬜ **体調に依存しない品質保証**: CI を「必須ゲート」にし、ローカル検証は補助に位置づける（branch protection は GitHub 側の設定。手順は PROCEDURE/README に記載）。
 

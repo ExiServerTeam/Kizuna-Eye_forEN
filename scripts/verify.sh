@@ -312,6 +312,23 @@ else
     fi
 fi
 
+# /ws は agent トークンを要求する。トークン無しのアップグレードは 401 で
+# 拒否されるはずだ（未認証の非ブラウザクライアントが agent を名乗れない）。
+# /ws requires the agent token; a tokenless upgrade must be refused with 401
+# (an unauthenticated non-browser client must not be able to claim to be the
+# agent). This complements the /health agent_connected check, which covers the
+# successful path.
+ws_code="$(curl -s -m 5 -o /dev/null -w '%{http_code}' \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' \
+    -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    "$BASE_URL/ws?role=agent" 2>/dev/null)"
+if [ "$ws_code" = "401" ]; then
+    ok "WebSocket /ws はトークン無しを拒否 (401)"
+else
+    ng "WebSocket /ws がトークン無しを拒否しない (HTTP $ws_code)"
+fi
+
 # ------------------------------------------------------------
 # 4. プラグイン検査（--full のみ）
 # ------------------------------------------------------------

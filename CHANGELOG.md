@@ -100,6 +100,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - サードパーティの sandbox ラッパーが、モジュールが `WebUIPath()` で申告した entry を無視して `index.html` 固定で参照していた問題を修正（設計書 5.4「カードはモジュールが追加する」に反する）。`safeWebUIEntry` で `meta.json` の `web_ui_path` を検証（絶対パス・`..`・`\` を拒否、既定 `index.html`）してから iframe の `src` に使う。回帰テスト `internal/api/plugins_webui_entry_test.go` を追加
 - `install.sh` / `CONTRIBUTING.md` の Go 要件が `1.27.1` のまま `go.mod` の `toolchain go1.27.2` / CI / README とずれていた問題を修正。1.27.1 は到達可能な net/http 脆弱性を含む版であり、またホストと全プラグインを同一パッチでビルドしないと ABI 不一致でロード不能になるため、要件表示を 1.27.2 に統一
 
+### Changed
+- git: ローカル履歴（完全版・v0.8.0 作業まで）が `origin` と別系統（共通祖先なし）だったため、`--force` でリモートを壊さず **`main` ブランチとして push** した（リモートの `master` / `gh-pages` は温存）。退避として `git bundle --all` を `~/ke-backups/` に取得済み。
+- `scripts/verify.sh --smoke` に WebSocket のトークン無し拒否（`/ws?role=agent` → 401）チェックを追加した。E2E（`scripts/e2e.sh`）でも検証される。
+- `docs/PROCEDURE.md` 9章に `users.key`（users.json 完全性検査鍵）のローテーション手順を追加した。単純に鍵を差し替えると MAC 不一致で**ログインが全拒否**される（fail-closed）ため、`users.json` の `mac` を除去してから鍵を再生成し、次の保存で再署名する手順を示した。MAC 不一致は改ざんと区別できないため**自動ローテーションは提供しない**（検知を無効化しないため）。
+
 ### Security
 - users.json に改ざん検知（ファイル全体の HMAC-SHA256）を追加した（`internal/auth/userssig.go` / `store.go`）。追記専用ログと違い users.json は毎回まるごと書き換わるため、チェーンではなく全体 MAC を使う。鍵は既定で `keys/users.key`（0600、無ければ自動生成）。読み込み時に MAC を検証し、不一致ならロードを失敗させて変更・セットアップを拒否する（fail-closed）。MAC の無い旧形式は `unsigned` として警告し、次の保存で署名する。回帰テスト `internal/auth/userssig_test.go` を追加。
 - HTTPS 配信時に `Strict-Transport-Security` を付与するようにした（`cmd/dashboard/main.go`）。直接 TLS か、loopback リバースプロキシの `X-Forwarded-Proto: https` のときのみ付与する（リモートクライアントの偽装は不可）。HTTP に付けると自己ホスト環境でブラウザが恒久的に HTTPS へ切り替わりアクセス不能になり得るため、HTTPS のときだけに限定した。
