@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -200,27 +201,52 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-// setCookie はセッション cookie を発行する。
-// setCookie issues the session cookie.
-func (h *Handler) setCookie(w http.ResponseWriter, id string, expires time.Time) {
+// secureRequest はリクエストが HTTPS で届いたかを返す。直接 TLS（r.TLS）か、
+// 同一ホストのリバースプロキシが X-Forwarded-Proto: https を付けた場合だ。
+// X-Forwarded-Proto はループバックのピアからのみ信頼する（リモートクライアントが
+// 偽装するのを防ぐ）。Cookie の Secure 属性を HTTPS 配信時に自動で有効化し、
+// 運用者が secure_cookies を設定し忘れても「HTTPS なのに Secure でない」事故を
+// 防ぐ（多層防御）。
+// secureRequest reports whether the request arrived over HTTPS: directly
+// (r.TLS) or via a same-host reverse proxy that set X-Forwarded-Proto: https.
+// X-Forwarded-Proto is honored only from a loopback peer (a remote client must
+// not be able to spoof it). It auto-enables the cookie Secure attribute over
+// HTTPS so a forgotten secure_cookies setting cannot leave a Secure-less
+// cookie on an HTTPS site (defense in depth).
+func secureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	peer, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || !isLoopback(peer) {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+// setCookie はセッション cookie を発行する。Secure は設定値か「HTTPS で届いた
+// こと」のいずれかで有効になる。
+// setCookie issues the session cookie. Secure is on when the config says so or
+// when the request arrived over HTTPS.
+func (h *Handler) setCookie(w http.ResponseWriter, r *http.Request, id string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    id,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   h.secure,
+		Secure:   h.secure || secureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  expires,
 	})
 }
 
-func (h *Handler) clearCookie(w http.ResponseWriter) {
+func (h *Handler) clearCookie(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     CookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   h.secure,
+		Secure:   h.secure || secureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
@@ -352,7 +378,7 @@ func (h *Handler) handleSetup(w http.ResponseWriter, r *http.Request) {
 		h.manager.Delete(old.ID)
 	}
 	if sess, serr := h.manager.Create(u.Username, u.Role, clientIP(r)); serr == nil {
-		h.setCookie(w, sess.ID, sess.ExpiresAt)
+		h.setCookie(w, r, sess.ID, sess.ExpiresAt)
 	} else if h.logger != nil {
 		kelog.LogWarn(h.logger, "auth.setup_session_failed", serr.Error())
 	}
@@ -417,7 +443,7 @@ func (h *Handler) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "セッションの作成に失敗しました")
 		return
 	}
-	h.setCookie(w, sess.ID, sess.ExpiresAt)
+	h.setCookie(w, r, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
 		kelog.LogInfo(h.logger, "auth.login_success", logsafe.Field(u.Username), u.Role, r.RemoteAddr)
@@ -468,7 +494,7 @@ func (h *Handler) handleGuestLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "セッションの作成に失敗しました")
 		return
 	}
-	h.setCookie(w, sess.ID, sess.ExpiresAt)
+	h.setCookie(w, r, sess.ID, sess.ExpiresAt)
 
 	if h.logger != nil {
 		kelog.LogInfo(h.logger, "auth.guest_login", clientIP(r))
@@ -485,7 +511,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if s, ok := h.sessionFromRequest(r); ok {
 		h.manager.Delete(s.ID)
 	}
-	h.clearCookie(w)
+	h.clearCookie(w, r)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -537,7 +563,7 @@ func (h *Handler) handleChangeOwnPassword(w http.ResponseWriter, r *http.Request
 	// どこでも再ログインを強制する。
 	// Force re-login everywhere.
 	h.manager.DeleteUserSessions(s.Username)
-	h.clearCookie(w)
+	h.clearCookie(w, r)
 	if h.logger != nil {
 		kelog.LogInfo(h.logger, "auth.password_changed", s.Username)
 	}

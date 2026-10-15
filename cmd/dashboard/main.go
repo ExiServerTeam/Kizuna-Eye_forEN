@@ -2004,6 +2004,16 @@ func main() {
 		lg.WarnT("dash.insecure_upload")
 	}
 
+	// 全インターフェースで待ち受けつつ TLS を終端しない構成（リバースプロキシが
+	// 前面に無い）では、認証情報が平文で流れ得る。ネット公開を想定しているなら
+	// 必ず警告する。
+	// Listening on all interfaces without terminating TLS (no reverse proxy in
+	// front) can send credentials in cleartext. Warn when that looks like an
+	// internet-facing setup.
+	if !isLoopbackListen(cfg.ListenAddr) && !cfg.Auth.SecureCookies {
+		lg.WarnT("dash.exposed_http", cfg.ListenAddr)
+	}
+
 	// ---- Weekly security briefing (opt-in) ----
 	// 依存の無いスケジューラ（標準 time パッケージ）を使う。dashboard は他に cron
 	// ライブラリをインポートしておらず、週 1 回のタイマーのために追加する価値は無い。
