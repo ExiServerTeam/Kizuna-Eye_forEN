@@ -1,0 +1,18 @@
+Package: kizuna-eye
+Version: 0.8.0
+Architecture: amd64
+Maintainer: Kizuna-Eye Project <sy815twty@gmail.com>
+Depends: adduser, python3, smartmontools, rsync, bubblewrap
+Recommends: nftables, ca-certificates
+Filename: pool/main/k/kizuna-eye/kizuna-eye_0.8.0_amd64.deb
+Size: 10171920
+MD5sum: a145422e3633bf4a806d9a8c7f41dfe5
+SHA1: ac8b67ac7b66e6d231272dcb3b65329b537b9ae4
+SHA256: be913a78db73e4ed268403a131a6b70ee4d3f8418936e050e1a9c7a17b830565
+Section: admin
+Priority: optional
+Description: Lightweight server monitoring tool
+ Kizuna-Eye is a lightweight server monitoring tool written in Go,
+ designed for low-spec servers. It provides a dashboard and an agent
+ with plugin-based security monitoring.
+

@@ -1,0 +1,14 @@
+Origin: Kizuna-Eye
+Label: Kizuna-Eye
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Kizuna-Eye APT repository
+Date: Thu, 15 Oct 2026 08:20:41 +0000
+MD5Sum:
+ b11e1439baa10ebaa4ff08725ac620af 701 main/binary-amd64/Packages
+ ec75640beabd69c708b61c43e902f132 487 main/binary-amd64/Packages.gz
+SHA256:
+ 7c4d23d65252aa06afc7530670d311252f83ac2475ef364eb8230779e3a12f7c 701 main/binary-amd64/Packages
+ 9128189875d7aef5dde7cd0de47093e19e8ef7cdf7605017e5be6cf8fa727684 487 main/binary-amd64/Packages.gz

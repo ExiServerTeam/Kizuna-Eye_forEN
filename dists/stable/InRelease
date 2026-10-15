@@ -1,0 +1,28 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Origin: Kizuna-Eye
+Label: Kizuna-Eye
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: Kizuna-Eye APT repository
+Date: Thu, 15 Oct 2026 08:20:41 +0000
+MD5Sum:
+ b11e1439baa10ebaa4ff08725ac620af 701 main/binary-amd64/Packages
+ ec75640beabd69c708b61c43e902f132 487 main/binary-amd64/Packages.gz
+SHA256:
+ 7c4d23d65252aa06afc7530670d311252f83ac2475ef364eb8230779e3a12f7c 701 main/binary-amd64/Packages
+ 9128189875d7aef5dde7cd0de47093e19e8ef7cdf7605017e5be6cf8fa727684 487 main/binary-amd64/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQEzBAEBCgAdFiEE1HuZJrhhhpNb5YnaxmAXw5Jjf8wFAmrQjNkACgkQxmAXw5Jj
+f8wQwwgAjGgIHAec+nqacVPtB8shqT/+X09T685f1SDAIvJqVqPW0UGmO9OaJ61X
+PdMww9yZgT8mFGs3lpGj/N7pmxYGlIFkRxYeuCkF2l9/h8btgQdyt1ZvIXhbfsJu
+gR3iyZlqwvrb+HcHJHy1K5M+n+5OG/1Y4GTHm8raYTDb0OfimQadeQySyX7d90v/
+/FYwSQHrCs8o1Lg6v82faBqm7XFfXMOaIf8X47DABHRZQ2K/MRBGzDw9X3yMZ89k
+Y9BncPgW3kj7e0X2rPhMk8A7UcWi0UZNY3oPutLHDFWCmLxd5ZMI75AqlRLVbJCD
+8pJf53uILxHKNuFdT1r3p3YNwEKlAw==
+=L3IS
+-----END PGP SIGNATURE-----
