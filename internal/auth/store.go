@@ -176,11 +176,12 @@ func (s *Store) Load() error {
 		return nil
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
-		// ストアを破損としてマークし、セットアップを拒否する。ロードできたもの
-		// （何も無い）は保ち、呼び出し側に警告をログさせる。
-		// Mark the store as corrupt so setup is refused. Keep whatever was
-		// loaded (nothing) and let the caller log a warning.
+		// ストアを破損としてマークし、セットアップを拒否する。ユーザーは
+		// 空にし、壊れたファイルの中身が認証に使われないようにする。
+		// Mark the store as corrupt so setup is refused. Clear the users so
+		// nothing from the broken file can be used for authentication.
 		s.corrupt = true
+		s.users = make(map[string]*User)
 		return fmt.Errorf("users.json のパース失敗: %w", err)
 	}
 
@@ -204,16 +205,25 @@ func (s *Store) Load() error {
 	if file.Mac != "" {
 		if s.macKey == nil {
 			s.corrupt = true
+			s.users = make(map[string]*User)
 			return fmt.Errorf("users.json に MAC があるが鍵が未設定です")
 		}
 		canonical, cerr := canonicalUsers(s.users)
 		if cerr != nil {
 			s.corrupt = true
+			s.users = make(map[string]*User)
 			return fmt.Errorf("users.json の正規化に失敗: %w", cerr)
 		}
 		want := computeUsersMAC(s.macKey, canonical)
 		if !hmac.Equal([]byte(want), []byte(file.Mac)) {
+			// MAC 不一致＝改ざん。改ざん済みのユーザーで認証できてはならない。
+			// ロード済みマップを必ず破棄する（Authenticate は corrupt を見ない
+			// 旧実装があり、データを残すと backdoor ログインが通ってしまう）。
+			// MAC mismatch = tampering. Never leave the loaded users usable:
+			// Authenticate does not consult `corrupt`, so keeping the map
+			// would let a tampered (backdoor) account log in.
 			s.corrupt = true
+			s.users = make(map[string]*User)
 			return ErrUsersMACMismatch
 		}
 	}
@@ -391,6 +401,16 @@ func (s *Store) Create(username, password string, role Role) (*User, error) {
 // the same fields under the write lock (a data race the race detector flags).
 func (s *Store) Authenticate(username, password string) (*User, bool) {
 	s.mu.RLock()
+	// 破損（MAC 不一致など）の間は誰も認証しない（fail-closed）。load 側でも
+	// users を空にするが、二重の防御としてここでも拒否する。
+	// While the store is corrupt (e.g. MAC mismatch) authenticate nobody
+	// (fail-closed). Load also clears users, but refuse here as well for
+	// defense in depth.
+	if s.corrupt {
+		s.mu.RUnlock()
+		_ = bcrypt.CompareHashAndPassword([]byte(dummyPasswordHash), []byte(password))
+		return nil, false
+	}
 	u, ok := s.users[username]
 	if !ok {
 		s.mu.RUnlock()
