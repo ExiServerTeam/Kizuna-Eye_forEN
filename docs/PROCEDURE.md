@@ -151,13 +151,35 @@ agent を強制的に手動管理へ戻す場合は `KIZUNA_FORCE_MANUAL=1 ./sta
 
 `dashboard_config.json` の `auth.agent_token` と `agent_config.json` の `token` に同じ値を設定する。Agent は接続時にこれを提示する。空の場合は従来の判定方式となる。
 
-### 3.3 HTTPS
+### 3.3 HTTPS とインターネット公開
 
-認証情報を平文の HTTP で送信してはならない。リバースプロキシで TLS を終端することを推奨する。
+認証情報を平文の HTTP で送信してはならない。**インターネットに公開する場合は必ずリバースプロキシで TLS を終端する**。素の HTTP のまま 8080 を公開してはならない。
 
 1. ダッシュボードを localhost にバインドする（`listen_addr` を `127.0.0.1:8080` にする）。
 2. Caddy や nginx で TLS を終端し、`127.0.0.1:8080` へプロキシする。
-3. `auth.secure_cookies` を `true` にする。
+3. `auth.secure_cookies` を `true` にする（HTTPS 配信時は cookie の `Secure` 属性が自動でも有効になるが、明示を推奨）。
+
+#### 公開前チェックリスト
+
+- [ ] `listen_addr` を `127.0.0.1:8080` にする（全 IF バインドのままだと直接到達される）。
+- [ ] リバースプロキシで TLS 終端し、`X-Forwarded-Proto: https` を付与する。
+- [ ] `auth.enabled: true`・`public_viewer: false`（新規は既定でこの状態）。
+- [ ] `auth.agent_token` を設定する（空だと Agent が接続できない）。
+- [ ] プロキシは**同一ホスト（loopback）**で動かす。レート制限と CSRF の `X-Forwarded-*` 信頼は loopback ピア限定のため、別マシンのプロキシだと全リクエストがプロキシ IP 扱いになり、**レート制限が実質無効化**される。
+- [ ] HSTS は HTTPS 配信時に自動付与される（`Strict-Transport-Security: max-age=31536000`）。プロキシ側でも付与してよい。
+
+#### 起動時の警告
+
+次のいずれかに該当すると、起動ログに警告が出る。公開前に必ず確認する。
+
+- `dash.exposed_http`: 全 IF で待ち受けつつ `secure_cookies` が false（TLS 終端が無い可能性。認証情報が平文で流れ得る）。
+- `dash.agent_token_missing`: 認証有効だが `agent_token` 未設定。
+- `dash.insecure_upload`: 認証無効かつアップロード有効（実質 RCE）。
+
+#### 既知の限界（公開しても残る）
+
+- **同一ユーザー権限を奪われた場合の完全防御は不可**（root 奪取は元から防げない）。users.json は改ざん検知（MAC）で保護されるが、攻撃者が MAC 鍵を読める権限なら偽造できる。
+- 監視ツールはプロセス一覧・ディスク情報・アラートを出すため攻撃面が広い。**公開が必須でなければ VPN（Tailscale 等）や LAN 限定を推奨**。
 
 ---
 
