@@ -83,12 +83,33 @@ func TestClientIPIgnoresXFFFromRemote(t *testing.T) {
 	}
 }
 
-// A loopback peer (local reverse proxy) may set X-Forwarded-For.
+// A loopback peer (local reverse proxy) may set X-Forwarded-For, and only the
+// RIGHTMOST entry (the proxy-appended real client) is used.
 func TestClientIPHonorsXFFFromLoopback(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.RemoteAddr = "127.0.0.1:12345"
 	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
-	if got := clientIP(r); got != "203.0.113.7" {
-		t.Fatalf("clientIP with XFF from loopback = %q, want 203.0.113.7", got)
+	if got := clientIP(r); got != "10.0.0.1" {
+		t.Fatalf("clientIP with XFF from loopback = %q, want 10.0.0.1 (rightmost)", got)
+	}
+}
+
+// F-1: varying the attacker-supplied (leftmost) XFF entry must NOT change the
+// rate-limit key. The trusted proxy appends the real client address, so both
+// requests map to the same key.
+func TestClientIPRightmostDefeatsPrependSpoof(t *testing.T) {
+	mk := func(spoof string) string {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = "127.0.0.1:12345"
+		r.Header.Set("X-Forwarded-For", spoof+", 198.51.100.9")
+		return clientIP(r)
+	}
+	a := mk("1.2.3.4")
+	b := mk("5.6.7.8")
+	if a != "198.51.100.9" || b != "198.51.100.9" {
+		t.Fatalf("spoofed leftmost changed the key: a=%q b=%q, want 198.51.100.9", a, b)
+	}
+	if a != b {
+		t.Fatalf("rate-limit key must be stable under leftmost spoof: a=%q b=%q", a, b)
 	}
 }

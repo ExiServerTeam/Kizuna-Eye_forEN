@@ -3,6 +3,7 @@ package auth
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -71,12 +72,32 @@ func (l *loginLimiter) Stop() {
 // リバースプロキシ）から到着した場合にのみ尊重する。任意のピアからの XFF を
 // 信頼すると、攻撃者がリクエストごとに異なる X-Forwarded-For 値を送って
 // ログインレート制限を回避できてしまう。
+//
+// さらに、リストの「右端（最後）」のエントリだけを採用する。信頼できる
+// 同一ホストのリバースプロキシは、クライアントが送った値を先頭に残し、実
+// クライアントアドレスを末尾に追記する（nginx の既定
+// $proxy_add_x_forwarded_for）。左端は攻撃者が自由に偽装できるため、それを
+// キーにすると「リクエストごとに XFF を変える」だけでレート制限を無効化できる
+// （XFF バイパス）。右端はプロキシが付けた値なので、その偽装が効かない。
+// 単一の同一ホストプロキシという推奨構成を前提とする。プロキシが上書き
+// （proxy_set_header X-Forwarded-For $remote_addr）する場合も、要素は 1 つ
+// なので右端＝実クライアントで正しい。
 // clientIP extracts the client IP for rate limiting.
 //
 // X-Forwarded-For is only honored when the request arrives from a loopback
 // address, i.e. a reverse proxy on the same host. Trusting XFF from an
 // arbitrary peer would let an attacker bypass the login rate limit by
 // sending a different X-Forwarded-For value on every request.
+//
+// Only the RIGHTMOST entry is used. A trusted same-host reverse proxy keeps
+// the client-supplied values at the front and appends the real client
+// address at the end (nginx's default $proxy_add_x_forwarded_for). The
+// leftmost entry is attacker-controlled, so keying on it lets a client
+// disable the limit just by varying XFF (an XFF bypass). The rightmost entry
+// is the proxy's own, so that spoof does not work. This assumes the
+// recommended single same-host proxy; when the proxy overwrites
+// (proxy_set_header X-Forwarded-For $remote_addr) there is one element, so
+// the rightmost is still the real client.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -88,16 +109,13 @@ func clientIP(r *http.Request) string {
 	// Only a loopback peer (local reverse proxy) may set X-Forwarded-For.
 	if isLoopback(host) {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// X-Forwarded-For はカンマ区切りのリストになり得る。最初がクライアントだ。
-			// X-Forwarded-For may be a comma-separated list; the first is the client.
-			for i := 0; i < len(xff); i++ {
-				if xff[i] == ',' {
-					xff = xff[:i]
-					break
+			// 右端（最後）の有効な IP を採用する。左端は偽装可能なため使わない。
+			// Use the rightmost valid IP; the leftmost is spoofable.
+			parts := strings.Split(xff, ",")
+			for i := len(parts) - 1; i >= 0; i-- {
+				if ip := net.ParseIP(strings.TrimSpace(parts[i])); ip != nil {
+					return ip.String()
 				}
-			}
-			if ip := net.ParseIP(trimSpace(xff)); ip != nil {
-				return ip.String()
 			}
 		}
 	}
@@ -112,18 +130,6 @@ func isLoopback(host string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
-}
-
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
 }
 
 // Allow は ip からのログイン試行を続行してよいかを返す。
