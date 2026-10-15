@@ -108,6 +108,8 @@ install.sh.bak*
 
 # curl クッキージャー（手動/ペネトレ検証の残骸。セッショントークンを含む）
 # curl cookie jars (manual / pentest leftovers; contain a session token).
-cookies.txt
-a[0-9].txt
-b[0-9].txt
+# ルート直下のみマッチ（ルール: .gitignore の先頭に / を付ける）。
+# Root-level only (rule: prefix patterns with "/" to avoid over-matching subdirs).
+/cookies.txt
+/a[0-9].txt
+/b[0-9].txt
