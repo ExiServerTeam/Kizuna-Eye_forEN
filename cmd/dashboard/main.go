@@ -1708,6 +1708,15 @@ func main() {
 	logHandler.SetExtraLogsFunc(func() map[string]string {
 		return collectPluginLogs(storage)
 	})
+	// 追加ログ（プラグインの log_path）はデータ領域配下のみ許可する。log_path は
+	// admin 限定だが、admin が dashboard 実行ユーザー権限で任意ファイルを読むのを
+	// 防ぐ（多層防御）。標準配置では configDir の親（例: /var/lib/kizuna-eye）が
+	// 設定・ログ・鍵を包含する。
+	// Allow extra logs (plugin log_path) only under the data area. log_path is
+	// admin-only, but this stops an admin from reading arbitrary files as the
+	// dashboard user (defense in depth). In the standard layout the parent of
+	// configDir (e.g. /var/lib/kizuna-eye) contains config, logs and keys.
+	logHandler.SetExtraLogAllowedPrefixes(filepath.Dir(configDir))
 	logHandler.RegisterRoutes(mux)
 	lg.InfoT("dash.api_logs")
 

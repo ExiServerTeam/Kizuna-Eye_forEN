@@ -1469,9 +1469,12 @@ func (p *PluginManager) handleList(w http.ResponseWriter, r *http.Request) {
 		list = append(list, &meta)
 	}
 
+	// サーバーの絶対パス (pluginsDir) は応答に含めない。UI は使わず、
+	// 開示すると operator 以上にファイルシステム配置を漏らすだけだ。
+	// Do not expose the server's absolute path (pluginsDir): the UI does not
+	// use it and disclosing it leaks the filesystem layout to operators.
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"plugins": list,
-		"dir":     p.pluginsDir,
 	})
 }
 

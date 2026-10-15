@@ -42,6 +42,26 @@ type LogHandler struct {
 	// UI), so a one-time snapshot would keep listing a removed module or miss
 	// a newly added one until the dashboard restarts.
 	extraFn func() map[string]string
+
+	// extraAllowedPrefixes は追加ログ（log_path）に許可する絶対ディレクトリの
+	// 接頭辞だ。空でなければ、解決後の実パスがこのいずれかの配下でなければ
+	// 拒否する。log_path は admin 限定だが、admin が「dashboard 実行ユーザーが
+	// 読める任意ファイル」をログ UI 経由で読めるのを防ぐ（多層防御）。
+	// extraAllowedPrefixes are the absolute directory prefixes an extra log
+	// (log_path) may resolve into. When non-empty, a resolved path outside all
+	// of them is refused. log_path is admin-only, but this stops an admin from
+	// reading any file the dashboard user can read via the log UI (defense in
+	// depth).
+	extraAllowedPrefixes []string
+}
+
+// SetExtraLogAllowedPrefixes は追加ログに許可する絶対ディレクトリ接頭辞を設定する。
+// 空でなければ、解決後の実パスがこのいずれかの配下でなければ安全でないとみなす。
+// SetExtraLogAllowedPrefixes sets the absolute directory prefixes an extra
+// log may resolve into. When non-empty, a resolved path outside all of them
+// is considered unsafe.
+func (l *LogHandler) SetExtraLogAllowedPrefixes(prefixes ...string) {
+	l.extraAllowedPrefixes = prefixes
 }
 
 // SetExtraLogsFunc は追加ログ（プラグインログ）を毎リクエスト供給するコールバックを
@@ -302,6 +322,31 @@ func (l *LogHandler) safeExtraLogPath(path string) (string, bool) {
 	info, serr := os.Stat(real)
 	if serr != nil || !info.Mode().IsRegular() {
 		return "", false
+	}
+	// 許可プレフィックスが設定されていれば、実体がその配下にあることを要求する。
+	// 解決後のパスで比較するため、シンボリックリンク経由の脱出も検出できる。
+	// If an allowlist is configured, require the real path to be under one of
+	// the prefixes. Compare on the resolved path so a symlink escape is caught.
+	if len(l.extraAllowedPrefixes) > 0 {
+		realClean := filepath.Clean(real)
+		ok := false
+		for _, pre := range l.extraAllowedPrefixes {
+			if pre == "" {
+				continue
+			}
+			rp := pre
+			if r, err := filepath.EvalSymlinks(pre); err == nil {
+				rp = r
+			}
+			rp = filepath.Clean(rp)
+			if realClean == rp || strings.HasPrefix(realClean, rp+string(os.PathSeparator)) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return "", false
+		}
 	}
 	return filepath.Clean(real), true
 }
