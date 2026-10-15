@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 1. ネットワーク | B | リバースプロキシ前提、agent_token、CSWSH/CSRF 対策、レート制限 | `listen_addr` 既定が全IF（LAN 監視ツールのため意図的）、`secure_cookies` 既定 false（HTTP 直アクセス対応、HTTPS 運用時のみ true） |
 | 2. 認証 | B | ロール/ bcrypt / セッション / 最終管理者保護。新規インストール（`config_version` 付き）は `public_viewer` 既定 false（secure default）、`auth.enabled` は install.sh が true、`agent_token` は install.sh がランダム生成 | `secure_cookies` の既定 true 化は HTTP 運用を壊すため対象外（HTTPS 運用時のみ設定） |
-| 3. プラグイン（設計書第5章の将来構想） | B | 別プロセス検査、Ed25519 署名検証、bwrap 分離。配布 example / install.sh は `require_signature=true`・`inspect_isolation=bwrap` を既定にする（コードのゼロ値ではなく実配備で fail-closed） | 共有型の最小化、コード既定での require_signature=true 化（鍵未設定時に起動不能になるため example 経由に留める） |
+| 3. プラグイン（設計書第5章の将来構想） | B+ | 別プロセス検査、Ed25519 署名検証、bwrap 分離。配布 example / install.sh は `require_signature=true`・`inspect_isolation=bwrap` を既定にする（コードのゼロ値ではなく実配備で fail-closed）。**共有型の最小化（最小スコープ）完了**: `pkg/module` から agent 専用の `system.go` を `internal/system` へ分離し、契約は `pkg/status` を import しなくなった。`pkg/status` / `internal/*` の変更ではプラグイン再ビルドが不要になった（`docs/SHARED_TYPE_SPLIT.md`） | コード既定での require_signature=true 化（鍵未設定時に起動不能になるため example 経由に留める） |
 | 4. ログ | A- | HMAC チェーン＋定期検証、alert_history 整合性＋行単位 HMAC 署名（`alert_history_key_path`）、users.json 全体 MAC（`keys/users.key`）、inode 追跡、FIM、リモート転送（opt-in `log_forward.url`） | HMAC 鍵の自動ローテーションは**意図的に非対応**（MAC 不一致は改ざんと区別できず、自動再署名は検知を無効化するため。手順を `docs/PROCEDURE.md` 9.1〜9.4 に記載） |
 | 5. 権限 | B+ | sudo ヘルパー絶対パス化、sudoers 引数固定（M-3）、**agent 専用ユーザー化（H-1）完了**（kizuna-eye + systemd ProtectSystem/NoNewPrivileges/AmbientCapabilities）、**ワンクリック対処の特権ソケット化（kizuna-action.socket / kizuna-action.service）完了により dashboard も全保護**（NoNewPrivileges / ProtectSystem=strict / PrivateTmp を含む） | HMAC 鍵ローテーション自動化 |
 | 6. 運用 | B | CONTRIBUTING 受入範囲、CI(go test/-race)、SECURITY.md 拡充、govulncheck CI、ROADMAP(本書)、脆弱性開示ポリシー | Issue/PR テンプレート、CI の必須ゲート化（PR ブロック） |
@@ -31,7 +31,7 @@
 
 ### 未実装 / 要強化（優先度順）
 - P1: ~~セキュアデフォルト化~~（`config_version` 導入済み。新規は `public_viewer=false`、既存は現状維持）、~~ログのリモート転送~~（opt-in `log_forward.url` として実装済み）、~~alert_history の HMAC 署名~~（実装済み）。
-- P2: 共有型の最小化、HMAC 鍵の自動ローテーション。
+- P2: ~~共有型の最小化~~（最小スコープ完了: `pkg/module` から `system.go` を `internal/system` へ分離。契約が `pkg/status` を import しなくなり、`pkg/status` 変更での全 .so 再ビルドが不要に。設計は `docs/SHARED_TYPE_SPLIT.md`）、~~HMAC 鍵の自動ローテーション~~（意図的に非対応。手順は `docs/PROCEDURE.md` 9.1〜9.4）。
 - P3: ~~E2E 自動化~~（CI の e2e ジョブで `scripts/verify.sh --smoke` を実行。`scripts/smoke-config.sh` が example からスモーク設定を生成）、~~Docker 再現手順~~（`scripts/e2e.sh`）。
 - 完了: 作業記録のサニタイズ（内部記録を資料フォルダへ退避して repo から削除）。
 

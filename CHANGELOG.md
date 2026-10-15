@@ -101,6 +101,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `install.sh` / `CONTRIBUTING.md` の Go 要件が `1.27.1` のまま `go.mod` の `toolchain go1.27.2` / CI / README とずれていた問題を修正。1.27.1 は到達可能な net/http 脆弱性を含む版であり、またホストと全プラグインを同一パッチでビルドしないと ABI 不一致でロード不能になるため、要件表示を 1.27.2 に統一
 
 ### Changed
+- **共有型の最小化（最小スコープ）**: `pkg/module` から agent 専用の `system.go`（システム情報収集、`pkg/status` に依存）を `internal/system` へ分離した。これで契約パッケージ `pkg/module` は `pkg/status` を import しなくなり、**`pkg/status` や `internal/*` を変更してもプラグイン `.so` の再ビルドが不要**になった（従来は `pkg/status` を1行変えるだけで全 .so が `plugin was built with a different version of package` でロード不能になった）。`ModuleManager` は `pkg/status` に依存していないため `pkg/module` に残した（最小変更）。設計は `docs/SHARED_TYPE_SPLIT.md`。プラグインの import（`pkg/module`）は不変。
 - git: ローカル履歴（完全版・v0.8.0 作業まで）が `origin` と別系統（共通祖先なし）だったため、`--force` でリモートを壊さず **`main` ブランチとして push** した（リモートの `master` / `gh-pages` は温存）。退避として `git bundle --all` を `~/ke-backups/` に取得済み。
 - `scripts/verify.sh --smoke` に WebSocket のトークン無し拒否（`/ws?role=agent` → 401）チェックを追加した。E2E（`scripts/e2e.sh`）でも検証される。
 - `docs/PROCEDURE.md` 9章に `users.key`（users.json 完全性検査鍵）のローテーション手順を追加した。単純に鍵を差し替えると MAC 不一致で**ログインが全拒否**される（fail-closed）ため、`users.json` の `mac` を除去してから鍵を再生成し、次の保存で再署名する手順を示した。MAC 不一致は改ざんと区別できないため**自動ローテーションは提供しない**（検知を無効化しないため）。
