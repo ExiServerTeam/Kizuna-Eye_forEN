@@ -62,7 +62,7 @@ Go製の軽量サーバー監視ツール。低スペックマシン向けに設
 
 | ダーク | ライト |
 | :---: | :---: |
-| <img src="docs/images/users_dark_en.png" width="350" alt="ユーザー管理 ダークモード"> | <img src="docs/images/users_light_en.png" width="350" alt="ユーザー管理 ライトモード"> |
+| <img src="docs/images/users_dark_ja.png" width="350" alt="ユーザー管理 ダークモード"> | <img src="docs/images/users_light_ja.png" width="350" alt="ユーザー管理 ライトモード"> |
 
 ## アーキテクチャ
 
